@@ -41,5 +41,29 @@ func (m DetailModel) View() string {
 	b.WriteString(strings.TrimRight(d.Body, "\n"))
 	b.WriteString("\n")
 
+	for _, f := range d.Files {
+		fmt.Fprintf(&b, "\ndiff --git a/%s b/%s\n", f.OldPath, f.Path)
+		for _, h := range f.Hunks {
+			b.WriteString(h.Header)
+			b.WriteString("\n")
+			for _, line := range h.Lines {
+				b.WriteString(diffLinePrefix(line.Op))
+				b.WriteString(line.Text)
+				b.WriteString("\n")
+			}
+		}
+	}
+
 	return b.String()
+}
+
+func diffLinePrefix(op git.LineOp) string {
+	switch op {
+	case git.OpAdd:
+		return "+"
+	case git.OpDelete:
+		return "-"
+	default:
+		return " "
+	}
 }
