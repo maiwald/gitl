@@ -51,14 +51,20 @@ type DetailModel struct {
 	files  FileListModel
 
 	width, height int
+
+	searchTerm string
+	matches    []DiffMatch
+	matchLines []int // parallel to matches, offset by header/message length
+	matchPos   int
 }
 
 // NewDetailModel constructs a detail view for the given commit.
 func NewDetailModel(detail *git.CommitDetail) DetailModel {
 	return DetailModel{
-		detail: detail,
-		leftVP: viewport.New(0, 0),
-		files:  NewFileListModel(detail.Files),
+		detail:   detail,
+		leftVP:   viewport.New(0, 0),
+		files:    NewFileListModel(detail.Files),
+		matchPos: -1,
 	}
 }
 
@@ -92,10 +98,11 @@ func (m *DetailModel) reflow() {
 
 	var diffLines []string
 	var fileRanges []FileRange
+	var matchLines []int
 	if len(m.detail.Files) == 0 {
 		diffLines = []string{noDiffNotice(m.detail)}
 	} else {
-		diffLines, fileRanges = RenderDiff(m.detail.Files, diffWidth)
+		diffLines, fileRanges, matchLines = RenderDiff(m.detail.Files, diffWidth, m.matches, m.matchPos)
 	}
 
 	// The header/message is wrapped the same way diff lines are (each
@@ -113,6 +120,11 @@ func (m *DetailModel) reflow() {
 	m.fileRanges = make([]FileRange, len(fileRanges))
 	for i, r := range fileRanges {
 		m.fileRanges[i] = FileRange{FileIndex: r.FileIndex, StartLine: r.StartLine + offset, EndLine: r.EndLine + offset}
+	}
+
+	m.matchLines = make([]int, len(matchLines))
+	for i, ln := range matchLines {
+		m.matchLines[i] = ln + offset
 	}
 
 	m.leftVP.Width = diffWidth
@@ -228,6 +240,70 @@ func (m *DetailModel) jumpToCurrentFile() {
 		return
 	}
 	m.leftVP.SetYOffset(m.fileRanges[m.currentFile].StartLine)
+}
+
+// Search finds every occurrence of term in the diff content and jumps to
+// the first one, returning the total match count. Unlike list search, this
+// is fully synchronous: the whole diff is already in memory once a commit
+// is open, so there's no async loading to wait for.
+func (m *DetailModel) Search(term string) int {
+	m.searchTerm = term
+	if term == "" {
+		m.matches = nil
+	} else {
+		m.matches = FindDiffMatches(m.detail.Files, term)
+	}
+	m.matchPos = -1
+	if len(m.matches) > 0 {
+		m.matchPos = 0
+	}
+	m.jumpToMatch()
+	return len(m.matches)
+}
+
+// NextMatch and PrevMatch cycle to the following/preceding match, wrapping
+// at both ends, and report the new 1-based position and total count.
+func (m *DetailModel) NextMatch() (pos, total int) { return m.stepMatch(1) }
+func (m *DetailModel) PrevMatch() (pos, total int) { return m.stepMatch(-1) }
+
+func (m *DetailModel) stepMatch(delta int) (pos, total int) {
+	if len(m.matches) == 0 {
+		return 0, 0
+	}
+	m.matchPos = (m.matchPos + delta + len(m.matches)) % len(m.matches)
+	m.jumpToMatch()
+	return m.matchPos + 1, len(m.matches)
+}
+
+// jumpToMatch re-renders (so the newly active match gets its distinct
+// style) and scrolls the diff panel to bring it into view. Re-running
+// reflow on every match change — rather than patching just the affected
+// lines — is the same cost already paid on every resize, and it's pure
+// in-memory string work with no I/O.
+func (m *DetailModel) jumpToMatch() {
+	m.reflow()
+	if m.matchPos < 0 || m.matchPos >= len(m.matchLines) {
+		return
+	}
+	m.leftVP.SetYOffset(m.matchLines[m.matchPos])
+	m.syncHighlightFromScroll()
+}
+
+// ClearSearch discards the active search and its highlighting.
+func (m *DetailModel) ClearSearch() {
+	m.searchTerm = ""
+	m.matches = nil
+	m.matchPos = -1
+	m.reflow()
+}
+
+// SearchStatus reports the active search term and match position (1-based)
+// for status-bar display, and whether a search is active at all.
+func (m DetailModel) SearchStatus() (term string, pos, total int, active bool) {
+	if m.searchTerm == "" {
+		return "", 0, 0, false
+	}
+	return m.searchTerm, m.matchPos + 1, len(m.matches), true
 }
 
 func noDiffNotice(d *git.CommitDetail) string {

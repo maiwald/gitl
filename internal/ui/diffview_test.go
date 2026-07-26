@@ -41,7 +41,7 @@ func fixtureDiffFiles() []git.File {
 
 func TestRenderDiffProducesContiguousRanges(t *testing.T) {
 	files := fixtureDiffFiles()
-	lines, ranges := RenderDiff(files, 80)
+	lines, ranges, _ := RenderDiff(files, 80, nil, -1)
 
 	if len(ranges) != 2 {
 		t.Fatalf("got %d ranges, want 2", len(ranges))
@@ -63,7 +63,7 @@ func TestRenderDiffProducesContiguousRanges(t *testing.T) {
 
 func TestFileAtBoundaries(t *testing.T) {
 	files := fixtureDiffFiles()
-	_, ranges := RenderDiff(files, 80)
+	_, ranges, _ := RenderDiff(files, 80, nil, -1)
 
 	tests := []struct {
 		name      string
@@ -111,7 +111,7 @@ func TestRenderDiffWrapsLongLinesAndKeepsRangesContiguous(t *testing.T) {
 		},
 	}
 
-	lines, ranges := RenderDiff(files, 20)
+	lines, ranges, _ := RenderDiff(files, 20, nil, -1)
 
 	// The long line must have wrapped into more than one rendered row.
 	if ranges[0].EndLine-ranges[0].StartLine <= 3 { // header + hunk header + short line + wrapped long line(s)
@@ -219,11 +219,68 @@ func TestFindDiffMatchesEmptyTerm(t *testing.T) {
 	}
 }
 
+func TestRenderDiffHighlightsMatchesAndMarksActiveOneDistinctly(t *testing.T) {
+	files := []git.File{{
+		Hunks: []git.Hunk{{
+			Header: "@@ -1,2 +1,2 @@",
+			Lines: []git.DiffLine{
+				{Op: git.OpContext, Text: "needle one"},
+				{Op: git.OpContext, Text: "needle two"},
+			},
+		}},
+	}}
+	matches := FindDiffMatches(files, "needle")
+	if len(matches) != 2 {
+		t.Fatalf("got %d matches, want 2", len(matches))
+	}
+
+	lines, _, matchLines := RenderDiff(files, 80, matches, 0)
+
+	if !strings.Contains(lines[matchLines[0]], searchActiveMatchStyle.Render("needle")) {
+		t.Errorf("line %d = %q, want the active match styled with searchActiveMatchStyle", matchLines[0], lines[matchLines[0]])
+	}
+	if !strings.Contains(lines[matchLines[1]], searchMatchStyle.Render("needle")) {
+		t.Errorf("line %d = %q, want the non-active match styled with searchMatchStyle", matchLines[1], lines[matchLines[1]])
+	}
+	if strings.Contains(lines[matchLines[1]], searchActiveMatchStyle.Render("needle")) {
+		t.Errorf("line %d = %q, non-active match must not use the active style", matchLines[1], lines[matchLines[1]])
+	}
+}
+
+func TestRenderDiffMatchLinesFallWithinCorrespondingFileRange(t *testing.T) {
+	files := []git.File{
+		{
+			Hunks: []git.Hunk{{
+				Header: "@@ -1 +1 @@",
+				Lines:  []git.DiffLine{{Op: git.OpContext, Text: "needle"}},
+			}},
+		},
+		{
+			Hunks: []git.Hunk{{
+				Header: "@@ -1 +1 @@",
+				Lines:  []git.DiffLine{{Op: git.OpContext, Text: "another needle"}},
+			}},
+		},
+	}
+	matches := FindDiffMatches(files, "needle")
+	_, ranges, matchLines := RenderDiff(files, 80, matches, -1)
+
+	if len(matches) != 2 || len(matchLines) != 2 {
+		t.Fatalf("got %d matches / %d matchLines, want 2/2", len(matches), len(matchLines))
+	}
+	for i, ln := range matchLines {
+		want := matches[i].FileIndex
+		if got := FileAt(ranges, ln); got != want {
+			t.Errorf("matchLines[%d] = %d, FileAt = %d, want %d", i, ln, got, want)
+		}
+	}
+}
+
 func TestRenderFileHeaderShowsRenameArrow(t *testing.T) {
 	files := []git.File{
 		{OldPath: "old.txt", Path: "new.txt", Status: git.StatusRenamed},
 	}
-	lines, _ := RenderDiff(files, 80)
+	lines, _, _ := RenderDiff(files, 80, nil, -1)
 	if len(lines) == 0 {
 		t.Fatal("expected at least one rendered line")
 	}

@@ -70,6 +70,127 @@ func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 	}
 }
 
+// fixtureDetailForSearch builds a CommitDetail with two files whose diff
+// content is fully under test control, plus a commit message containing a
+// marker that must never be treated as diff content.
+func fixtureDetailForSearch() *git.CommitDetail {
+	return &git.CommitDetail{
+		Commit: git.Commit{
+			Hash:       "abc123",
+			AuthorName: "Someone",
+			AuthorDate: time.Now(),
+			Subject:    "subject with MARKER in it",
+		},
+		Body: "message body also has MARKER in it",
+		Files: []git.File{
+			{
+				Path:   "a.txt",
+				Status: git.StatusModified,
+				Hunks: []git.Hunk{{
+					Header: "@@ -1,2 +1,2 @@",
+					Lines: []git.DiffLine{
+						{Op: git.OpContext, Text: "nothing here"},
+						{Op: git.OpAdd, Text: "needle in a.txt"},
+					},
+				}},
+			},
+			{
+				Path:   "b.txt",
+				Status: git.StatusModified,
+				Hunks: []git.Hunk{{
+					Header: "@@ -1,11 +1,11 @@",
+					Lines: append(
+						[]git.DiffLine{{Op: git.OpDelete, Text: "another needle in b.txt"}},
+						fillerLines(10)...,
+					),
+				}},
+			},
+		},
+	}
+}
+
+// fillerLines pads content well past any viewport height used in these
+// tests, so a match near the top of a later file isn't clamped to the same
+// scroll position as an earlier one purely because the whole diff already
+// fits on screen.
+func fillerLines(n int) []git.DiffLine {
+	lines := make([]git.DiffLine, n)
+	for i := range lines {
+		lines[i] = git.DiffLine{Op: git.OpContext, Text: fmt.Sprintf("filler %d", i)}
+	}
+	return lines
+}
+
+func TestDetailModelSearchFindsAndJumpsToMatch(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForSearch())
+	m.SetSize(80, 4)
+
+	total := m.Search("needle")
+	if total != 2 {
+		t.Fatalf("Search returned %d matches, want 2", total)
+	}
+	if m.leftVP.YOffset != m.matchLines[0] {
+		t.Fatalf("YOffset = %d after Search, want %d (first match's line)", m.leftVP.YOffset, m.matchLines[0])
+	}
+	if m.currentFile != 0 {
+		t.Fatalf("currentFile = %d after jumping to the first match, want 0 (a.txt)", m.currentFile)
+	}
+}
+
+func TestDetailModelSearchIgnoresHeaderAndMessageText(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForSearch())
+	m.SetSize(80, 4)
+
+	total := m.Search("MARKER")
+	if total != 0 {
+		t.Fatalf("Search(\"MARKER\") returned %d matches, want 0 (MARKER only appears in the subject/body, not the diff)", total)
+	}
+}
+
+func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForSearch())
+	m.SetSize(80, 4)
+	m.Search("needle")
+
+	pos, total := m.NextMatch()
+	if pos != 2 || total != 2 {
+		t.Fatalf("NextMatch = (%d, %d), want (2, 2)", pos, total)
+	}
+	if m.leftVP.YOffset != m.matchLines[1] {
+		t.Fatalf("YOffset = %d after NextMatch, want %d (second match's line)", m.leftVP.YOffset, m.matchLines[1])
+	}
+	if m.currentFile != 1 {
+		t.Fatalf("currentFile = %d after jumping to the second match, want 1 (b.txt)", m.currentFile)
+	}
+
+	pos, total = m.NextMatch()
+	if pos != 1 || total != 2 {
+		t.Fatalf("NextMatch past the last match = (%d, %d), want wrap to (1, 2)", pos, total)
+	}
+	if m.currentFile != 0 {
+		t.Fatalf("currentFile = %d after wrapping to the first match, want 0", m.currentFile)
+	}
+
+	pos, _ = m.PrevMatch()
+	if pos != 2 {
+		t.Fatalf("PrevMatch before the first match = %d, want wrap to 2", pos)
+	}
+}
+
+func TestDetailModelClearSearchRemovesHighlightState(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForSearch())
+	m.SetSize(80, 4)
+	m.Search("needle")
+
+	m.ClearSearch()
+	if term, pos, total, active := m.SearchStatus(); active || term != "" || pos != 0 || total != 0 {
+		t.Fatalf("SearchStatus after ClearSearch = (%q, %d, %d, %v), want inactive/zero", term, pos, total, active)
+	}
+	if _, total := m.NextMatch(); total != 0 {
+		t.Fatalf("NextMatch after ClearSearch should be a no-op, total = %d", total)
+	}
+}
+
 func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 	m := NewDetailModel(fixtureDetailWithFiles(3, 10))
 	m.SetSize(80, 8) // small viewport so scrolling moves meaningfully

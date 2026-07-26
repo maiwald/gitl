@@ -19,26 +19,44 @@ type FileRange struct {
 
 // RenderDiff flattens a commit's parsed diff files into one styled slice of
 // lines suitable for a single scrollable viewport, along with the line
-// range each file occupies within that flattened content.
-func RenderDiff(files []git.File, width int) ([]string, []FileRange) {
+// range each file occupies within that flattened content. matches (from
+// FindDiffMatches, in the same file/hunk/line traversal order this function
+// uses) are highlighted inline; activeMatch is an index into matches for
+// the one that should stand out with a distinct style (-1 for none). The
+// returned matchLines is parallel to matches: the flattened line index of
+// each match's logical line (the start of the line, not the precise
+// wrapped sub-row/column — landing on the line is enough to bring it into
+// view).
+func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int) ([]string, []FileRange, []int) {
 	var lines []string
 	ranges := make([]FileRange, 0, len(files))
+	matchLines := make([]int, len(matches))
+	mi := 0
 
-	for i, f := range files {
+	for fi, f := range files {
 		start := len(lines)
 		lines = append(lines, renderFileHeader(f, width))
 		if f.Binary {
 			lines = append(lines, binaryNoticeStyle.Render("Binary file, diff not shown"))
 		}
-		for _, h := range f.Hunks {
+		for hi, h := range f.Hunks {
 			lines = append(lines, renderClipped(hunkHeaderStyle, h.Header, width))
-			for _, l := range h.Lines {
-				lines = append(lines, renderDiffLine(l, width)...)
+			for li, l := range h.Lines {
+				lineStart := len(lines)
+				var lineMatches []lineMatch
+				for mi < len(matches) && matches[mi].FileIndex == fi && matches[mi].HunkIndex == hi && matches[mi].LineIndex == li {
+					lineMatches = append(lineMatches, lineMatch{
+						start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
+					})
+					matchLines[mi] = lineStart
+					mi++
+				}
+				lines = append(lines, renderDiffLine(l, width, lineMatches)...)
 			}
 		}
-		ranges = append(ranges, FileRange{FileIndex: i, StartLine: start, EndLine: len(lines)})
+		ranges = append(ranges, FileRange{FileIndex: fi, StartLine: start, EndLine: len(lines)})
 	}
-	return lines, ranges
+	return lines, ranges, matchLines
 }
 
 // DiffMatch identifies one case-insensitive occurrence of a search term
@@ -138,25 +156,69 @@ func fileStatusGlyph(s git.FileStatus) string {
 	}
 }
 
+// lineMatch is a search match's position within a single diff line's
+// rendered text (prefix + DiffLine.Text), plus whether it's the active
+// (n/N-selected) match.
+type lineMatch struct {
+	start, end int
+	active     bool
+}
+
 // renderDiffLine renders a single diff line, word-wrapping it to width when
 // it doesn't fit on one row. Each wrapped row is returned as its own
 // element so it becomes its own entry in the flattened diff content,
 // keeping FileRange line-index bookkeeping correct.
-func renderDiffLine(l git.DiffLine, width int) []string {
-	var style lipgloss.Style
-	var prefix string
-	switch l.Op {
-	case git.OpAdd:
-		style, prefix = diffAddStyle, "+"
-	case git.OpDelete:
-		style, prefix = diffDeleteStyle, "-"
-	default:
-		style, prefix = diffContextStyle, " "
+func renderDiffLine(l git.DiffLine, width int, matches []lineMatch) []string {
+	style, prefix := diffLineStyle(l.Op)
+	text := prefix + l.Text
+
+	var content string
+	if len(matches) == 0 {
+		content = style.Render(text)
+	} else {
+		content = renderLineWithMatches(text, len(prefix), style, matches)
 	}
 
-	text := prefix + l.Text
 	if width <= 0 {
-		return []string{style.Render(text)}
+		return []string{content}
 	}
-	return strings.Split(style.Width(width).Render(text), "\n")
+	// The outer wrap is colorless: content is already fully styled (base
+	// color plus any highlight spans), and wrapping it through a further
+	// *colored* style here would risk that color clobbering the inner
+	// spans — the same nested-style convention used in commititem.go,
+	// where an already-styled row is wrapped by a colorless outer style.
+	return strings.Split(lipgloss.NewStyle().Width(width).Render(content), "\n")
+}
+
+func diffLineStyle(op git.LineOp) (lipgloss.Style, string) {
+	switch op {
+	case git.OpAdd:
+		return diffAddStyle, "+"
+	case git.OpDelete:
+		return diffDeleteStyle, "-"
+	default:
+		return diffContextStyle, " "
+	}
+}
+
+// renderLineWithMatches splits text into pre/match/post spans at each
+// match's byte offsets (into text, hence prefixLen to shift DiffMatch's
+// DiffLine.Text-relative columns), styling unmatched spans with base and
+// matched spans with searchMatchStyle/searchActiveMatchStyle, then
+// concatenating the already-rendered pieces.
+func renderLineWithMatches(text string, prefixLen int, base lipgloss.Style, matches []lineMatch) string {
+	var b strings.Builder
+	pos := 0
+	for _, m := range matches {
+		start, end := prefixLen+m.start, prefixLen+m.end
+		b.WriteString(base.Render(text[pos:start]))
+		style := searchMatchStyle
+		if m.active {
+			style = searchActiveMatchStyle
+		}
+		b.WriteString(style.Render(text[start:end]))
+		pos = end
+	}
+	b.WriteString(base.Render(text[pos:]))
+	return b.String()
 }
