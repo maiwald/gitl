@@ -12,20 +12,32 @@ const authorColumnWidth = 18
 
 // renderCommitRow renders a single commit list row: date, author, ref
 // decorations, and the commit subject, truncated/padded to width.
-func renderCommitRow(c git.Commit, width int, selected bool) string {
+// searchTerm highlights matching substrings within the row (case
+// insensitive); isActiveMatch picks a visually distinct style for whichever
+// match n/N currently points at. A commit can be a search match via its
+// full message body, which isn't shown in the row at all — in that case
+// there's simply nothing here to highlight, which is expected.
+func renderCommitRow(c git.Commit, width int, selected bool, searchTerm string, isActiveMatch bool) string {
 	date := c.AuthorDate.Format("2006-01-02")
 	author := fmt.Sprintf("%-*s", authorColumnWidth, truncate(c.AuthorName, authorColumnWidth))
+	subject := c.Subject
+
 	if !selected {
-		date = dateStyle.Render(date)
-		author = authorStyle.Render(author)
+		matchStyle := searchMatchStyle
+		if isActiveMatch {
+			matchStyle = searchActiveMatchStyle
+		}
+		date = highlightSpans(date, searchTerm, dateStyle, matchStyle)
+		author = highlightSpans(author, searchTerm, authorStyle, matchStyle)
+		subject = highlightSpans(subject, searchTerm, lipgloss.NewStyle(), matchStyle)
 	}
 	refs := formatRefs(c.Refs, selected)
 
 	var row string
 	if refs != "" {
-		row = fmt.Sprintf("%s  %s  %s %s", date, author, refs, c.Subject)
+		row = fmt.Sprintf("%s  %s  %s %s", date, author, refs, subject)
 	} else {
-		row = fmt.Sprintf("%s  %s  %s", date, author, c.Subject)
+		row = fmt.Sprintf("%s  %s  %s", date, author, subject)
 	}
 
 	style := normalRowStyle
@@ -33,6 +45,33 @@ func renderCommitRow(c git.Commit, width int, selected bool) string {
 		style = selectedRowStyle
 	}
 	return style.Width(width).MaxWidth(width).Render(row)
+}
+
+// highlightSpans splits text at case-insensitive occurrences of term,
+// rendering unmatched runs with base and matched runs with match, then
+// concatenating the already-rendered pieces — the same nested-style
+// pattern used above (style a plain-text span, then render it), just
+// generalized to N spans instead of one field per style. Returns
+// base.Render(text) unchanged when term is empty.
+func highlightSpans(text, term string, base, match lipgloss.Style) string {
+	if term == "" {
+		return base.Render(text)
+	}
+	lowerText, lowerTerm := strings.ToLower(text), strings.ToLower(term)
+	var b strings.Builder
+	pos := 0
+	for {
+		idx := strings.Index(lowerText[pos:], lowerTerm)
+		if idx < 0 {
+			b.WriteString(base.Render(text[pos:]))
+			break
+		}
+		idx += pos
+		b.WriteString(base.Render(text[pos:idx]))
+		b.WriteString(match.Render(text[idx : idx+len(term)]))
+		pos = idx + len(term)
+	}
+	return b.String()
 }
 
 // formatRefs renders branch/tag/HEAD decorations as bracketed badges. When

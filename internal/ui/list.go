@@ -42,6 +42,7 @@ func NewListModel(commits []git.Commit) ListModel {
 		commits:    commits,
 		vp:         viewport.New(0, 0),
 		totalCount: len(commits),
+		matchPos:   -1,
 	}
 }
 
@@ -278,9 +279,13 @@ func (m ListModel) SearchStatus() (term string, pos, total int, active bool) {
 }
 
 func (m *ListModel) render() {
+	activeMatch := -1
+	if m.matchPos >= 0 && m.matchPos < len(m.matches) {
+		activeMatch = m.matches[m.matchPos]
+	}
 	lines := make([]string, len(m.commits))
 	for i, c := range m.commits {
-		lines[i] = renderCommitRow(c, m.vp.Width, i == m.cursor)
+		lines[i] = renderCommitRow(c, m.vp.Width, i == m.cursor, m.searchTerm, i == activeMatch)
 	}
 	m.vp.SetContent(strings.Join(lines, "\n"))
 }
