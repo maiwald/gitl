@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,5 +118,45 @@ func TestDetailModelTabNoopsWithoutFiles(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if m.focus != focusDiff {
 		t.Fatalf("focus = %v after tab with no files, want focusDiff (no-op)", m.focus)
+	}
+}
+
+func TestDetailModelMergeCommitShowsNotice(t *testing.T) {
+	m := NewDetailModel(&git.CommitDetail{
+		Commit: git.Commit{
+			Hash:       "merge123",
+			Parents:    []string{"p1", "p2"},
+			AuthorName: "A",
+			AuthorDate: time.Now(),
+			Subject:    "merge",
+		},
+	})
+	m.SetSize(80, 24)
+
+	if !strings.Contains(m.View(), "Merge commit") {
+		t.Errorf("View() = %q, want it to mention the merge-commit limitation", m.View())
+	}
+}
+
+func TestDetailModelEmptyCommitShowsNoChangesNotice(t *testing.T) {
+	m := NewDetailModel(&git.CommitDetail{
+		Commit: git.Commit{Hash: "empty123", AuthorName: "A", AuthorDate: time.Now(), Subject: "empty"},
+	})
+	m.SetSize(80, 24)
+
+	if !strings.Contains(m.View(), "No changes") {
+		t.Errorf("View() = %q, want it to say there are no changes", m.View())
+	}
+}
+
+func TestDetailModelReflowClampsWidthsOnNarrowTerminal(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithFiles(2, 5))
+	m.SetSize(15, 24) // narrower than minFileListWidth + minDiffWidth
+
+	if m.leftVP.Width < minDiffWidth {
+		t.Errorf("diff panel width = %d, want at least %d even on a narrow terminal", m.leftVP.Width, minDiffWidth)
+	}
+	if m.leftVP.Width < 0 {
+		t.Errorf("diff panel width = %d, must not be negative", m.leftVP.Width)
 	}
 }

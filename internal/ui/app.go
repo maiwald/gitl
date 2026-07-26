@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -62,6 +63,13 @@ func loadInitialCommits() tea.Msg {
 	repo, err := git.OpenRepo(ctx, ".")
 	if err != nil {
 		return errMsg{err}
+	}
+	hasCommits, err := repo.HasCommits(ctx)
+	if err != nil {
+		return errMsg{err}
+	}
+	if !hasCommits {
+		return errMsg{errors.New("this repository has no commits yet")}
 	}
 	commits, err := repo.FetchLogBatch(ctx, 0, batchSize)
 	if err != nil {

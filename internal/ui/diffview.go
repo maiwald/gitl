@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/maiwald/gitl/internal/git"
 )
 
@@ -29,9 +31,9 @@ func RenderDiff(files []git.File, width int) ([]string, []FileRange) {
 			lines = append(lines, binaryNoticeStyle.Render("Binary file, diff not shown"))
 		}
 		for _, h := range f.Hunks {
-			lines = append(lines, hunkHeaderStyle.Render(h.Header))
+			lines = append(lines, renderClipped(hunkHeaderStyle, h.Header, width))
 			for _, l := range h.Lines {
-				lines = append(lines, renderDiffLine(l))
+				lines = append(lines, renderDiffLine(l, width)...)
 			}
 		}
 		ranges = append(ranges, FileRange{FileIndex: i, StartLine: start, EndLine: len(lines)})
@@ -65,7 +67,17 @@ func renderFileHeader(f git.File, width int) string {
 		path = f.OldPath + " -> " + f.Path
 	}
 	label := fmt.Sprintf("%s %s", fileStatusGlyph(f.Status), path)
-	return fileHeaderStyle.Width(width).MaxWidth(width).Render(label)
+	return renderClipped(fileHeaderStyle, label, width)
+}
+
+// renderClipped renders text in a single line, truncated (not wrapped) to
+// width. It skips the width constraint entirely when width isn't positive,
+// since lipgloss's Width/MaxWidth degenerate at zero.
+func renderClipped(style lipgloss.Style, text string, width int) string {
+	if width <= 0 {
+		return style.Render(text)
+	}
+	return style.Width(width).MaxWidth(width).Render(text)
 }
 
 func fileStatusGlyph(s git.FileStatus) string {
@@ -83,13 +95,25 @@ func fileStatusGlyph(s git.FileStatus) string {
 	}
 }
 
-func renderDiffLine(l git.DiffLine) string {
+// renderDiffLine renders a single diff line, word-wrapping it to width when
+// it doesn't fit on one row. Each wrapped row is returned as its own
+// element so it becomes its own entry in the flattened diff content,
+// keeping FileRange line-index bookkeeping correct.
+func renderDiffLine(l git.DiffLine, width int) []string {
+	var style lipgloss.Style
+	var prefix string
 	switch l.Op {
 	case git.OpAdd:
-		return diffAddStyle.Render("+" + l.Text)
+		style, prefix = diffAddStyle, "+"
 	case git.OpDelete:
-		return diffDeleteStyle.Render("-" + l.Text)
+		style, prefix = diffDeleteStyle, "-"
 	default:
-		return diffContextStyle.Render(" " + l.Text)
+		style, prefix = diffContextStyle, " "
 	}
+
+	text := prefix + l.Text
+	if width <= 0 {
+		return []string{style.Render(text)}
+	}
+	return strings.Split(style.Width(width).Render(text), "\n")
 }

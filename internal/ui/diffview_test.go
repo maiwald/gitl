@@ -86,6 +86,51 @@ func TestFileAtBoundaries(t *testing.T) {
 	}
 }
 
+func TestRenderDiffWrapsLongLinesAndKeepsRangesContiguous(t *testing.T) {
+	longText := strings.Repeat("word ", 40) // much wider than a 20-col panel
+	files := []git.File{
+		{
+			Path:   "long.txt",
+			Status: git.StatusModified,
+			Hunks: []git.Hunk{
+				{
+					Header: "@@ -1 +1 @@",
+					Lines: []git.DiffLine{
+						{Op: git.OpAdd, Text: longText},
+						{Op: git.OpContext, Text: "short"},
+					},
+				},
+			},
+		},
+		{
+			Path:   "next.txt",
+			Status: git.StatusModified,
+			Hunks: []git.Hunk{
+				{Header: "@@ -1 +1 @@", Lines: []git.DiffLine{{Op: git.OpContext, Text: "x"}}},
+			},
+		},
+	}
+
+	lines, ranges := RenderDiff(files, 20)
+
+	// The long line must have wrapped into more than one rendered row.
+	if ranges[0].EndLine-ranges[0].StartLine <= 3 { // header + hunk header + short line + wrapped long line(s)
+		t.Fatalf("file 0 has %d lines, expected wrapping to add extra rows", ranges[0].EndLine-ranges[0].StartLine)
+	}
+
+	// Ranges must still be contiguous and cover every line with no gaps or
+	// overlaps, so FileAt keeps working after wrapping expands a file's
+	// line count.
+	if ranges[0].StartLine != 0 || ranges[0].EndLine != ranges[1].StartLine || ranges[1].EndLine != len(lines) {
+		t.Fatalf("ranges not contiguous: %+v (total lines %d)", ranges, len(lines))
+	}
+	for i := ranges[0].StartLine; i < ranges[0].EndLine; i++ {
+		if got := FileAt(ranges, i); got != 0 {
+			t.Errorf("FileAt(ranges, %d) = %d, want 0 (still within file 0 after wrapping)", i, got)
+		}
+	}
+}
+
 func TestFileAtEmptyRanges(t *testing.T) {
 	if got := FileAt(nil, 0); got != -1 {
 		t.Errorf("FileAt(nil, 0) = %d, want -1", got)

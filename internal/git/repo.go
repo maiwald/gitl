@@ -2,7 +2,9 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -22,4 +24,19 @@ func OpenRepo(ctx context.Context, path string) (*Repo, error) {
 		return nil, fmt.Errorf("not a git repository: %s", path)
 	}
 	return &Repo{Path: path}, nil
+}
+
+// HasCommits reports whether HEAD resolves to a commit. It returns false,
+// not an error, for a freshly initialized repository with no commits yet.
+func (r *Repo) HasCommits(ctx context.Context) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "HEAD")
+	cmd.Dir = r.Path
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("git rev-parse --verify --quiet HEAD: %w", err)
+	}
+	return true, nil
 }

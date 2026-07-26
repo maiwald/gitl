@@ -18,6 +18,11 @@ const fileListWidthFraction = 0.25
 // minFileListWidth keeps the file list panel usable on narrow terminals.
 const minFileListWidth = 20
 
+// minDiffWidth keeps the diff panel usable on narrow terminals, taking
+// priority over the file list's target share of the width when the two
+// minimums can't both be satisfied.
+const minDiffWidth = 10
+
 // paneFocus identifies which of the two detail-view panes receives
 // navigation keys.
 type paneFocus int
@@ -78,13 +83,25 @@ func (m *DetailModel) reflow() {
 	if fileListWidth < minFileListWidth {
 		fileListWidth = minFileListWidth
 	}
-	if fileListWidth > m.width {
-		fileListWidth = m.width
+	maxFileListWidth := m.width - minDiffWidth
+	if maxFileListWidth < 0 {
+		maxFileListWidth = 0
+	}
+	if fileListWidth > maxFileListWidth {
+		fileListWidth = maxFileListWidth
 	}
 	diffWidth := m.width - fileListWidth
+	if diffWidth < 0 {
+		diffWidth = 0
+	}
 
 	var diffLines []string
-	diffLines, m.fileRanges = RenderDiff(m.detail.Files, diffWidth)
+	if len(m.detail.Files) == 0 {
+		diffLines = []string{noDiffNotice(m.detail)}
+		m.fileRanges = nil
+	} else {
+		diffLines, m.fileRanges = RenderDiff(m.detail.Files, diffWidth)
+	}
 	m.leftVP.Width = diffWidth
 	m.leftVP.Height = bodyHeight
 	m.leftVP.SetContent(strings.Join(diffLines, "\n"))
@@ -180,6 +197,13 @@ func (m *DetailModel) jumpToCurrentFile() {
 		return
 	}
 	m.leftVP.SetYOffset(m.fileRanges[m.currentFile].StartLine)
+}
+
+func noDiffNotice(d *git.CommitDetail) string {
+	if len(d.Parents) > 1 {
+		return binaryNoticeStyle.Render("Merge commit: diff not shown (viewing merge diffs isn't supported yet).")
+	}
+	return binaryNoticeStyle.Render("No changes in this commit.")
 }
 
 func renderCommitHeader(d *git.CommitDetail) string {

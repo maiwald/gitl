@@ -68,6 +68,40 @@ func TestOpenRepoRejectsNonRepo(t *testing.T) {
 	}
 }
 
+func TestHasCommitsOnEmptyRepo(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	cmd := exec.CommandContext(ctx, "git", "init", "-b", "main")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+
+	repo, err := OpenRepo(ctx, dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+
+	has, err := repo.HasCommits(ctx)
+	if err != nil {
+		t.Fatalf("HasCommits: %v", err)
+	}
+	if has {
+		t.Error("HasCommits = true for a freshly initialized repo, want false")
+	}
+}
+
+func TestHasCommitsAfterFirstCommit(t *testing.T) {
+	repo, _ := initFixtureRepo(t, 1)
+	has, err := repo.HasCommits(context.Background())
+	if err != nil {
+		t.Fatalf("HasCommits: %v", err)
+	}
+	if !has {
+		t.Error("HasCommits = false after a commit exists, want true")
+	}
+}
+
 func TestFetchLogBatch(t *testing.T) {
 	repo, wantHashesNewestFirst := initFixtureRepo(t, 5)
 	ctx := context.Background()
