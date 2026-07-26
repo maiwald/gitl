@@ -32,14 +32,16 @@ const (
 	focusFiles
 )
 
-// DetailModel renders full commit metadata plus a two-pane view: a large
-// scrollable, highlighted diff on the left and the list of changed files on
-// the right. The file list entry for whichever file is currently in view in
-// the diff panel is highlighted, and the sync works both ways: navigating
-// the file list and pressing enter jumps the diff to that file.
+// DetailModel renders a commit's metadata, message and diff as a single
+// scrollable left panel (so a long commit message doesn't permanently eat
+// into the screen), with the list of changed files on the right. The file
+// list entry for whichever file is currently in view in the diff panel is
+// highlighted, and the sync works both ways: navigating the file list and
+// pressing enter jumps the diff to that file. While the scroll position is
+// still within the header/message (above the first file), the first file is
+// treated as "current" since that's where scrolling down will land next.
 type DetailModel struct {
 	detail *git.CommitDetail
-	header string
 
 	fileRanges  []FileRange
 	currentFile int
@@ -55,7 +57,6 @@ type DetailModel struct {
 func NewDetailModel(detail *git.CommitDetail) DetailModel {
 	return DetailModel{
 		detail: detail,
-		header: renderCommitHeader(detail),
 		leftVP: viewport.New(0, 0),
 		files:  NewFileListModel(detail.Files),
 	}
@@ -71,12 +72,6 @@ func (m *DetailModel) SetSize(width, height int) {
 func (m *DetailModel) reflow() {
 	if m.detail == nil {
 		return
-	}
-
-	headerHeight := lipgloss.Height(m.header)
-	bodyHeight := m.height - headerHeight
-	if bodyHeight < 0 {
-		bodyHeight = 0
 	}
 
 	fileListWidth := int(float64(m.width) * fileListWidthFraction)
@@ -96,18 +91,49 @@ func (m *DetailModel) reflow() {
 	}
 
 	var diffLines []string
+	var fileRanges []FileRange
 	if len(m.detail.Files) == 0 {
 		diffLines = []string{noDiffNotice(m.detail)}
-		m.fileRanges = nil
 	} else {
-		diffLines, m.fileRanges = RenderDiff(m.detail.Files, diffWidth)
+		diffLines, fileRanges = RenderDiff(m.detail.Files, diffWidth)
 	}
-	m.leftVP.Width = diffWidth
-	m.leftVP.Height = bodyHeight
-	m.leftVP.SetContent(strings.Join(diffLines, "\n"))
 
-	m.files.SetSize(fileListWidth, bodyHeight)
+	// The header/message is wrapped the same way diff lines are (each
+	// visual row its own entry) so the line offset applied to fileRanges
+	// below stays exact regardless of terminal width — see the
+	// FileRange/FileAt convention in diffview.go.
+	headerLines := wrapPlain(renderCommitHeader(m.detail), diffWidth)
+	offset := len(headerLines) + 1
+
+	content := make([]string, 0, len(headerLines)+1+len(diffLines))
+	content = append(content, headerLines...)
+	content = append(content, "")
+	content = append(content, diffLines...)
+
+	m.fileRanges = make([]FileRange, len(fileRanges))
+	for i, r := range fileRanges {
+		m.fileRanges[i] = FileRange{FileIndex: r.FileIndex, StartLine: r.StartLine + offset, EndLine: r.EndLine + offset}
+	}
+
+	m.leftVP.Width = diffWidth
+	m.leftVP.Height = m.height
+	m.leftVP.SetContent(strings.Join(content, "\n"))
+
+	m.files.SetSize(fileListWidth, m.height)
 	m.syncHighlightFromScroll()
+}
+
+// wrapPlain word-wraps text to width, flattening every visual row into its
+// own slice entry (see the comment in reflow for why that matters).
+func wrapPlain(text string, width int) []string {
+	if width <= 0 {
+		return strings.Split(text, "\n")
+	}
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		out = append(out, strings.Split(lipgloss.NewStyle().Width(width).Render(line), "\n")...)
+	}
+	return out
 }
 
 // Update handles a navigation key press: Tab switches which pane receives
@@ -155,15 +181,20 @@ func (m *DetailModel) updateDiff(msg tea.KeyMsg) {
 }
 
 // syncHighlightFromScroll recomputes which file the diff panel's topmost
-// visible line belongs to, and highlights that file in the list.
+// visible line belongs to, and highlights that file in the list. Above the
+// first file (still within the header/commit message) FileAt has nothing to
+// report, so it clamps to the first file, since that's what scrolling down
+// reaches next.
 func (m *DetailModel) syncHighlightFromScroll() {
 	if len(m.fileRanges) == 0 {
 		return
 	}
-	if i := FileAt(m.fileRanges, m.leftVP.YOffset); i >= 0 {
-		m.currentFile = i
-		m.files.SetHighlight(i)
+	i := FileAt(m.fileRanges, m.leftVP.YOffset)
+	if i < 0 {
+		i = 0
 	}
+	m.currentFile = i
+	m.files.SetHighlight(i)
 }
 
 func (m *DetailModel) updateFiles(msg tea.KeyMsg) {
@@ -222,6 +253,5 @@ func (m DetailModel) View() string {
 	if m.detail == nil {
 		return ""
 	}
-	body := lipgloss.JoinHorizontal(lipgloss.Top, m.leftVP.View(), m.files.View())
-	return lipgloss.JoinVertical(lipgloss.Left, m.header, body)
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.leftVP.View(), m.files.View())
 }

@@ -39,6 +39,37 @@ func fixtureDetailWithFiles(nFiles, linesPerFile int) *git.CommitDetail {
 	}
 }
 
+// TestDetailModelMessageScrollsWithDiff pins down that the commit
+// message/header lives inside the scrollable diff content (rather than a
+// fixed row above it), and that the file list points at the first file
+// while still scrolled above it.
+func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
+	d := fixtureDetailWithFiles(2, 20)
+	d.Body = "message-scroll-marker"
+	m := NewDetailModel(d)
+	m.SetSize(80, 8)
+
+	if !strings.Contains(m.leftVP.View(), "message-scroll-marker") {
+		t.Fatalf("leftVP content = %q, want it to contain the commit message", m.leftVP.View())
+	}
+	if m.fileRanges[0].StartLine == 0 {
+		t.Fatalf("fileRanges[0].StartLine = 0, want > 0 (message should precede the diff content)")
+	}
+
+	// Above the first file (still within the header/message), the first
+	// file is treated as current since that's where scrolling down lands.
+	if m.currentFile != 0 || m.files.highlightIndex != 0 {
+		t.Fatalf("currentFile=%d highlightIndex=%d while above first file, want both 0", m.currentFile, m.files.highlightIndex)
+	}
+
+	// Scroll all the way to the bottom, into the last file's content.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	lastFile := len(m.fileRanges) - 1
+	if m.currentFile != lastFile || m.files.highlightIndex != lastFile {
+		t.Fatalf("currentFile=%d highlightIndex=%d at bottom, want both %d", m.currentFile, m.files.highlightIndex, lastFile)
+	}
+}
+
 func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 	m := NewDetailModel(fixtureDetailWithFiles(3, 10))
 	m.SetSize(80, 8) // small viewport so scrolling moves meaningfully
