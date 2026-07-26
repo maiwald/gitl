@@ -107,21 +107,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.list.SetSize(m.width, m.height)
-		m.detail.SetSize(m.width, m.height)
+		m.list.SetSize(m.width, m.contentHeight())
+		m.detail.SetSize(m.width, m.contentHeight())
 		return m, nil
 	case commitsLoadedMsg:
 		m.repo = msg.repo
 		m.list = NewListModel(msg.commits)
 		m.list.SetTotalCount(msg.totalCount)
-		m.list.SetSize(m.width, m.height)
+		m.list.SetSize(m.width, m.contentHeight())
 		return m, nil
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
 		return m, nil
 	case commitDetailLoadedMsg:
 		m.detail = NewDetailModel(msg.detail)
-		m.detail.SetSize(m.width, m.height)
+		m.detail.SetSize(m.width, m.contentHeight())
 		m.active = viewDetail
 		return m, nil
 	case errMsg:
@@ -172,8 +172,27 @@ func (m Model) View() string {
 	if m.err != nil {
 		return errStyle.Render("error: "+m.err.Error()) + "\n"
 	}
+	var body string
 	if m.active == viewDetail {
-		return m.detail.View()
+		body = m.detail.View()
+	} else {
+		body = m.list.View()
 	}
-	return m.list.View()
+	return body + "\n" + m.renderStatusBar()
+}
+
+// contentHeight is how many rows remain for the list/detail views once the
+// bottom status bar's single row is reserved.
+func (m Model) contentHeight() int {
+	h := m.height - 1
+	if h < 0 {
+		h = 0
+	}
+	return h
+}
+
+// renderStatusBar renders the bottom status bar. It's currently always
+// empty; search state will give it content in a later change.
+func (m Model) renderStatusBar() string {
+	return statusBarStyle.Width(m.width).Render("")
 }

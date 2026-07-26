@@ -42,4 +42,9 @@ var (
 	binaryNoticeStyle = lipgloss.NewStyle().
 				Italic(true).
 				Foreground(lipgloss.Color("245"))
+
+	statusBarStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("235")).
+			Foreground(lipgloss.Color("252")).
+			Padding(0, 1)
 )
