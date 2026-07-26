@@ -29,6 +29,11 @@ type ListModel struct {
 	totalCount       int
 	loadingMore      bool
 	jumpToEndPending bool
+
+	searchTerm       string
+	matches          []int // absolute commit positions, ascending
+	matchPos         int   // index into matches; -1 when there are none
+	matchJumpPending bool
 }
 
 // NewListModel constructs a list model over the given commits.
@@ -54,13 +59,19 @@ func (m *ListModel) SetTotalCount(n int) {
 }
 
 // AppendCommits adds a freshly fetched batch to the loaded set, completing
-// any pending jump-to-bottom once the tail is in view.
+// any pending jump-to-bottom or jump-to-search-match once the target
+// position is in view.
 func (m *ListModel) AppendCommits(commits []git.Commit) {
 	m.commits = append(m.commits, commits...)
 	m.loadingMore = false
 	if m.jumpToEndPending && len(m.commits) >= m.totalCount {
 		m.jumpToEndPending = false
 		m.cursor = len(m.commits) - 1
+		m.ensureVisible()
+	}
+	if m.matchJumpPending && m.matchPos >= 0 && m.matches[m.matchPos] < len(m.commits) {
+		m.matchJumpPending = false
+		m.cursor = m.matches[m.matchPos]
 		m.ensureVisible()
 	}
 	m.render()
@@ -73,6 +84,12 @@ func (m ListModel) Selected() (git.Commit, bool) {
 	}
 	return m.commits[m.cursor], true
 }
+
+// LoadedCount reports how many commits are currently loaded.
+func (m ListModel) LoadedCount() int { return len(m.commits) }
+
+// TotalCount reports the total number of commits reachable from HEAD.
+func (m ListModel) TotalCount() int { return m.totalCount }
 
 // Update processes a navigation key press. It returns a fetchRequest and
 // true when more commits must be loaded from the repo to satisfy the
@@ -130,11 +147,35 @@ func (m *ListModel) jumpToBottom() (fetchRequest, bool) {
 		return fetchRequest{}, false
 	}
 	m.jumpToEndPending = true
-	if m.loadingMore {
+	return m.beginLoadingUpTo(m.totalCount - 1)
+}
+
+// beginLoadingUpTo requests whatever commits are needed so that index
+// target (plus a little lookahead) is loaded, unless a fetch is already in
+// flight or it's already loaded. This is the same "fetch the rest in one
+// shot" mechanism jumpToBottom uses (target = totalCount-1 there), just
+// parameterized by an arbitrary position — used by search to load only as
+// far as the relevant match rather than the entire remaining history.
+func (m *ListModel) beginLoadingUpTo(target int) (fetchRequest, bool) {
+	if m.loadingMore || len(m.commits) >= m.totalCount {
+		return fetchRequest{}, false
+	}
+	need := target + 1 + loadMoreLookahead
+	if need > m.totalCount {
+		need = m.totalCount
+	}
+	if need <= len(m.commits) {
 		return fetchRequest{}, false
 	}
 	m.loadingMore = true
-	return fetchRequest{skip: len(m.commits), limit: m.totalCount - len(m.commits)}, true
+	return fetchRequest{skip: len(m.commits), limit: need - len(m.commits)}, true
+}
+
+// RequestLoadUpTo dispatches (or reuses an already-in-flight) fetch to
+// bring position target into the loaded range. Exported so app.go can
+// trigger it directly for search-driven jumps.
+func (m *ListModel) RequestLoadUpTo(target int) (fetchRequest, bool) {
+	return m.beginLoadingUpTo(target)
 }
 
 // maybeLoadMore requests the next batch when the cursor has scrolled near
@@ -163,6 +204,77 @@ func (m *ListModel) ensureVisible() {
 	if m.vp.YOffset < 0 {
 		m.vp.YOffset = 0
 	}
+}
+
+// Search records matches (absolute commit positions, ascending, as computed
+// by the caller from a git-provided hash set) and jumps to the first match
+// at or after the cursor, wrapping to the first match if none qualify. It
+// reports needsLoad=true when that position isn't loaded yet, in which
+// case the caller should dispatch a fetch via RequestLoadUpTo(target); the
+// jump completes automatically once AppendCommits delivers it.
+func (m *ListModel) Search(term string, matches []int) (needsLoad bool, target int) {
+	m.searchTerm = term
+	m.matches = matches
+	m.matchPos = -1
+	m.matchJumpPending = false
+	if len(matches) == 0 {
+		m.render()
+		return false, 0
+	}
+	m.matchPos = 0 // wrap to the first match if none qualify at/after the cursor
+	for i, idx := range matches {
+		if idx >= m.cursor {
+			m.matchPos = i
+			break
+		}
+	}
+	return m.applyCurrentMatch()
+}
+
+// NextMatch and PrevMatch cycle to the following/preceding search match,
+// wrapping at both ends. See Search for the needsLoad/target contract.
+func (m *ListModel) NextMatch() (needsLoad bool, target int) { return m.stepMatch(1) }
+func (m *ListModel) PrevMatch() (needsLoad bool, target int) { return m.stepMatch(-1) }
+
+func (m *ListModel) stepMatch(delta int) (needsLoad bool, target int) {
+	if len(m.matches) == 0 {
+		return false, 0
+	}
+	m.matchPos = (m.matchPos + delta + len(m.matches)) % len(m.matches)
+	return m.applyCurrentMatch()
+}
+
+// applyCurrentMatch moves the cursor to the current match if it's already
+// loaded, or marks a jump as pending (resolved by AppendCommits) and
+// reports needsLoad so the caller dispatches a targeted fetch.
+func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
+	target = m.matches[m.matchPos]
+	if target >= len(m.commits) {
+		m.matchJumpPending = true
+		return true, target
+	}
+	m.cursor = target
+	m.ensureVisible()
+	m.render()
+	return false, target
+}
+
+// ClearSearch discards the active search and its highlighting.
+func (m *ListModel) ClearSearch() {
+	m.searchTerm = ""
+	m.matches = nil
+	m.matchPos = -1
+	m.matchJumpPending = false
+	m.render()
+}
+
+// SearchStatus reports the active search term and match position (1-based)
+// for status-bar display, and whether a search is active at all.
+func (m ListModel) SearchStatus() (term string, pos, total int, active bool) {
+	if m.searchTerm == "" {
+		return "", 0, 0, false
+	}
+	return m.searchTerm, m.matchPos + 1, len(m.matches), true
 }
 
 func (m *ListModel) render() {

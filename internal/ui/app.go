@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -35,6 +36,20 @@ type Model struct {
 
 	searchPromptOpen bool
 	searchInput      textinput.Model
+	pendingSearch    *pendingSearch
+}
+
+// pendingSearch tracks the two independent, concurrent git queries a list
+// search needs before it can compute match positions: which commits match
+// (by hash), and the full hash order (to map a matched hash to a position).
+// Whichever message arrives first is recorded and pumpPendingSearch is
+// re-tried; the search only resolves once both are in.
+type pendingSearch struct {
+	term         string
+	matchSet     map[string]bool
+	haveMatchSet bool
+	order        []string
+	haveOrder    bool
 }
 
 // NewModel constructs the initial root model.
@@ -106,6 +121,36 @@ func fetchDetailCmd(repo *git.Repo, hash string) tea.Cmd {
 	}
 }
 
+type searchHashesLoadedMsg struct {
+	term   string
+	hashes map[string]bool
+}
+
+type allHashesLoadedMsg struct {
+	term   string
+	hashes []string
+}
+
+func searchHashesCmd(repo *git.Repo, term string) tea.Cmd {
+	return func() tea.Msg {
+		hashes, err := repo.SearchCommitHashes(context.Background(), term)
+		if err != nil {
+			return errMsg{err}
+		}
+		return searchHashesLoadedMsg{term: term, hashes: hashes}
+	}
+}
+
+func allHashesCmd(repo *git.Repo, term string) tea.Cmd {
+	return func() tea.Msg {
+		hashes, err := repo.AllCommitHashes(context.Background())
+		if err != nil {
+			return errMsg{err}
+		}
+		return allHashesLoadedMsg{term: term, hashes: hashes}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -131,11 +176,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.SetSize(m.width, m.contentHeight())
 		m.active = viewDetail
 		return m, nil
+	case searchHashesLoadedMsg:
+		if m.pendingSearch != nil && m.pendingSearch.term == msg.term {
+			m.pendingSearch.matchSet = msg.hashes
+			m.pendingSearch.haveMatchSet = true
+			return m.pumpPendingSearch()
+		}
+		return m, nil
+	case allHashesLoadedMsg:
+		if m.pendingSearch != nil && m.pendingSearch.term == msg.term {
+			m.pendingSearch.order = msg.hashes
+			m.pendingSearch.haveOrder = true
+			return m.pumpPendingSearch()
+		}
+		return m, nil
 	case errMsg:
 		m.err = msg.err
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	}
+	return m, nil
+}
+
+// startListSearch kicks off the two independent git queries a list search
+// needs (which commits match, and the full hash order to place them),
+// concurrently — they're read-only subprocess calls with no shared state,
+// so there's no reason to make one wait for the other.
+func (m Model) startListSearch(term string) (Model, tea.Cmd) {
+	m.pendingSearch = &pendingSearch{term: term}
+	return m, tea.Batch(searchHashesCmd(m.repo, term), allHashesCmd(m.repo, term))
+}
+
+// pumpPendingSearch finalizes a list search once both halves of
+// pendingSearch have arrived, computing match positions and applying them
+// to the list (which may itself require a targeted fetch, dispatched here,
+// to bring the first relevant match into the loaded range).
+func (m Model) pumpPendingSearch() (Model, tea.Cmd) {
+	p := m.pendingSearch
+	if p == nil || !p.haveMatchSet || !p.haveOrder {
+		return m, nil
+	}
+	m.pendingSearch = nil
+
+	matches := make([]int, 0, len(p.matchSet))
+	for i, h := range p.order {
+		if p.matchSet[h] {
+			matches = append(matches, i)
+		}
+	}
+
+	needsLoad, target := m.list.Search(p.term, matches)
+	if needsLoad {
+		if req, ok := m.list.RequestLoadUpTo(target); ok {
+			return m, fetchMoreCmd(m.repo, req)
+		}
 	}
 	return m, nil
 }
@@ -155,6 +250,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.Width = m.width - 2
 		m.searchPromptOpen = true
 		return m, m.searchInput.Focus()
+	}
+	if m.active == viewList {
+		if _, _, _, active := m.list.SearchStatus(); active {
+			if key.Matches(msg, DefaultKeyMap.NextMatch) {
+				return m.advanceListMatch(1)
+			}
+			if key.Matches(msg, DefaultKeyMap.PrevMatch) {
+				return m.advanceListMatch(-1)
+			}
+		}
 	}
 
 	switch m.active {
@@ -202,12 +307,41 @@ func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// submitSearch closes the prompt on Enter. Routing the submitted term into
-// the list/detail views' own search logic is wired up in a follow-up
-// change.
+// submitSearch closes the prompt on Enter and starts a search for the
+// submitted term. An empty term clears whichever view's search is active
+// instead (a vim-:noh-like escape hatch). Detail-view search is wired up
+// in a follow-up change.
 func (m Model) submitSearch() (tea.Model, tea.Cmd) {
+	term := m.searchInput.Value()
 	m.searchPromptOpen = false
 	m.searchInput.Blur()
+
+	if term == "" {
+		m.list.ClearSearch()
+		return m, nil
+	}
+	if m.active == viewList {
+		return m.startListSearch(term)
+	}
+	return m, nil
+}
+
+// advanceListMatch cycles the list's active search to the next (delta>0)
+// or previous match, dispatching a targeted fetch if that match isn't
+// loaded yet.
+func (m Model) advanceListMatch(delta int) (Model, tea.Cmd) {
+	var needsLoad bool
+	var target int
+	if delta > 0 {
+		needsLoad, target = m.list.NextMatch()
+	} else {
+		needsLoad, target = m.list.PrevMatch()
+	}
+	if needsLoad {
+		if req, ok := m.list.RequestLoadUpTo(target); ok {
+			return m, fetchMoreCmd(m.repo, req)
+		}
+	}
 	return m, nil
 }
 
@@ -238,12 +372,23 @@ func (m Model) contentHeight() int {
 }
 
 // renderStatusBar renders the bottom status bar: the live query while the
-// search prompt is open, empty otherwise. Match/position content is added
-// in a later change.
+// search prompt is open, or the active search's term/position/loading
+// state otherwise (detail-view search status is added in a later change).
 func (m Model) renderStatusBar() string {
 	var content string
-	if m.searchPromptOpen {
+	switch {
+	case m.searchPromptOpen:
 		content = m.searchInput.View()
+	case m.pendingSearch != nil:
+		content = fmt.Sprintf("/%s  searching…", m.pendingSearch.term)
+	case m.active == viewList:
+		if term, pos, total, active := m.list.SearchStatus(); active {
+			if total == 0 {
+				content = fmt.Sprintf("/%s  no matches", term)
+			} else {
+				content = fmt.Sprintf("/%s  [%d/%d]", term, pos, total)
+			}
+		}
 	}
 	return statusBarStyle.Width(m.width).Render(content)
 }
