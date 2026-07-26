@@ -1,7 +1,17 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/maiwald/gitl/internal/ui"
+)
 
 func main() {
-	fmt.Println("gitl")
+	p := tea.NewProgram(ui.NewModel(), tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
 }
