@@ -137,6 +137,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.active = viewList
 			return m, nil
 		}
+		m.detail.Update(msg)
 		return m, nil
 	default: // viewList
 		if key.Matches(msg, DefaultKeyMap.Back) {
