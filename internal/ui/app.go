@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/maiwald/gitl/internal/git"
 )
@@ -31,6 +32,9 @@ type Model struct {
 	list   ListModel
 	detail DetailModel
 	err    error
+
+	searchPromptOpen bool
+	searchInput      textinput.Model
 }
 
 // NewModel constructs the initial root model.
@@ -109,6 +113,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.list.SetSize(m.width, m.contentHeight())
 		m.detail.SetSize(m.width, m.contentHeight())
+		if m.searchPromptOpen {
+			m.searchInput.Width = m.width - 2
+		}
 		return m, nil
 	case commitsLoadedMsg:
 		m.repo = msg.repo
@@ -139,6 +146,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	if m.searchPromptOpen {
+		return m.handleSearchPromptKey(msg)
+	}
+	if m.repo != nil && key.Matches(msg, DefaultKeyMap.Search) {
+		m.searchInput = textinput.New()
+		m.searchInput.Prompt = "/"
+		m.searchInput.Width = m.width - 2
+		m.searchPromptOpen = true
+		return m, m.searchInput.Focus()
+	}
+
 	switch m.active {
 	case viewDetail:
 		if key.Matches(msg, DefaultKeyMap.Back) {
@@ -163,6 +181,34 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+}
+
+// handleSearchPromptKey routes a key press while the search prompt is open.
+// Esc cancels (checked directly, not via DefaultKeyMap.Back, since Back is
+// also bound to "q" and a query must be able to contain a literal q).
+// Everything else not handled here is forwarded to the text input so the
+// query can contain any character.
+func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Type == tea.KeyEsc:
+		m.searchPromptOpen = false
+		m.searchInput.Blur()
+		return m, nil
+	case key.Matches(msg, DefaultKeyMap.Enter):
+		return m.submitSearch()
+	}
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	return m, cmd
+}
+
+// submitSearch closes the prompt on Enter. Routing the submitted term into
+// the list/detail views' own search logic is wired up in a follow-up
+// change.
+func (m Model) submitSearch() (tea.Model, tea.Cmd) {
+	m.searchPromptOpen = false
+	m.searchInput.Blur()
+	return m, nil
 }
 
 func (m Model) View() string {
@@ -191,8 +237,13 @@ func (m Model) contentHeight() int {
 	return h
 }
 
-// renderStatusBar renders the bottom status bar. It's currently always
-// empty; search state will give it content in a later change.
+// renderStatusBar renders the bottom status bar: the live query while the
+// search prompt is open, empty otherwise. Match/position content is added
+// in a later change.
 func (m Model) renderStatusBar() string {
-	return statusBarStyle.Width(m.width).Render("")
+	var content string
+	if m.searchPromptOpen {
+		content = m.searchInput.View()
+	}
+	return statusBarStyle.Width(m.width).Render(content)
 }
