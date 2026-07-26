@@ -12,6 +12,9 @@ var (
 	dateStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245"))
 
+	shaStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("136"))
+
 	authorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("109"))
 

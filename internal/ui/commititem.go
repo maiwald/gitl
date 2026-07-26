@@ -8,17 +8,26 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
-const authorColumnWidth = 18
+const (
+	authorColumnWidth = 18
+	// shaColumnWidth is deliberately longer than git's default abbreviated
+	// hash (7 chars) to make same-prefix commits easier to tell apart at a
+	// glance.
+	shaColumnWidth = 10
+)
 
-// renderCommitRow renders a single commit list row: date, author, ref
-// decorations, and the commit subject, truncated/padded to width.
-// searchTerm highlights matching substrings within the row (case
-// insensitive); isActiveMatch picks a visually distinct style for whichever
-// match n/N currently points at. A commit can be a search match via its
-// full message body, which isn't shown in the row at all — in that case
-// there's simply nothing here to highlight, which is expected.
+// renderCommitRow renders a single commit list row: abbreviated sha, date,
+// local time, author, ref decorations, and the commit subject,
+// truncated/padded to width. searchTerm highlights matching substrings
+// within the row (case insensitive); isActiveMatch picks a visually
+// distinct style for whichever match n/N currently points at. A commit can
+// be a search match via its full message body, which isn't shown in the
+// row at all — in that case there's simply nothing here to highlight,
+// which is expected.
 func renderCommitRow(c git.Commit, width int, selected bool, searchTerm string, isActiveMatch bool) string {
+	sha := fmt.Sprintf("%-*s", shaColumnWidth, shaPrefix(c.Hash))
 	date := c.AuthorDate.Format("2006-01-02")
+	clock := c.AuthorDate.Local().Format("15:04")
 	author := fmt.Sprintf("%-*s", authorColumnWidth, truncate(c.AuthorName, authorColumnWidth))
 	subject := c.Subject
 
@@ -27,7 +36,9 @@ func renderCommitRow(c git.Commit, width int, selected bool, searchTerm string, 
 		if isActiveMatch {
 			matchStyle = searchActiveMatchStyle
 		}
+		sha = highlightSpans(sha, searchTerm, shaStyle, matchStyle)
 		date = highlightSpans(date, searchTerm, dateStyle, matchStyle)
+		clock = highlightSpans(clock, searchTerm, dateStyle, matchStyle)
 		author = highlightSpans(author, searchTerm, authorStyle, matchStyle)
 		subject = highlightSpans(subject, searchTerm, lipgloss.NewStyle(), matchStyle)
 	}
@@ -35,9 +46,9 @@ func renderCommitRow(c git.Commit, width int, selected bool, searchTerm string, 
 
 	var row string
 	if refs != "" {
-		row = fmt.Sprintf("%s  %s  %s %s", date, author, refs, subject)
+		row = fmt.Sprintf("%s  %s %s  %s  %s %s", sha, date, clock, author, refs, subject)
 	} else {
-		row = fmt.Sprintf("%s  %s  %s", date, author, subject)
+		row = fmt.Sprintf("%s  %s %s  %s  %s", sha, date, clock, author, subject)
 	}
 
 	style := normalRowStyle
@@ -90,6 +101,16 @@ func formatRefs(refs []string, selected bool) string {
 		parts[i] = style.Render("[" + r + "]")
 	}
 	return strings.Join(parts, " ")
+}
+
+// shaPrefix returns the first shaColumnWidth characters of a full commit
+// hash, unabbreviated by git and unadorned by an ellipsis (unlike
+// truncate) since a partial hash is still a valid, meaningful prefix.
+func shaPrefix(hash string) string {
+	if len(hash) <= shaColumnWidth {
+		return hash
+	}
+	return hash[:shaColumnWidth]
 }
 
 // truncate shortens s to at most n runes, appending an ellipsis if cut.
