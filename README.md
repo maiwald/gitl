@@ -11,9 +11,14 @@ A terminal UI for browsing git history, with vim-style navigation.
   changed files on the right, kept in sync as you scroll.
 - **Vim-style keys** throughout — `hjkl`/arrows, `ctrl-d`/`ctrl-u` half-page
   paging, `g`/`G` to jump to top/bottom, `Tab` to switch panes.
+- **Search** — `/` to search, `n`/`N` to cycle matches (wrapping at both
+  ends), with all matches highlighted and the current one visually
+  distinct. In the commit list, search covers author name and the full
+  commit message; in the commit detail view, it covers the diff content.
 - Handles large repositories: commits are fetched in lazily-loaded batches
   rather than all at once, so startup and memory use don't scale with the
-  size of the history.
+  size of the history. Searching the list only loads as much history as a
+  match actually requires, rather than the whole log up front.
 
 ## Installation
 
@@ -49,6 +54,8 @@ gitl
 | `g` / `G`               | Jump to top / bottom                    |
 | `Enter`                 | Open commit detail / jump to file       |
 | `Tab`                   | Switch focus between diff and file list |
+| `/`                     | Search (author + message, or diff content) |
+| `n` / `N`               | Next / previous search match (wraps)    |
 | `Esc` / `q`             | Back (detail view) / quit (list view)   |
 | `ctrl-c`                | Quit                                     |
 
@@ -59,6 +66,10 @@ gitl
   deferred).
 - Diff content doesn't have language-aware syntax highlighting, only
   add/delete/context coloring.
+- In the commit list, a commit that matches search only via its full
+  message body (not the one-line subject shown in the row) counts toward
+  the match total but has nothing visible to highlight in that row.
+- Detail-view search covers diff content only, not the commit message.
 
 ## Development
 

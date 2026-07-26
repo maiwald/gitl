@@ -26,13 +26,16 @@ internal/git/              data access layer, no TUI dependencies
   log.go                   Commit type, FetchLogBatch, CommitCount (paged log)
   show.go                  CommitDetail, FetchCommitDetail (metadata + diff)
   diff.go                  File/Hunk/DiffLine, ParseUnifiedDiff (go-gitdiff wrapper)
+  search.go                SearchCommitHashes (author+message, OR), AllCommitHashes
 internal/ui/               Bubble Tea models, no direct git shelling out
-  app.go                   root Model: view routing (list <-> detail), async fetch commands
+  app.go                   root Model: view routing (list <-> detail), async fetch
+                           commands, search prompt overlay + status bar
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions
-  list.go, commititem.go   commit list: cursor, viewport, lazy pagination
-  detail.go                commit detail: header + two-pane layout, focus/scroll sync
-  diffview.go              RenderDiff (flatten+style diff), FileAt (scroll->file lookup)
+  list.go, commititem.go   commit list: cursor, viewport, lazy pagination, search
+  detail.go                commit detail: header + two-pane layout, focus/scroll sync, search
+  diffview.go              RenderDiff (flatten+style diff), FileAt (scroll->file lookup),
+                           FindDiffMatches (diff content search)
   filelist.go              right-pane file list
 ```
 
@@ -94,6 +97,17 @@ commit red.
   flattened `RenderDiff` output (not a single multi-line string), so
   `FileRange`/`FileAt` line-index bookkeeping stays correct regardless of
   terminal width.
+- Search-match highlighting always styles plain-text spans *before* any
+  `.Render()` call touches them, then concatenates the already-rendered
+  pieces (see `highlightSpans` in `commititem.go`, `renderLineWithMatches`
+  in `diffview.go`) — this codebase has no facility for splicing a style
+  into an already-ANSI'd string, and doesn't need one as long as styling
+  decisions are made on the underlying plain text first.
+- List search loads only as much history as the relevant match needs
+  (`beginLoadingUpTo` in `list.go`), not the whole remaining log — matching
+  which commits a search matches is cheap (`git log --grep`/`--author`,
+  independent of what's loaded), but jumping to a match still has to load
+  up to it, reusing the same lazy-pagination mechanism scrolling uses.
 
 ## Known limitations (intentional, not bugs)
 
@@ -102,3 +116,8 @@ commit red.
   first-parent, is deferred).
 - No language-aware syntax highlighting inside diffs, only diff-status
   coloring (add/delete/context).
+- List search matching a commit's message body (not its one-line subject)
+  has nothing to visibly highlight in that row, since the row never shows
+  the body — it still counts correctly toward the match total.
+- Detail-view search covers diff content only, not the commit header or
+  message (an explicit scope decision, not an oversight).
