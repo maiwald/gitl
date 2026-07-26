@@ -15,6 +15,7 @@ type KeyMap struct {
 	Enter        key.Binding
 	Back         key.Binding
 	Quit         key.Binding
+	Tab          key.Binding
 }
 
 // DefaultKeyMap is the vim-style binding set used throughout the app.
@@ -30,4 +31,5 @@ var DefaultKeyMap = KeyMap{
 	Enter:        key.NewBinding(key.WithKeys("enter")),
 	Back:         key.NewBinding(key.WithKeys("esc", "q")),
 	Quit:         key.NewBinding(key.WithKeys("ctrl+c")),
+	Tab:          key.NewBinding(key.WithKeys("tab", "shift+tab")),
 }

@@ -8,9 +8,8 @@ import (
 )
 
 // FileListModel renders the list of files changed in a commit, with the
-// entry corresponding to the diff panel's current scroll position
-// highlighted (wired up in a later stage; for now the first file is
-// highlighted as a static placeholder).
+// entry corresponding to the diff panel's current scroll position (or, when
+// focused, the user's own up/down navigation) highlighted.
 type FileListModel struct {
 	files          []git.File
 	highlightIndex int
@@ -26,6 +25,11 @@ func NewFileListModel(files []git.File) FileListModel {
 func (m *FileListModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
+}
+
+// SetHighlight marks the file at index i as the one currently in view.
+func (m *FileListModel) SetHighlight(i int) {
+	m.highlightIndex = i
 }
 
 func (m FileListModel) View() string {

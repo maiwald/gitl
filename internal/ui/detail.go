@@ -18,16 +18,30 @@ const fileListWidthFraction = 0.25
 // minFileListWidth keeps the file list panel usable on narrow terminals.
 const minFileListWidth = 20
 
+// paneFocus identifies which of the two detail-view panes receives
+// navigation keys.
+type paneFocus int
+
+const (
+	focusDiff paneFocus = iota
+	focusFiles
+)
+
 // DetailModel renders full commit metadata plus a two-pane view: a large
 // scrollable, highlighted diff on the left and the list of changed files on
-// the right.
+// the right. The file list entry for whichever file is currently in view in
+// the diff panel is highlighted, and the sync works both ways: navigating
+// the file list and pressing enter jumps the diff to that file.
 type DetailModel struct {
 	detail *git.CommitDetail
 	header string
 
-	fileRanges []FileRange
-	leftVP     viewport.Model
-	files      FileListModel
+	fileRanges  []FileRange
+	currentFile int
+	focus       paneFocus
+
+	leftVP viewport.Model
+	files  FileListModel
 
 	width, height int
 }
@@ -76,10 +90,36 @@ func (m *DetailModel) reflow() {
 	m.leftVP.SetContent(strings.Join(diffLines, "\n"))
 
 	m.files.SetSize(fileListWidth, bodyHeight)
+	m.syncHighlightFromScroll()
 }
 
-// Update scrolls the diff panel in response to a navigation key press.
+// Update handles a navigation key press: Tab switches which pane receives
+// further keys, and the rest are routed to whichever pane is focused.
 func (m *DetailModel) Update(msg tea.KeyMsg) {
+	if key.Matches(msg, DefaultKeyMap.Tab) {
+		m.toggleFocus()
+		return
+	}
+
+	if m.focus == focusFiles {
+		m.updateFiles(msg)
+	} else {
+		m.updateDiff(msg)
+	}
+}
+
+func (m *DetailModel) toggleFocus() {
+	if len(m.fileRanges) == 0 {
+		return
+	}
+	if m.focus == focusDiff {
+		m.focus = focusFiles
+	} else {
+		m.focus = focusDiff
+	}
+}
+
+func (m *DetailModel) updateDiff(msg tea.KeyMsg) {
 	switch {
 	case key.Matches(msg, DefaultKeyMap.Up):
 		m.leftVP.LineUp(1)
@@ -94,6 +134,52 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 	case key.Matches(msg, DefaultKeyMap.Bottom):
 		m.leftVP.GotoBottom()
 	}
+	m.syncHighlightFromScroll()
+}
+
+// syncHighlightFromScroll recomputes which file the diff panel's topmost
+// visible line belongs to, and highlights that file in the list.
+func (m *DetailModel) syncHighlightFromScroll() {
+	if len(m.fileRanges) == 0 {
+		return
+	}
+	if i := FileAt(m.fileRanges, m.leftVP.YOffset); i >= 0 {
+		m.currentFile = i
+		m.files.SetHighlight(i)
+	}
+}
+
+func (m *DetailModel) updateFiles(msg tea.KeyMsg) {
+	switch {
+	case key.Matches(msg, DefaultKeyMap.Up):
+		m.moveFileHighlight(-1)
+	case key.Matches(msg, DefaultKeyMap.Down):
+		m.moveFileHighlight(1)
+	case key.Matches(msg, DefaultKeyMap.Enter):
+		m.jumpToCurrentFile()
+	}
+}
+
+func (m *DetailModel) moveFileHighlight(delta int) {
+	if len(m.fileRanges) == 0 {
+		return
+	}
+	next := m.currentFile + delta
+	if next < 0 {
+		next = 0
+	}
+	if next > len(m.fileRanges)-1 {
+		next = len(m.fileRanges) - 1
+	}
+	m.currentFile = next
+	m.files.SetHighlight(next)
+}
+
+func (m *DetailModel) jumpToCurrentFile() {
+	if m.currentFile < 0 || m.currentFile >= len(m.fileRanges) {
+		return
+	}
+	m.leftVP.SetYOffset(m.fileRanges[m.currentFile].StartLine)
 }
 
 func renderCommitHeader(d *git.CommitDetail) string {
