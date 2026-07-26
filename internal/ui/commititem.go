@@ -86,19 +86,23 @@ func highlightSpans(text, term string, base, match lipgloss.Style) string {
 }
 
 // formatRefs renders branch/tag/HEAD decorations as bracketed badges. When
-// selected, badges skip their own foreground color so the row's selection
-// background stays consistent.
+// selected, badges are left as plain text rather than run through
+// Style.Render: any embedded ANSI reset (which Render always emits at the
+// end of its span) would terminate the selected row's background applied
+// by the outer style.Render(row) call in renderCommitRow, leaving
+// everything after the ref badge — the subject, in particular —
+// unhighlighted for the rest of the line.
 func formatRefs(refs []string, selected bool) string {
 	if len(refs) == 0 {
 		return ""
 	}
-	style := refStyle
-	if selected {
-		style = lipgloss.NewStyle().Bold(true)
-	}
 	parts := make([]string, len(refs))
 	for i, r := range refs {
-		parts[i] = style.Render("[" + r + "]")
+		if selected {
+			parts[i] = "[" + r + "]"
+		} else {
+			parts[i] = refStyle.Render("[" + r + "]")
+		}
 	}
 	return strings.Join(parts, " ")
 }
