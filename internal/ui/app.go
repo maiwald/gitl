@@ -251,14 +251,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchPromptOpen = true
 		return m, m.searchInput.Focus()
 	}
-	if m.active == viewList {
-		if _, _, _, active := m.list.SearchStatus(); active {
-			if key.Matches(msg, DefaultKeyMap.NextMatch) {
-				return m.advanceListMatch(1)
-			}
-			if key.Matches(msg, DefaultKeyMap.PrevMatch) {
-				return m.advanceListMatch(-1)
-			}
+	if m.hasActiveSearch() {
+		if key.Matches(msg, DefaultKeyMap.NextMatch) {
+			return m.advanceMatch(1)
+		}
+		if key.Matches(msg, DefaultKeyMap.PrevMatch) {
+			return m.advanceMatch(-1)
 		}
 	}
 
@@ -308,28 +306,53 @@ func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // submitSearch closes the prompt on Enter and starts a search for the
-// submitted term. An empty term clears whichever view's search is active
-// instead (a vim-:noh-like escape hatch). Detail-view search is wired up
-// in a follow-up change.
+// submitted term in whichever view is active. An empty term clears that
+// view's search instead (a vim-:noh-like escape hatch).
 func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	term := m.searchInput.Value()
 	m.searchPromptOpen = false
 	m.searchInput.Blur()
 
 	if term == "" {
-		m.list.ClearSearch()
+		if m.active == viewDetail {
+			m.detail.ClearSearch()
+		} else {
+			m.list.ClearSearch()
+		}
 		return m, nil
 	}
-	if m.active == viewList {
-		return m.startListSearch(term)
+	if m.active == viewDetail {
+		m.detail.Search(term)
+		return m, nil
 	}
-	return m, nil
+	return m.startListSearch(term)
 }
 
-// advanceListMatch cycles the list's active search to the next (delta>0)
-// or previous match, dispatching a targeted fetch if that match isn't
-// loaded yet.
-func (m Model) advanceListMatch(delta int) (Model, tea.Cmd) {
+// hasActiveSearch reports whether the currently active view has a search
+// in progress, gating n/N interception in handleKey.
+func (m Model) hasActiveSearch() bool {
+	if m.active == viewDetail {
+		_, _, _, active := m.detail.SearchStatus()
+		return active
+	}
+	_, _, _, active := m.list.SearchStatus()
+	return active
+}
+
+// advanceMatch cycles the active view's search to the next (delta>0) or
+// previous match. In the list view, this may dispatch a targeted fetch if
+// the newly-selected match isn't loaded yet; the detail view is fully
+// synchronous and never needs one.
+func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
+	if m.active == viewDetail {
+		if delta > 0 {
+			m.detail.NextMatch()
+		} else {
+			m.detail.PrevMatch()
+		}
+		return m, nil
+	}
+
 	var needsLoad bool
 	var target int
 	if delta > 0 {
@@ -372,8 +395,9 @@ func (m Model) contentHeight() int {
 }
 
 // renderStatusBar renders the bottom status bar: the live query while the
-// search prompt is open, or the active search's term/position/loading
-// state otherwise (detail-view search status is added in a later change).
+// search prompt is open, a loading indicator while the list's
+// position-finding queries are in flight, or the active view's search
+// term/position otherwise.
 func (m Model) renderStatusBar() string {
 	var content string
 	switch {
@@ -381,8 +405,16 @@ func (m Model) renderStatusBar() string {
 		content = m.searchInput.View()
 	case m.pendingSearch != nil:
 		content = fmt.Sprintf("/%s  searching…", m.pendingSearch.term)
-	case m.active == viewList:
-		if term, pos, total, active := m.list.SearchStatus(); active {
+	default:
+		var term string
+		var pos, total int
+		var active bool
+		if m.active == viewDetail {
+			term, pos, total, active = m.detail.SearchStatus()
+		} else {
+			term, pos, total, active = m.list.SearchStatus()
+		}
+		if active {
 			if total == 0 {
 				content = fmt.Sprintf("/%s  no matches", term)
 			} else {

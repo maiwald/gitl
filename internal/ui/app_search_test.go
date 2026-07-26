@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,6 +17,17 @@ func newSearchableListModel() Model {
 	list := NewListModel(fixtureCommits(5))
 	list.SetSize(80, 20)
 	m := Model{active: viewList, list: list, repo: &git.Repo{}}
+	m.width, m.height = 80, 24
+	return m
+}
+
+// newSearchableDetailModel builds a Model in the detail view over
+// fixtureDetailForSearch (see detail_test.go), which has two "needle"
+// matches across its two files.
+func newSearchableDetailModel() Model {
+	detail := NewDetailModel(fixtureDetailForSearch())
+	detail.SetSize(80, 4)
+	m := Model{active: viewDetail, detail: detail, repo: &git.Repo{}}
 	m.width, m.height = 80, 24
 	return m
 }
@@ -197,5 +209,80 @@ func TestNAndShiftNCycleListMatchesEndToEnd(t *testing.T) {
 	m = newModel.(Model)
 	if c, ok := m.list.Selected(); !ok || c.Hash != "a" {
 		t.Fatalf("after N: selection = %+v, ok=%v, want hash a", c, ok)
+	}
+}
+
+func TestSlashSearchesDetailViewContentSynchronously(t *testing.T) {
+	m := newSearchableDetailModel()
+
+	newModel, _ := m.Update(keyRune('/'))
+	m = newModel.(Model)
+	for _, r := range "needle" {
+		newModel, _ = m.Update(keyRune(r))
+		m = newModel.(Model)
+	}
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+
+	if cmd != nil {
+		t.Fatal("detail search is fully synchronous (the diff is already in memory), should not dispatch a command")
+	}
+	if term, pos, total, active := m.detail.SearchStatus(); !active || term != "needle" || total != 2 || pos != 1 {
+		t.Fatalf("SearchStatus = (%q, pos=%d, total=%d, active=%v), want (\"needle\", 1, 2, true)", term, pos, total, active)
+	}
+}
+
+func TestNAndShiftNCycleDetailMatchesEndToEnd(t *testing.T) {
+	m := newSearchableDetailModel()
+	m.detail.Search("needle")
+
+	newModel, _ := m.Update(keyRune('n'))
+	m = newModel.(Model)
+	if _, pos, total, _ := m.detail.SearchStatus(); pos != 2 || total != 2 {
+		t.Fatalf("SearchStatus pos/total after n = %d/%d, want 2/2", pos, total)
+	}
+
+	newModel, _ = m.Update(keyRune('N'))
+	m = newModel.(Model)
+	if _, pos, _, _ := m.detail.SearchStatus(); pos != 1 {
+		t.Fatalf("SearchStatus pos after N = %d, want wrap to 1", pos)
+	}
+}
+
+func TestEnterOnEmptyQueryClearsDetailSearch(t *testing.T) {
+	m := newSearchableDetailModel()
+	m.detail.Search("needle")
+
+	newModel, _ := m.Update(keyRune('/'))
+	m = newModel.(Model)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+
+	if _, _, _, active := m.detail.SearchStatus(); active {
+		t.Fatal("an empty query should clear the active detail search")
+	}
+}
+
+func TestStatusBarShowsDetailSearchPosition(t *testing.T) {
+	m := newSearchableDetailModel()
+	m.detail.Search("needle")
+
+	bar := m.renderStatusBar()
+	if !strings.Contains(bar, "needle") || !strings.Contains(bar, "1/2") {
+		t.Fatalf("status bar = %q, want it to show the term and position", bar)
+	}
+}
+
+func TestStatusBarShowsNoMatches(t *testing.T) {
+	m := newSearchableListModel()
+	m = submitListSearch(t, m, "nomatch")
+	newModel, _ := m.Update(allHashesLoadedMsg{term: "nomatch", hashes: fixtureHashOrder})
+	m = newModel.(Model)
+	newModel, _ = m.Update(searchHashesLoadedMsg{term: "nomatch", hashes: map[string]bool{}})
+	m = newModel.(Model)
+
+	bar := m.renderStatusBar()
+	if !strings.Contains(bar, "no matches") {
+		t.Fatalf("status bar = %q, want it to say no matches", bar)
 	}
 }
