@@ -137,6 +137,88 @@ func TestFileAtEmptyRanges(t *testing.T) {
 	}
 }
 
+func TestFindDiffMatchesFindsOccurrencesInLineOrder(t *testing.T) {
+	files := []git.File{
+		{
+			Path: "a.txt",
+			Hunks: []git.Hunk{{
+				Header: "@@ -1,2 +1,2 @@",
+				Lines: []git.DiffLine{
+					{Op: git.OpContext, Text: "hello world"},
+					{Op: git.OpAdd, Text: "another hello"},
+				},
+			}},
+		},
+		{
+			Path: "b.txt",
+			Hunks: []git.Hunk{{
+				Header: "@@ -1 +1 @@",
+				Lines:  []git.DiffLine{{Op: git.OpDelete, Text: "HELLO there"}},
+			}},
+		},
+	}
+
+	got := FindDiffMatches(files, "hello")
+	want := []DiffMatch{
+		{FileIndex: 0, HunkIndex: 0, LineIndex: 0, StartCol: 0, EndCol: 5},
+		{FileIndex: 0, HunkIndex: 0, LineIndex: 1, StartCol: 8, EndCol: 13},
+		{FileIndex: 1, HunkIndex: 0, LineIndex: 0, StartCol: 0, EndCol: 5},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d matches, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("match %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFindDiffMatchesMultipleOccurrencesInOneLine(t *testing.T) {
+	files := []git.File{{
+		Hunks: []git.Hunk{{
+			Header: "@@ -1 +1 @@",
+			Lines:  []git.DiffLine{{Op: git.OpContext, Text: "cat cat cat"}},
+		}},
+	}}
+
+	got := FindDiffMatches(files, "cat")
+	want := []DiffMatch{
+		{FileIndex: 0, HunkIndex: 0, LineIndex: 0, StartCol: 0, EndCol: 3},
+		{FileIndex: 0, HunkIndex: 0, LineIndex: 0, StartCol: 4, EndCol: 7},
+		{FileIndex: 0, HunkIndex: 0, LineIndex: 0, StartCol: 8, EndCol: 11},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d matches, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("match %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFindDiffMatchesExcludesHeadersAndHunkHeaders(t *testing.T) {
+	files := []git.File{{
+		Path: "secretterm.txt",
+		Hunks: []git.Hunk{{
+			Header: "@@ secretterm @@",
+			Lines:  []git.DiffLine{{Op: git.OpContext, Text: "nothing relevant here"}},
+		}},
+	}}
+
+	got := FindDiffMatches(files, "secretterm")
+	if len(got) != 0 {
+		t.Errorf("got %+v, want no matches (search must not consider file paths or hunk headers)", got)
+	}
+}
+
+func TestFindDiffMatchesEmptyTerm(t *testing.T) {
+	if got := FindDiffMatches(fixtureDiffFiles(), ""); got != nil {
+		t.Errorf("got %+v, want nil for an empty term", got)
+	}
+}
+
 func TestRenderFileHeaderShowsRenameArrow(t *testing.T) {
 	files := []git.File{
 		{OldPath: "old.txt", Path: "new.txt", Status: git.StatusRenamed},

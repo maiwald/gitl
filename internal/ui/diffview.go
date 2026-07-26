@@ -41,6 +41,49 @@ func RenderDiff(files []git.File, width int) ([]string, []FileRange) {
 	return lines, ranges
 }
 
+// DiffMatch identifies one case-insensitive occurrence of a search term
+// within a single diff line's content (DiffLine.Text — excluding the
+// leading +/-/space prefix, and excluding file paths and hunk headers;
+// only line content participates in diff search).
+type DiffMatch struct {
+	FileIndex, HunkIndex, LineIndex int
+	StartCol, EndCol                int // byte offsets into DiffLine.Text
+}
+
+// FindDiffMatches returns every occurrence of term across files' diff
+// lines, in the same file/hunk/line traversal order RenderDiff uses — a
+// documented invariant both functions rely on to stay in sync. Returns nil
+// for an empty term.
+func FindDiffMatches(files []git.File, term string) []DiffMatch {
+	if term == "" {
+		return nil
+	}
+	lowerTerm := strings.ToLower(term)
+
+	var matches []DiffMatch
+	for fi, f := range files {
+		for hi, h := range f.Hunks {
+			for li, l := range h.Lines {
+				lowerText := strings.ToLower(l.Text)
+				pos := 0
+				for {
+					idx := strings.Index(lowerText[pos:], lowerTerm)
+					if idx < 0 {
+						break
+					}
+					idx += pos
+					matches = append(matches, DiffMatch{
+						FileIndex: fi, HunkIndex: hi, LineIndex: li,
+						StartCol: idx, EndCol: idx + len(term),
+					})
+					pos = idx + len(term)
+				}
+			}
+		}
+	}
+	return matches
+}
+
 // FileAt returns the index into files (as returned alongside ranges by
 // RenderDiff) whose rendered lines contain lineIndex, via binary search.
 // It returns -1 if lineIndex falls outside all ranges (e.g. no files).
