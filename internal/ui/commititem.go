@@ -19,11 +19,14 @@ const (
 // renderCommitRow renders a single commit list row: abbreviated sha, date,
 // local time, author, ref decorations, and the commit subject,
 // truncated/padded to width. searchTerm highlights matching substrings
-// within the row (case insensitive); isActiveMatch picks a visually
-// distinct style for whichever match n/N currently points at. A commit can
-// be a search match via its full message body, which isn't shown in the
-// row at all — in that case there's simply nothing here to highlight,
-// which is expected.
+// (case insensitive) in the author and subject fields only, since those
+// are the only visible fields SearchCommitHashes actually searches (author
+// name and commit message — sha/date/refs are never match targets, so
+// they're never highlighted even if their text happens to contain the
+// term). isActiveMatch picks a visually distinct style for whichever match
+// n/N currently points at. A commit can be a search match via its full
+// message body, which isn't shown in the row at all — in that case
+// there's simply nothing here to highlight, which is expected.
 //
 // dimmed fades a row that isn't among the search's real matches (as
 // determined by the actual git query, not by whether this row's visible
@@ -63,20 +66,20 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 		gapStyle = gapStyle.Background(cursorRowBg)
 	}
 
+	// sha/date/clock are never search targets (SearchCommitHashes only
+	// matches author name and commit message), so they're just rendered in
+	// their base style — only author and subject go through highlightSpans.
+	sha = shaBase.Render(sha)
+	date = dateBase.Render(date)
+	clock = dateBase.Render(clock)
 	if !selected {
 		matchStyle := searchMatchStyle
 		if isActiveMatch {
 			matchStyle = searchActiveMatchStyle
 		}
-		sha = highlightSpans(sha, searchTerm, shaBase, matchStyle)
-		date = highlightSpans(date, searchTerm, dateBase, matchStyle)
-		clock = highlightSpans(clock, searchTerm, dateBase, matchStyle)
 		author = highlightSpans(author, searchTerm, authorBase, matchStyle)
 		subject = highlightSpans(subject, searchTerm, subjectBase, matchStyle)
 	} else {
-		sha = shaBase.Render(sha)
-		date = dateBase.Render(date)
-		clock = dateBase.Render(clock)
 		author = authorBase.Render(author)
 		subject = subjectBase.Render(subject)
 	}

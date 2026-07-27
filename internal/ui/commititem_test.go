@@ -75,6 +75,25 @@ func TestRenderCommitRowHighlightsSubjectMatch(t *testing.T) {
 	}
 }
 
+// TestRenderCommitRowNeverHighlightsShaOrDate pins down that sha and date
+// are rendered as opaque, unsplit spans regardless of searchTerm: they're
+// never part of what SearchCommitHashes actually searches (author name and
+// commit message only), so highlighting them — even when their text
+// happens to contain the term — would be misleading about what matched.
+func TestRenderCommitRowNeverHighlightsShaOrDate(t *testing.T) {
+	c := fixtureCommitForRow()
+
+	shaRow := renderCommitRow(c, 80, false, false, "abc", false)
+	if strings.Contains(shaRow, searchMatchStyle.Render("abc")) {
+		t.Errorf("row = %q, sha should never be search-highlighted", shaRow)
+	}
+
+	dateRow := renderCommitRow(c, 80, false, false, "2024", false)
+	if strings.Contains(dateRow, searchMatchStyle.Render("2024")) {
+		t.Errorf("row = %q, date should never be search-highlighted", dateRow)
+	}
+}
+
 func TestRenderCommitRowActiveMatchUsesDistinctStyleFromOrdinaryMatch(t *testing.T) {
 	c := fixtureCommitForRow()
 	ordinary := renderCommitRow(c, 80, false, false, "alice", false)
