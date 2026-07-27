@@ -130,6 +130,40 @@ func TestSearchPromptAcceptsLiteralQAndEscCancels(t *testing.T) {
 	}
 }
 
+func TestBackspaceOnEmptyPromptCancels(t *testing.T) {
+	m := newSearchableListModel()
+	newModel, _ := m.Update(keyRune('/'))
+	m = newModel.(Model)
+
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = newModel.(Model)
+
+	if m.searchPromptOpen {
+		t.Fatal("searchPromptOpen = true after Backspace on an empty query, want false")
+	}
+	if m.searchInput.Focused() {
+		t.Fatal("search input should be blurred after Backspace closes the prompt")
+	}
+}
+
+func TestBackspaceOnNonEmptyPromptDeletesInsteadOfCancelling(t *testing.T) {
+	m := newSearchableListModel()
+	newModel, _ := m.Update(keyRune('/'))
+	m = newModel.(Model)
+	newModel, _ = m.Update(keyRune('x'))
+	m = newModel.(Model)
+
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = newModel.(Model)
+
+	if !m.searchPromptOpen {
+		t.Fatal("Backspace on a non-empty query should delete a character, not cancel the prompt")
+	}
+	if m.searchInput.Value() != "" {
+		t.Fatalf("search input value = %q, want empty after deleting the only character", m.searchInput.Value())
+	}
+}
+
 func TestEnterOnEmptyQueryClearsActiveSearch(t *testing.T) {
 	m := newSearchableListModel()
 	m = submitListSearch(t, m, "Author")

@@ -320,21 +320,31 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleSearchPromptKey routes a key press while the search prompt is open.
 // Esc cancels (checked directly, not via DefaultKeyMap.Back, since Back is
-// also bound to "q" and a query must be able to contain a literal q).
-// Everything else not handled here is forwarded to the text input so the
-// query can contain any character.
+// also bound to "q" and a query must be able to contain a literal q), and so
+// does Backspace on an already-empty query (the common "one more backspace
+// closes the prompt" convention, e.g. browser address bars). Everything else
+// not handled here is forwarded to the text input so the query can contain
+// any character.
 func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyEsc:
-		m.searchPromptOpen = false
-		m.searchInput.Blur()
-		return m, nil
+		return m.cancelSearchPrompt()
+	case msg.Type == tea.KeyBackspace && m.searchInput.Value() == "":
+		return m.cancelSearchPrompt()
 	case key.Matches(msg, DefaultKeyMap.Enter):
 		return m.submitSearch()
 	}
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)
 	return m, cmd
+}
+
+// cancelSearchPrompt closes the search prompt without submitting, shared by
+// both of handleSearchPromptKey's cancellation paths.
+func (m Model) cancelSearchPrompt() (tea.Model, tea.Cmd) {
+	m.searchPromptOpen = false
+	m.searchInput.Blur()
+	return m, nil
 }
 
 // submitSearch closes the prompt on Enter and starts a search for the
