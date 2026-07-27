@@ -125,29 +125,13 @@ func (m *DetailModel) reflow() {
 
 	diffWidth := m.width
 
-	var diffLines []string
-	var fileRanges []FileRange
-	var rawDiffMatchLines []int
-	if len(m.detail.Files) == 0 {
-		diffLines = []string{noDiffNotice(m.detail)}
-	} else {
-		diffActive := -1
-		if !m.searchDismissed && m.matchPos >= len(m.messageMatches) {
-			diffActive = m.matchPos - len(m.messageMatches)
-		}
-		diffLines, fileRanges, rawDiffMatchLines = RenderDiff(m.detail.Files, diffWidth, m.diffMatches, diffActive, m.searchDismissed)
-	}
+	diffLines, fileRanges, rawDiffMatchLines := m.renderDiffBlock(diffWidth)
 
 	// The header/message is wrapped the same way diff lines are (each
 	// visual row its own entry) so the line offset applied to fileRanges
-	// below stays exact regardless of terminal width — see the
-	// FileRange/FileAt convention in diffview.go.
-	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
-	msgActive := -1
-	if !m.searchDismissed && m.matchPos >= 0 && m.matchPos < len(m.messageMatches) {
-		msgActive = m.matchPos
-	}
-	wrappedHeader, messageMatchLines := renderHeaderLines(headerLines, headerSpans, diffWidth, m.messageMatches, msgActive, m.searchDismissed)
+	// below stays exact regardless of terminal width — see the FileRange
+	// convention in diffview.go.
+	wrappedHeader, messageMatchLines := m.renderHeaderBlock(diffWidth)
 	statLines := statLinesFor(m.detail.Files, diffWidth)
 	offset := len(wrappedHeader) + 1 + len(statLines)
 	if len(statLines) > 0 {
@@ -167,20 +151,7 @@ func (m *DetailModel) reflow() {
 	for i, r := range fileRanges {
 		m.fileRanges[i] = FileRange{FileIndex: r.FileIndex, StartLine: r.StartLine + offset, EndLine: r.EndLine + offset}
 	}
-
-	metaEnd := offset
-	if len(statLines) > 0 {
-		metaEnd = len(wrappedHeader) + 1
-	}
-	sections := make([]detailSection, 0, len(m.fileRanges)+2)
-	sections = append(sections, detailSection{kind: sectionKindCommit, startLine: 0, endLine: metaEnd})
-	if len(statLines) > 0 {
-		sections = append(sections, detailSection{kind: sectionKindStats, startLine: metaEnd, endLine: offset})
-	}
-	for _, r := range m.fileRanges {
-		sections = append(sections, detailSection{kind: sectionKindFile, fileIndex: r.FileIndex, startLine: r.StartLine, endLine: r.EndLine})
-	}
-	m.sections = sections
+	m.sections = buildSections(m.fileRanges, len(wrappedHeader), len(statLines) > 0, offset)
 
 	m.messageMatchLines = messageMatchLines
 	m.diffMatchLines = make([]int, len(rawDiffMatchLines))
@@ -212,6 +183,53 @@ func (m *DetailModel) reflow() {
 	m.leftVP.SetContent(strings.Join(content, "\n"))
 
 	m.syncHighlightFromScroll()
+}
+
+// renderDiffBlock renders this commit's diff (or the noDiffNotice
+// placeholder for a diff-less commit) at width, honoring the current
+// search state so the active diff match, if any, is styled distinctly.
+func (m *DetailModel) renderDiffBlock(width int) (lines []string, fileRanges []FileRange, matchLines []int) {
+	if len(m.detail.Files) == 0 {
+		return []string{noDiffNotice(m.detail)}, nil, nil
+	}
+	diffActive := -1
+	if !m.searchDismissed && m.matchPos >= len(m.messageMatches) {
+		diffActive = m.matchPos - len(m.messageMatches)
+	}
+	return RenderDiff(m.detail.Files, width, m.diffMatches, diffActive, m.searchDismissed)
+}
+
+// renderHeaderBlock renders the commit metadata/message block at width,
+// honoring the current search state so the active message match, if any,
+// is styled distinctly.
+func (m *DetailModel) renderHeaderBlock(width int) (wrapped []string, matchLines []int) {
+	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
+	msgActive := -1
+	if !m.searchDismissed && m.matchPos >= 0 && m.matchPos < len(m.messageMatches) {
+		msgActive = m.matchPos
+	}
+	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, msgActive, m.searchDismissed)
+}
+
+// buildSections assembles one reflow pass's sticky-header/[ ]-navigation
+// sections: the commit metadata block, optionally the stats block, then
+// each already offset-adjusted file range, in document order. headerLen is
+// len(wrappedHeader); offset is the flattened line index where diff
+// content begins (see reflow).
+func buildSections(fileRanges []FileRange, headerLen int, hasStats bool, offset int) []detailSection {
+	metaEnd := offset
+	if hasStats {
+		metaEnd = headerLen + 1
+	}
+	sections := make([]detailSection, 0, len(fileRanges)+2)
+	sections = append(sections, detailSection{kind: sectionKindCommit, startLine: 0, endLine: metaEnd})
+	if hasStats {
+		sections = append(sections, detailSection{kind: sectionKindStats, startLine: metaEnd, endLine: offset})
+	}
+	for _, r := range fileRanges {
+		sections = append(sections, detailSection{kind: sectionKindFile, fileIndex: r.FileIndex, startLine: r.StartLine, endLine: r.EndLine})
+	}
+	return sections
 }
 
 // baseSpan is a byte-offset [start,end) run of a header line rendered with
@@ -410,9 +428,9 @@ func findMessageLineMatches(line, term string, lineIndex int) []MessageMatch {
 func (m *DetailModel) Update(msg tea.KeyMsg) {
 	switch {
 	case key.Matches(msg, DefaultKeyMap.Up):
-		m.leftVP.LineUp(1)
+		m.leftVP.ScrollUp(1)
 	case key.Matches(msg, DefaultKeyMap.Down):
-		m.leftVP.LineDown(1)
+		m.leftVP.ScrollDown(1)
 	case key.Matches(msg, DefaultKeyMap.HalfPageUp):
 		m.leftVP.HalfPageUp()
 	case key.Matches(msg, DefaultKeyMap.HalfPageDown):
