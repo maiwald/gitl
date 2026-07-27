@@ -2,12 +2,18 @@ package ui
 
 import "github.com/charmbracelet/lipgloss"
 
+// cursorRowBg is the background applied to the row under the cursor. It is
+// merged into each field's own style (see renderCommitRow) rather than used
+// as a single flat replacement style, so a selected row stays tinted without
+// discarding the sha/date/author/ref foreground colors that distinguish
+// those fields on every other row.
+const cursorRowBg = lipgloss.Color("238")
+
 var (
 	normalRowStyle = lipgloss.NewStyle()
 
 	selectedRowStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("62")).
-				Foreground(lipgloss.Color("230"))
+				Background(cursorRowBg)
 
 	// dateStyle, shaStyle, authorStyle, diffAddStyle, and hunkHeaderStyle
 	// use basic ANSI color codes (0-15) rather than 256-color/hex values:
