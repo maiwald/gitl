@@ -8,7 +8,7 @@ import (
 )
 
 func TestFetchCommitDetail(t *testing.T) {
-	repo, hashes := initFixtureRepo(t, 1)
+	repo, _ := initFixtureRepo(t, 1)
 	ctx := context.Background()
 
 	// Replace the single commit with one that has a multi-line body, so we
@@ -16,7 +16,6 @@ func TestFetchCommitDetail(t *testing.T) {
 	dir := repo.Path
 	runGitCmd(t, dir, fixtureCommitEnv, "commit", "--amend", "--allow-empty", "-m", "subject line\n\nbody line one\nbody line two")
 	amendedHash := headHash(t, dir)
-	_ = hashes // original hash is stale after amend; not used further
 
 	detail, err := repo.FetchCommitDetail(ctx, amendedHash)
 	if err != nil {
