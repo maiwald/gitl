@@ -169,14 +169,15 @@ func (m *DetailModel) reflow() {
 	}
 	// viewport.SetYOffset clamps to the content's own max scroll position,
 	// which is normally what you want (no blank space below the last
-	// line) — but it also means a short trailing file's StartLine can be
-	// unreachable as the top-of-viewport line if what follows it doesn't
-	// fill a whole screen. Pad with blank lines so jumpToSection can always
-	// bring the last file's header to the top, the same way editors let
-	// you scroll the last line of a file to the top of the screen.
+	// line) — but it also means a short trailing file's landing line (see
+	// sectionContentStart: one line past its header) can be unreachable as
+	// the top-of-viewport line if what follows it doesn't fill a whole
+	// screen. Pad with blank lines so jumpToSection can always bring the
+	// last file's content to the top, the same way editors let you scroll
+	// the last line of a file to the top of the screen.
 	if len(m.fileRanges) > 0 {
 		lastStart := m.fileRanges[len(m.fileRanges)-1].StartLine
-		if need := lastStart + m.leftVP.Height - len(content); need > 0 {
+		if need := lastStart + 1 + m.leftVP.Height - len(content); need > 0 {
 			content = append(content, make([]string, need)...)
 		}
 	}
@@ -447,7 +448,7 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 	m.syncHighlightFromScroll()
 }
 
-// jumpToSection scrolls the diff panel directly to the start of the section
+// jumpToSection scrolls the diff panel directly to the section
 // currentSection+delta away (commit metadata, the stats block, or a diff
 // file — see DetailModel.sections), clamping at the first/last section (no
 // wraparound). A no-op on a diff-less commit, where the commit section is
@@ -457,7 +458,21 @@ func (m *DetailModel) jumpToSection(delta int) {
 		return
 	}
 	target := clampIndex(m.currentSection+delta, len(m.sections)-1)
-	m.leftVP.SetYOffset(m.sections[target].startLine)
+	m.leftVP.SetYOffset(sectionContentStart(m.sections[target]))
+}
+
+// sectionContentStart returns the scroll position jumpToSection lands on:
+// one line past the section's own header/heading row for the stats block
+// and file sections, since that row would otherwise be indistinguishable
+// from the sticky bar showing the exact same title once landed there (see
+// renderStickyHeader) — for the commit section, its first content line
+// ("commit <hash>") isn't a literal duplicate of the sticky title
+// ("Commit"), so it still lands exactly at startLine (0).
+func sectionContentStart(s detailSection) int {
+	if s.kind == sectionKindCommit {
+		return s.startLine
+	}
+	return s.startLine + 1
 }
 
 // syncHighlightFromScroll recomputes which section the diff panel's topmost
@@ -574,12 +589,24 @@ func (m DetailModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, m.renderStickyHeader(), m.leftVP.View())
 }
 
-// renderStickyHeader renders the sticky row's title for whichever section
-// currentSection points at: "Commit" for the metadata/message block,
-// statsSectionTitle (matching the stats block's own in-content heading, see
-// statsview.go) for the stats block, or the file header for a diff file.
+// renderStickyHeader renders the sticky row's title for "Commit" (the
+// metadata/message block), statsSectionTitle (matching the stats block's
+// own in-content heading, see statsview.go), or a diff file's header.
+//
+// Unlike currentSection (which points at whichever section contains the
+// topmost visible line, and drives [ / ] navigation), the title shown here
+// is looked up one line behind YOffset. A section's own header/heading row
+// is byte-for-byte identical to what's rendered here for it (see
+// renderFileHeader in diffview.go and statsSectionTitle in statsview.go),
+// so if that row is the topmost visible line, showing the same title in
+// the sticky row too would duplicate it. Querying one line earlier defers
+// the switch until the section's own header has scrolled out of view, at
+// which point the sticky row picks up the job of reminding the reader which
+// section they're in. jumpToSection's landing position (sectionContentStart)
+// already accounts for this, so a [ / ] jump shows the new title
+// immediately rather than lagging by a line.
 func (m DetailModel) renderStickyHeader() string {
-	s := m.sections[m.currentSection]
+	s := m.sections[sectionAt(m.sections, m.leftVP.YOffset-1)]
 	switch s.kind {
 	case sectionKindStats:
 		return renderClipped(fileHeaderStyle, statsSectionTitle, m.width)

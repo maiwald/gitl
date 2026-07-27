@@ -512,6 +512,41 @@ func TestDetailModelStickyHeaderShowsSectionTitles(t *testing.T) {
 	}
 }
 
+// TestDetailModelStickyHeaderDoesNotDuplicateHeaderWhileScrolling pins down
+// the fix for the sticky row briefly duplicating a file's own header line:
+// scrolling one line at a time (unlike jumpToSection, which lands past the
+// header via sectionContentStart) still passes through the exact scroll
+// position where a file's header line becomes the topmost visible line, and
+// the sticky row must keep showing the previous file there instead of
+// repeating what's already visible immediately below it.
+func TestDetailModelStickyHeaderDoesNotDuplicateHeaderWhileScrolling(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithFiles(2, 20))
+	m.SetSize(80, 8)
+
+	target := m.fileRanges[1].StartLine
+	for m.leftVP.YOffset < target {
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	contentTopLine := strings.SplitN(m.leftVP.View(), "\n", 2)[0]
+	if !strings.Contains(contentTopLine, "file1.txt") {
+		t.Fatalf("leftVP.View() top line = %q, want it to already show file1.txt's header", contentTopLine)
+	}
+	stickyLine := strings.SplitN(m.View(), "\n", 2)[0]
+	if strings.Contains(stickyLine, "file1.txt") {
+		t.Fatalf("sticky line = %q, want it to still show file0.txt (not duplicate the header line right below it)", stickyLine)
+	}
+	if !strings.Contains(stickyLine, "file0.txt") {
+		t.Fatalf("sticky line = %q, want it to still show file0.txt", stickyLine)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	stickyLine = strings.SplitN(m.View(), "\n", 2)[0]
+	if !strings.Contains(stickyLine, "file1.txt") {
+		t.Fatalf("sticky line = %q, want sticky header to switch to file1.txt once its header line has scrolled out of view", stickyLine)
+	}
+}
+
 // TestDetailModelNextPrevSectionJumpsAndClamps pins down [ / ] navigation:
 // each key jumps straight to the adjacent section (commit metadata, the
 // stats block, or a file's diff), clamping (not wrapping) at the first/last
@@ -522,8 +557,8 @@ func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
 	last := len(m.sections) - 1
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
-	if m.currentSection != 1 || m.leftVP.YOffset != m.sections[1].startLine {
-		t.Fatalf("after ']': currentSection=%d YOffset=%d, want section 1 at %d", m.currentSection, m.leftVP.YOffset, m.sections[1].startLine)
+	if m.currentSection != 1 || m.leftVP.YOffset != m.sections[1].startLine+1 {
+		t.Fatalf("after ']': currentSection=%d YOffset=%d, want section 1 at %d", m.currentSection, m.leftVP.YOffset, m.sections[1].startLine+1)
 	}
 
 	for i := 0; i < last; i++ { // more than enough presses to clamp at the last section
@@ -534,8 +569,8 @@ func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
 	}
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
-	if m.currentSection != last-1 || m.leftVP.YOffset != m.sections[last-1].startLine {
-		t.Fatalf("after '[': currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.leftVP.YOffset, last-1, m.sections[last-1].startLine)
+	if m.currentSection != last-1 || m.leftVP.YOffset != m.sections[last-1].startLine+1 {
+		t.Fatalf("after '[': currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.leftVP.YOffset, last-1, m.sections[last-1].startLine+1)
 	}
 
 	for i := 0; i < last; i++ { // more than enough presses to clamp at the first section
@@ -563,8 +598,8 @@ func TestDetailModelNextFileReachesShortTrailingFile(t *testing.T) {
 	for i := 0; i < target; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
 	}
-	if m.currentSection != target || m.leftVP.YOffset != m.sections[target].startLine {
-		t.Fatalf("after %d ']' presses: currentSection=%d YOffset=%d, want section %d at %d", target, m.currentSection, m.leftVP.YOffset, target, m.sections[target].startLine)
+	if m.currentSection != target || m.leftVP.YOffset != m.sections[target].startLine+1 {
+		t.Fatalf("after %d ']' presses: currentSection=%d YOffset=%d, want section %d at %d", target, m.currentSection, m.leftVP.YOffset, target, m.sections[target].startLine+1)
 	}
 }
 
