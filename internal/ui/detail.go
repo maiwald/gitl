@@ -342,8 +342,23 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 		m.leftVP.GotoTop()
 	case key.Matches(msg, DefaultKeyMap.Bottom):
 		m.leftVP.GotoBottom()
+	case key.Matches(msg, DefaultKeyMap.PrevFile):
+		m.jumpToFile(-1)
+	case key.Matches(msg, DefaultKeyMap.NextFile):
+		m.jumpToFile(1)
 	}
 	m.syncHighlightFromScroll()
+}
+
+// jumpToFile scrolls the diff panel directly to the start of the file
+// currentFile+delta files away, clamping at the first/last file (no
+// wraparound).
+func (m *DetailModel) jumpToFile(delta int) {
+	if len(m.fileRanges) == 0 {
+		return
+	}
+	target := clampIndex(m.currentFile+delta, len(m.fileRanges)-1)
+	m.leftVP.SetYOffset(m.fileRanges[target].StartLine)
 }
 
 // syncHighlightFromScroll recomputes which file the diff panel's topmost

@@ -52,6 +52,7 @@ gitl
 | `ctrl-d` / `ctrl-u`     | Half-page down/up                       |
 | `g` / `G`               | Jump to top / bottom                    |
 | `Enter`                 | Open commit detail                      |
+| `[` / `]`               | Jump to previous/next file's diff (detail view) |
 | `/`                     | Search (author + message, or diff content) |
 | `n` / `N`               | Next / previous search match (wraps)    |
 | `Esc` / `q`             | Back (detail view) / quit (list view)   |

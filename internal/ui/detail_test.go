@@ -481,10 +481,57 @@ func TestDetailModelStickyHeaderTracksScroll(t *testing.T) {
 		t.Fatalf("View() = %q, want sticky header to show file0.txt", m.View())
 	}
 
-	m.leftVP.SetYOffset(m.fileRanges[1].StartLine)
-	m.syncHighlightFromScroll()
+	m.jumpToFile(1)
 	if !strings.Contains(m.View(), "file1.txt") {
-		t.Fatalf("View() = %q, want sticky header to show file1.txt after scrolling", m.View())
+		t.Fatalf("View() = %q, want sticky header to show file1.txt after jumping", m.View())
+	}
+}
+
+// TestDetailModelNextPrevFileJumpsAndClamps pins down [ / ] navigation:
+// each key jumps straight to the adjacent file's header, clamping (not
+// wrapping) at the first/last file.
+func TestDetailModelNextPrevFileJumpsAndClamps(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithFiles(3, 10))
+	m.SetSize(80, 8)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	if m.currentFile != 1 || m.leftVP.YOffset != m.fileRanges[1].StartLine {
+		t.Fatalf("after ']': currentFile=%d YOffset=%d, want file 1 at %d", m.currentFile, m.leftVP.YOffset, m.fileRanges[1].StartLine)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")}) // clamp at last file
+	if m.currentFile != 2 {
+		t.Fatalf("currentFile = %d after repeated ']', want clamped at 2", m.currentFile)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	if m.currentFile != 1 || m.leftVP.YOffset != m.fileRanges[1].StartLine {
+		t.Fatalf("after '[': currentFile=%d YOffset=%d, want file 1 at %d", m.currentFile, m.leftVP.YOffset, m.fileRanges[1].StartLine)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")}) // clamp at first file
+	if m.currentFile != 0 {
+		t.Fatalf("currentFile = %d after repeated '[', want clamped at 0", m.currentFile)
+	}
+}
+
+// TestDetailModelNextPrevFileNoopWithoutFiles pins down that [ / ] don't
+// panic or move anything on a diff-less commit (merge commit / no diff).
+func TestDetailModelNextPrevFileNoopWithoutFiles(t *testing.T) {
+	m := NewDetailModel(&git.CommitDetail{
+		Commit: git.Commit{
+			Hash: "merge123", Parents: []string{"p1", "p2"},
+			AuthorName: "A", AuthorDate: time.Now(), Subject: "merge",
+		},
+	})
+	m.SetSize(80, 24)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	if m.currentFile != 0 {
+		t.Fatalf("currentFile = %d after [/] on a diff-less commit, want 0 (untouched)", m.currentFile)
 	}
 }
 
