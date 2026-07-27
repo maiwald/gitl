@@ -36,6 +36,8 @@ internal/ui/               Bubble Tea models, no direct git shelling out
   detail.go                commit detail: header + two-pane layout, focus/scroll sync, search
   diffview.go              RenderDiff (flatten+style diff), FileAt (scroll->file lookup),
                            FindDiffMatches (diff content search)
+  statsview.go             statLinesFor: git-show---stat-style summary (per-file +N/-M,
+                           totals line), spliced between message and diff in detail.go
   filelist.go              right-pane file list
 ```
 

@@ -139,12 +139,19 @@ func FileAt(ranges []FileRange, lineIndex int) int {
 }
 
 func renderFileHeader(f git.File, width int) string {
-	path := f.Path
-	if f.Status == git.StatusRenamed && f.OldPath != f.Path {
-		path = f.OldPath + " -> " + f.Path
-	}
-	label := fmt.Sprintf("%s %s", fileStatusGlyph(f.Status), path)
+	label := fmt.Sprintf("%s %s", fileStatusGlyph(f.Status), filePathLabel(f))
 	return renderClipped(fileHeaderStyle, label, width)
+}
+
+// filePathLabel is a file's display path: "old -> new" for renames (when
+// the two differ), otherwise just its current path. Shared by the diff
+// file header and the stats summary (statsview.go) so the two views agree
+// on how a rename reads.
+func filePathLabel(f git.File) string {
+	if f.Status == git.StatusRenamed && f.OldPath != f.Path {
+		return f.OldPath + " -> " + f.Path
+	}
+	return f.Path
 }
 
 // renderClipped renders text in a single line, truncated (not wrapped) to

@@ -70,6 +70,32 @@ func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 	}
 }
 
+// TestDetailModelShowsStatsBlockBeforeDiff pins down that the stats summary
+// (statLinesFor, statsview.go) is spliced in between the header/message and
+// the diff content, and that fileRanges is shifted past both the header and
+// the stats block (not just the header, as it was before the stats block
+// existed).
+func TestDetailModelShowsStatsBlockBeforeDiff(t *testing.T) {
+	d := fixtureDetailWithFiles(2, 5)
+	d.Files[0].Additions = 3
+	d.Files[0].Deletions = 1
+	d.Files[1].Additions = 10
+	m := NewDetailModel(d)
+	m.SetSize(80, 30) // tall enough that the stats block isn't scrolled out of view
+
+	view := m.leftVP.View()
+	if !strings.Contains(view, "2 files changed") {
+		t.Fatalf("leftVP content = %q, want it to contain the stats totals line", view)
+	}
+	if !strings.Contains(view, "file0.txt") {
+		t.Fatalf("leftVP content = %q, want it to contain the per-file stats line", view)
+	}
+
+	if m.fileRanges[0].StartLine == 0 {
+		t.Fatalf("fileRanges[0].StartLine = 0, want > 0 (header + stats block should precede the diff content)")
+	}
+}
+
 // fixtureDetailForSearch builds a CommitDetail with two files whose diff
 // content is fully under test control, plus a commit message containing a
 // marker that must never be treated as diff content.

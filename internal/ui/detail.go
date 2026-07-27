@@ -134,11 +134,19 @@ func (m *DetailModel) reflow() {
 		msgActive = m.matchPos
 	}
 	wrappedHeader, messageMatchLines := renderHeaderLines(headerLines, diffWidth, m.messageMatches, msgActive, m.searchDismissed)
-	offset := len(wrappedHeader) + 1
+	statLines := statLinesFor(m.detail.Files, diffWidth)
+	offset := len(wrappedHeader) + 1 + len(statLines)
+	if len(statLines) > 0 {
+		offset++
+	}
 
-	content := make([]string, 0, len(wrappedHeader)+1+len(diffLines))
+	content := make([]string, 0, len(wrappedHeader)+1+len(statLines)+1+len(diffLines))
 	content = append(content, wrappedHeader...)
 	content = append(content, "")
+	content = append(content, statLines...)
+	if len(statLines) > 0 {
+		content = append(content, "")
+	}
 	content = append(content, diffLines...)
 
 	m.fileRanges = make([]FileRange, len(fileRanges))
