@@ -64,19 +64,19 @@ func (r *Repo) fetchDiff(ctx context.Context, from, to string) ([]File, error) {
 }
 
 func parseCommitDetail(out []byte) (*CommitDetail, error) {
-	text := strings.TrimRight(string(out), "\n")
-	fields := strings.SplitN(text, fieldSep, 9)
-	if len(fields) != 9 {
+	text := trimTrailingNewlines(out)
+	fields := strings.SplitN(text, fieldSep, numLogFields+1)
+	if len(fields) != numLogFields+1 {
 		return nil, fmt.Errorf("unexpected commit detail format (got %d fields)", len(fields))
 	}
 
-	commit, err := parseLogLine(fields[:8])
+	commit, err := parseLogLine(fields[:numLogFields])
 	if err != nil {
 		return nil, err
 	}
 
 	return &CommitDetail{
 		Commit: commit,
-		Body:   fields[8],
+		Body:   fields[numLogFields],
 	}, nil
 }

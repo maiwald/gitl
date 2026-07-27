@@ -14,14 +14,18 @@ const fieldSep = "\x1f"
 
 // logFormat requests one record per commit (tformat guarantees a trailing
 // newline per record), with fields in the order parsed by parseLogLine.
-const logFormat = "%H" + fieldSep + "%h" + fieldSep + "%P" + fieldSep +
+const logFormat = "%H" + fieldSep + "%P" + fieldSep +
 	"%an" + fieldSep + "%ae" + fieldSep + "%ad" + fieldSep +
 	"%D" + fieldSep + "%s"
+
+// numLogFields is the number of fields logFormat produces per record,
+// shared by parseLogLine (which validates against it directly) and
+// parseCommitDetail (which appends one more field, %B, after it).
+const numLogFields = 7
 
 // Commit is a single entry from git log.
 type Commit struct {
 	Hash        string
-	ShortHash   string
 	Parents     []string
 	AuthorName  string
 	AuthorEmail string
@@ -49,11 +53,11 @@ func (r *Repo) FetchLogBatch(ctx context.Context, skip, limit int) ([]Commit, er
 
 // CommitCount returns the total number of commits reachable from HEAD.
 func (r *Repo) CommitCount(ctx context.Context) (int, error) {
-	out, err := runGit(ctx, r.Path, "rev-list", "--count", "HEAD")
+	out, err := runGitTrimmed(ctx, r.Path, "rev-list", "--count", "HEAD")
 	if err != nil {
 		return 0, err
 	}
-	count, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	count, err := strconv.Atoi(out)
 	if err != nil {
 		return 0, fmt.Errorf("parsing commit count: %w", err)
 	}
@@ -75,11 +79,11 @@ func parseLogOutput(out []byte) ([]Commit, error) {
 }
 
 func parseLogLine(fields []string) (Commit, error) {
-	if len(fields) != 8 {
+	if len(fields) != numLogFields {
 		return Commit{}, fmt.Errorf("unexpected log line format (got %d fields): %q", len(fields), strings.Join(fields, fieldSep))
 	}
 
-	hash, short, parents, authorName, authorEmail, dateStr, refs, subject := fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], fields[7]
+	hash, parents, authorName, authorEmail, dateStr, refs, subject := fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6]
 
 	date, err := time.Parse(time.RFC3339, dateStr)
 	if err != nil {
@@ -98,7 +102,6 @@ func parseLogLine(fields []string) (Commit, error) {
 
 	return Commit{
 		Hash:        hash,
-		ShortHash:   short,
 		Parents:     parentList,
 		AuthorName:  authorName,
 		AuthorEmail: authorEmail,

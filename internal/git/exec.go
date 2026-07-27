@@ -29,10 +29,26 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// runGitTrimmed runs git like runGit, but trims the trailing whitespace
+// from stdout — for commands whose entire output is a single scalar value
+// (a hash, a count, a boolean).
+func runGitTrimmed(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := runGit(ctx, dir, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// trimTrailingNewlines strips trailing "\n" characters from out.
+func trimTrailingNewlines(out []byte) string {
+	return strings.TrimRight(string(out), "\n")
+}
+
 // splitLines trims trailing newlines from out and splits it into
 // non-empty lines. It returns nil for empty input.
 func splitLines(out []byte) []string {
-	text := strings.TrimRight(string(out), "\n")
+	text := trimTrailingNewlines(out)
 	if text == "" {
 		return nil
 	}

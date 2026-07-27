@@ -100,9 +100,6 @@ func TestFetchLogBatch(t *testing.T) {
 		if c.Hash != wantHashesNewestFirst[i] {
 			t.Errorf("commit %d: hash = %s, want %s", i, c.Hash, wantHashesNewestFirst[i])
 		}
-		if c.ShortHash == "" {
-			t.Errorf("commit %d: short hash empty", i)
-		}
 		if c.AuthorName != "Test Author" {
 			t.Errorf("commit %d: author name = %q, want %q", i, c.AuthorName, "Test Author")
 		}

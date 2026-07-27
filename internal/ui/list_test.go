@@ -13,7 +13,6 @@ func fixtureCommits(n int) []git.Commit {
 	for i := 0; i < n; i++ {
 		commits[i] = git.Commit{
 			Hash:       string(rune('a' + i)),
-			ShortHash:  string(rune('a' + i)),
 			AuthorName: "Author",
 			AuthorDate: time.Now(),
 			Subject:    "subject",
