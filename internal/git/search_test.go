@@ -2,7 +2,6 @@ package git
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 )
 
@@ -23,19 +22,9 @@ func initSearchFixtureRepo(t *testing.T, specs []commitSpec) (*Repo, []string) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	run := func(env []string, args ...string) {
-		t.Helper()
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(cmd.Environ(), env...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	run(nil, "init", "-b", "main")
-	run(nil, "config", "user.name", "Test Author")
-	run(nil, "config", "user.email", "test@example.com")
+	runGitCmd(t, dir, nil, "init", "-b", "main")
+	runGitCmd(t, dir, nil, "config", "user.name", "Test Author")
+	runGitCmd(t, dir, nil, "config", "user.email", "test@example.com")
 
 	var hashes []string
 	for _, spec := range specs {
@@ -51,15 +40,8 @@ func initSearchFixtureRepo(t *testing.T, specs []commitSpec) (*Repo, []string) {
 		if spec.body != "" {
 			args = append(args, "-m", spec.body)
 		}
-		run(env, args...)
-
-		cmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
-		cmd.Dir = dir
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("rev-parse HEAD: %v", err)
-		}
-		hashes = append(hashes, string(out[:40]))
+		runGitCmd(t, dir, env, args...)
+		hashes = append(hashes, headHash(t, dir))
 	}
 
 	reversed := make([]string, len(hashes))

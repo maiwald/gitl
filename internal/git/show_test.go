@@ -3,7 +3,6 @@ package git
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -15,25 +14,8 @@ func TestFetchCommitDetail(t *testing.T) {
 	// Replace the single commit with one that has a multi-line body, so we
 	// can verify %B is captured in full.
 	dir := repo.Path
-	cmd := exec.CommandContext(ctx, "git", "commit", "--amend", "--allow-empty", "-m", "subject line\n\nbody line one\nbody line two")
-	cmd.Dir = dir
-	cmd.Env = append(cmd.Environ(),
-		"GIT_AUTHOR_NAME=Test Author",
-		"GIT_AUTHOR_EMAIL=test@example.com",
-		"GIT_COMMITTER_NAME=Test Author",
-		"GIT_COMMITTER_EMAIL=test@example.com",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git commit --amend: %v\n%s", err, out)
-	}
-
-	headCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
-	headCmd.Dir = dir
-	headOut, err := headCmd.Output()
-	if err != nil {
-		t.Fatalf("rev-parse HEAD: %v", err)
-	}
-	amendedHash := string(headOut[:40])
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "--amend", "--allow-empty", "-m", "subject line\n\nbody line one\nbody line two")
+	amendedHash := headHash(t, dir)
 	_ = hashes // original hash is stale after amend; not used further
 
 	detail, err := repo.FetchCommitDetail(ctx, amendedHash)
@@ -60,42 +42,21 @@ func TestFetchCommitDetailMergeCommit(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(cmd.Environ(),
-			"GIT_AUTHOR_NAME=Test Author",
-			"GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=Test Author",
-			"GIT_COMMITTER_EMAIL=test@example.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	run("init", "-b", "main")
-	run("config", "user.name", "Test Author")
-	run("config", "user.email", "test@example.com")
-	run("commit", "--allow-empty", "-m", "base")
-	run("checkout", "-b", "feature")
-	run("commit", "--allow-empty", "-m", "feature work")
-	run("checkout", "main")
-	run("merge", "--no-ff", "-m", "merge feature", "feature")
+	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "--allow-empty", "-m", "base")
+	runGitCmd(t, dir, fixtureCommitEnv, "checkout", "-b", "feature")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "--allow-empty", "-m", "feature work")
+	runGitCmd(t, dir, fixtureCommitEnv, "checkout", "main")
+	runGitCmd(t, dir, fixtureCommitEnv, "merge", "--no-ff", "-m", "merge feature", "feature")
 
 	repo, err := OpenRepo(ctx, dir)
 	if err != nil {
 		t.Fatalf("OpenRepo: %v", err)
 	}
 
-	headCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
-	headCmd.Dir = dir
-	headOut, err := headCmd.Output()
-	if err != nil {
-		t.Fatalf("rev-parse HEAD: %v", err)
-	}
-	mergeHash := string(headOut[:40])
+	mergeHash := headHash(t, dir)
 
 	detail, err := repo.FetchCommitDetail(ctx, mergeHash)
 	if err != nil {
@@ -116,37 +77,20 @@ func TestFetchCommitDetailRootCommitDiff(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(cmd.Environ(),
-			"GIT_AUTHOR_NAME=Test Author", "GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=Test Author", "GIT_COMMITTER_EMAIL=test@example.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	run("init", "-b", "main")
-	run("config", "user.name", "Test Author")
-	run("config", "user.email", "test@example.com")
+	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello\nworld\n"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	run("add", "hello.txt")
-	run("commit", "-m", "root commit")
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "hello.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "root commit")
 
 	repo, err := OpenRepo(ctx, dir)
 	if err != nil {
 		t.Fatalf("OpenRepo: %v", err)
 	}
-	headOut, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD").Output()
-	if err != nil {
-		t.Fatalf("rev-parse HEAD: %v", err)
-	}
-	rootHash := string(headOut[:40])
+	rootHash := headHash(t, dir)
 
 	detail, err := repo.FetchCommitDetail(ctx, rootHash)
 	if err != nil {
@@ -171,43 +115,26 @@ func TestFetchCommitDetailNormalCommitDiff(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(cmd.Environ(),
-			"GIT_AUTHOR_NAME=Test Author", "GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=Test Author", "GIT_COMMITTER_EMAIL=test@example.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	run("init", "-b", "main")
-	run("config", "user.name", "Test Author")
-	run("config", "user.email", "test@example.com")
+	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello\n"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	run("add", "hello.txt")
-	run("commit", "-m", "first")
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "hello.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "first")
 
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello\nworld\n"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	run("add", "hello.txt")
-	run("commit", "-m", "second")
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "hello.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "second")
 
 	repo, err := OpenRepo(ctx, dir)
 	if err != nil {
 		t.Fatalf("OpenRepo: %v", err)
 	}
-	headOut, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD").Output()
-	if err != nil {
-		t.Fatalf("rev-parse HEAD: %v", err)
-	}
-	secondHash := string(headOut[:40])
+	secondHash := headHash(t, dir)
 
 	detail, err := repo.FetchCommitDetail(ctx, secondHash)
 	if err != nil {

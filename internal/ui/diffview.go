@@ -83,30 +83,39 @@ func FindDiffMatches(files []git.File, term string) []DiffMatch {
 	if term == "" {
 		return nil
 	}
-	lowerTerm := strings.ToLower(term)
 
 	var matches []DiffMatch
 	for fi, f := range files {
 		for hi, h := range f.Hunks {
 			for li, l := range h.Lines {
-				lowerText := strings.ToLower(l.Text)
-				pos := 0
-				for {
-					idx := strings.Index(lowerText[pos:], lowerTerm)
-					if idx < 0 {
-						break
-					}
-					idx += pos
+				for _, occ := range findOccurrences(l.Text, term) {
 					matches = append(matches, DiffMatch{
 						FileIndex: fi, HunkIndex: hi, LineIndex: li,
-						StartCol: idx, EndCol: idx + len(term),
+						StartCol: occ[0], EndCol: occ[1],
 					})
-					pos = idx + len(term)
 				}
 			}
 		}
 	}
 	return matches
+}
+
+// findOccurrences returns the byte [start, end) offset of every
+// case-insensitive occurrence of term within text.
+func findOccurrences(text, term string) [][2]int {
+	lowerText, lowerTerm := strings.ToLower(text), strings.ToLower(term)
+	var occs [][2]int
+	pos := 0
+	for {
+		idx := strings.Index(lowerText[pos:], lowerTerm)
+		if idx < 0 {
+			break
+		}
+		idx += pos
+		occs = append(occs, [2]int{idx, idx + len(term)})
+		pos = idx + len(term)
+	}
+	return occs
 }
 
 // FileAt returns the index into files (as returned alongside ranges by

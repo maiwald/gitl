@@ -38,21 +38,19 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetai
 		return nil, err
 	}
 
-	switch len(detail.Parents) {
-	case 1:
-		files, err := r.fetchDiff(ctx, detail.Parents[0], detail.Hash)
-		if err != nil {
-			return nil, err
+	// Merge commits (len(Parents) > 1) intentionally have no Files: with
+	// more than one parent there's no single canonical diff to pick.
+	if len(detail.Parents) <= 1 {
+		from := emptyTreeHash
+		if len(detail.Parents) == 1 {
+			from = detail.Parents[0]
 		}
-		detail.Files = files
-	case 0:
-		files, err := r.fetchDiff(ctx, emptyTreeHash, detail.Hash)
+		files, err := r.fetchDiff(ctx, from, detail.Hash)
 		if err != nil {
 			return nil, err
 		}
 		detail.Files = files
 	}
-	// Merge commits (len(Parents) > 1) intentionally have no Files.
 
 	return detail, nil
 }
@@ -72,7 +70,7 @@ func parseCommitDetail(out []byte) (*CommitDetail, error) {
 		return nil, fmt.Errorf("unexpected commit detail format (got %d fields)", len(fields))
 	}
 
-	commit, err := parseLogLine(strings.Join(fields[:8], fieldSep))
+	commit, err := parseLogLine(fields[:8])
 	if err != nil {
 		return nil, err
 	}

@@ -28,3 +28,20 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 
 	return stdout.Bytes(), nil
 }
+
+// splitLines trims trailing newlines from out and splits it into
+// non-empty lines. It returns nil for empty input.
+func splitLines(out []byte) []string {
+	text := strings.TrimRight(string(out), "\n")
+	if text == "" {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	result := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if l != "" {
+			result = append(result, l)
+		}
+	}
+	return result
+}

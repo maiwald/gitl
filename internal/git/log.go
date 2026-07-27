@@ -61,15 +61,11 @@ func (r *Repo) CommitCount(ctx context.Context) (int, error) {
 }
 
 func parseLogOutput(out []byte) ([]Commit, error) {
-	text := string(out)
-	lines := strings.Split(text, "\n")
+	lines := splitLines(out)
 
 	commits := make([]Commit, 0, len(lines))
 	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		c, err := parseLogLine(line)
+		c, err := parseLogLine(strings.Split(line, fieldSep))
 		if err != nil {
 			return nil, err
 		}
@@ -78,10 +74,9 @@ func parseLogOutput(out []byte) ([]Commit, error) {
 	return commits, nil
 }
 
-func parseLogLine(line string) (Commit, error) {
-	fields := strings.Split(line, fieldSep)
+func parseLogLine(fields []string) (Commit, error) {
 	if len(fields) != 8 {
-		return Commit{}, fmt.Errorf("unexpected log line format (got %d fields): %q", len(fields), line)
+		return Commit{}, fmt.Errorf("unexpected log line format (got %d fields): %q", len(fields), strings.Join(fields, fieldSep))
 	}
 
 	hash, short, parents, authorName, authorEmail, dateStr, refs, subject := fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], fields[7]

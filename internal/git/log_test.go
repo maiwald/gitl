@@ -2,9 +2,19 @@ package git
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 )
+
+// fixtureCommitEnv is the fixed author/committer identity and timestamp
+// used by initFixtureRepo, so commit hashes and dates are deterministic.
+var fixtureCommitEnv = []string{
+	"GIT_AUTHOR_NAME=Test Author",
+	"GIT_AUTHOR_EMAIL=test@example.com",
+	"GIT_COMMITTER_NAME=Test Author",
+	"GIT_COMMITTER_EMAIL=test@example.com",
+	"GIT_AUTHOR_DATE=2024-01-01T12:00:00+00:00",
+	"GIT_COMMITTER_DATE=2024-01-01T12:00:00+00:00",
+}
 
 // initFixtureRepo creates a temp git repo with a small, deterministic
 // history: n commits, each with a distinct subject line.
@@ -13,39 +23,15 @@ func initFixtureRepo(t *testing.T, n int) (*Repo, []string) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(cmd.Environ(),
-			"GIT_AUTHOR_NAME=Test Author",
-			"GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=Test Author",
-			"GIT_COMMITTER_EMAIL=test@example.com",
-			"GIT_AUTHOR_DATE=2024-01-01T12:00:00+00:00",
-			"GIT_COMMITTER_DATE=2024-01-01T12:00:00+00:00",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	run("init", "-b", "main")
-	run("config", "user.name", "Test Author")
-	run("config", "user.email", "test@example.com")
+	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
 
 	var hashes []string
 	for i := 0; i < n; i++ {
 		subject := "commit " + string(rune('A'+i))
-		run("commit", "--allow-empty", "-m", subject)
-
-		cmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
-		cmd.Dir = dir
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("rev-parse HEAD: %v", err)
-		}
-		hashes = append(hashes, string(out[:40]))
+		runGitCmd(t, dir, fixtureCommitEnv, "commit", "--allow-empty", "-m", subject)
+		hashes = append(hashes, headHash(t, dir))
 	}
 	// hashes[0] is the oldest commit (first created); git log lists newest
 	// first, so the expected order is the reverse of creation order.
@@ -71,11 +57,7 @@ func TestOpenRepoRejectsNonRepo(t *testing.T) {
 func TestHasCommitsOnEmptyRepo(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "git", "init", "-b", "main")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
+	runGitCmd(t, dir, nil, "init", "-b", "main")
 
 	repo, err := OpenRepo(ctx, dir)
 	if err != nil {

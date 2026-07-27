@@ -52,11 +52,13 @@ type DetailModel struct {
 
 	width, height int
 
-	// displayTerm and searchDismissed mirror the root Model's canonical
-	// search state (searchTerm/searchDismissed in app.go), pushed down via
-	// SetSearchDisplay — see the identical comment on ListModel's fields
-	// for why a local mirror exists at all.
-	displayTerm     string
+	// searchDismissed mirrors the root Model's canonical search-dismissed
+	// state (searchDismissed in app.go), pushed down via SetSearchDisplay —
+	// see the comment on ListModel's displayTerm/searchDismissed fields for
+	// why a local mirror exists at all. Unlike ListModel, DetailModel has no
+	// use for the term itself: RunSearch already computed messageMatches/
+	// diffMatches synchronously from it, so only dismissed state is needed
+	// here.
 	searchDismissed bool
 
 	// messageMatches and diffMatches together form one ordered sequence
@@ -245,17 +247,10 @@ func FindMessageMatches(lines []string, authorLine, bodyStart int, term string) 
 }
 
 func findMessageLineMatches(line, term string, lineIndex int) []MessageMatch {
-	lowerLine, lowerTerm := strings.ToLower(line), strings.ToLower(term)
-	var out []MessageMatch
-	pos := 0
-	for {
-		idx := strings.Index(lowerLine[pos:], lowerTerm)
-		if idx < 0 {
-			break
-		}
-		idx += pos
-		out = append(out, MessageMatch{LineIndex: lineIndex, StartCol: idx, EndCol: idx + len(term)})
-		pos = idx + len(term)
+	occs := findOccurrences(line, term)
+	out := make([]MessageMatch, len(occs))
+	for i, occ := range occs {
+		out[i] = MessageMatch{LineIndex: lineIndex, StartCol: occ[0], EndCol: occ[1]}
 	}
 	return out
 }
@@ -336,15 +331,8 @@ func (m *DetailModel) moveFileHighlight(delta int) {
 	if len(m.fileRanges) == 0 {
 		return
 	}
-	next := m.currentFile + delta
-	if next < 0 {
-		next = 0
-	}
-	if next > len(m.fileRanges)-1 {
-		next = len(m.fileRanges) - 1
-	}
-	m.currentFile = next
-	m.files.SetHighlight(next)
+	m.currentFile = clampIndex(m.currentFile+delta, len(m.fileRanges)-1)
+	m.files.SetHighlight(m.currentFile)
 }
 
 func (m *DetailModel) jumpToCurrentFile() {
@@ -426,12 +414,12 @@ func (m *DetailModel) ClearSearch() {
 	m.reflow()
 }
 
-// SetSearchDisplay updates the term (informational only — matches were
-// already computed by RunSearch) and whether highlighting is currently
-// dismissed, then re-renders. The root Model calls this whenever the
-// shared search state changes.
+// SetSearchDisplay updates whether highlighting is currently dismissed and
+// re-renders. term is accepted (unused) only to match ListModel's
+// SetSearchDisplay signature, since app.go calls both uniformly — matches
+// here were already computed by RunSearch, so DetailModel has no use for
+// the term itself.
 func (m *DetailModel) SetSearchDisplay(term string, dismissed bool) {
-	m.displayTerm = term
 	m.searchDismissed = dismissed
 	m.reflow()
 }
@@ -439,11 +427,7 @@ func (m *DetailModel) SetSearchDisplay(term string, dismissed bool) {
 // MatchPosition reports the current match position (1-based) and total
 // count for status-bar display.
 func (m DetailModel) MatchPosition() (pos, total int) {
-	total = m.totalMatches()
-	if total == 0 {
-		return 0, 0
-	}
-	return m.matchPos + 1, total
+	return matchPosition(m.matchPos, m.totalMatches())
 }
 
 func noDiffNotice(d *git.CommitDetail) string {

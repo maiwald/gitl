@@ -68,20 +68,14 @@ func highlightSpans(text, term string, base, match lipgloss.Style) string {
 	if term == "" {
 		return base.Render(text)
 	}
-	lowerText, lowerTerm := strings.ToLower(text), strings.ToLower(term)
 	var b strings.Builder
 	pos := 0
-	for {
-		idx := strings.Index(lowerText[pos:], lowerTerm)
-		if idx < 0 {
-			b.WriteString(base.Render(text[pos:]))
-			break
-		}
-		idx += pos
-		b.WriteString(base.Render(text[pos:idx]))
-		b.WriteString(match.Render(text[idx : idx+len(term)]))
-		pos = idx + len(term)
+	for _, occ := range findOccurrences(text, term) {
+		b.WriteString(base.Render(text[pos:occ[0]]))
+		b.WriteString(match.Render(text[occ[0]:occ[1]]))
+		pos = occ[1]
 	}
+	b.WriteString(base.Render(text[pos:]))
 	return b.String()
 }
 

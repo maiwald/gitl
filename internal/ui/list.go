@@ -94,12 +94,6 @@ func (m ListModel) Selected() (git.Commit, bool) {
 	return m.commits[m.cursor], true
 }
 
-// LoadedCount reports how many commits are currently loaded.
-func (m ListModel) LoadedCount() int { return len(m.commits) }
-
-// TotalCount reports the total number of commits reachable from HEAD.
-func (m ListModel) TotalCount() int { return m.totalCount }
-
 // Update processes a navigation key press. It returns a fetchRequest and
 // true when more commits must be loaded from the repo to satisfy the
 // requested movement (e.g. scrolling near the loaded end, or jumping to the
@@ -133,16 +127,31 @@ func (m *ListModel) halfPageSize() int {
 }
 
 func (m *ListModel) moveCursor(delta int) {
-	next := m.cursor + delta
-	if next < 0 {
-		next = 0
-	}
-	if next > len(m.commits)-1 {
-		next = len(m.commits) - 1
-	}
-	m.cursor = next
+	m.cursor = clampIndex(m.cursor+delta, len(m.commits)-1)
 	m.ensureVisible()
 	m.render()
+}
+
+// clampIndex constrains next to the valid index range [0, max], as used by
+// cursor/highlight movement in both ListModel and DetailModel.
+func clampIndex(next, max int) int {
+	if next < 0 {
+		return 0
+	}
+	if next > max {
+		return max
+	}
+	return next
+}
+
+// matchPosition reports pos as a 1-based position within total, or (0, 0)
+// when there are no matches — the shared shape behind both ListModel's and
+// DetailModel's MatchPosition methods.
+func matchPosition(pos, total int) (int, int) {
+	if total == 0 {
+		return 0, 0
+	}
+	return pos + 1, total
 }
 
 // jumpToBottom moves the cursor to the last loaded commit, or, if history
@@ -291,10 +300,7 @@ func (m *ListModel) SetSearchDisplay(term string, dismissed bool) {
 // MatchPosition reports the current match position (1-based) and total
 // count for status-bar display.
 func (m ListModel) MatchPosition() (pos, total int) {
-	if len(m.matches) == 0 {
-		return 0, 0
-	}
-	return m.matchPos + 1, len(m.matches)
+	return matchPosition(m.matchPos, len(m.matches))
 }
 
 func (m *ListModel) render() {

@@ -1,9 +1,6 @@
 package git
 
-import (
-	"context"
-	"strings"
-)
+import "context"
 
 // SearchCommitHashes returns the set of commit hashes reachable from HEAD
 // whose author name or full commit message (subject and body) contains
@@ -23,10 +20,8 @@ func (r *Repo) SearchCommitHashes(ctx context.Context, term string) (map[string]
 		if err != nil {
 			return nil, err
 		}
-		for _, h := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if h != "" {
-				hashes[h] = true
-			}
+		for _, h := range splitLines(out) {
+			hashes[h] = true
 		}
 	}
 	return hashes, nil
@@ -41,9 +36,5 @@ func (r *Repo) AllCommitHashes(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" {
-		return nil, nil
-	}
-	return strings.Split(trimmed, "\n"), nil
+	return splitLines(out), nil
 }
