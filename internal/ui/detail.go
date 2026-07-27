@@ -223,7 +223,7 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 	spans[authorLine] = []baseSpan{{start: len(authorPrefix), end: len(authorPrefix) + len(d.AuthorName), style: authorStyle}}
 
 	const datePrefix = "Date:   "
-	dateText := d.AuthorDate.Format("2006-01-02 15:04:05 -0700")
+	dateText := d.AuthorDate.Local().Format("2006-01-02 15:04:05 -0700")
 	lines = append(lines, datePrefix+dateText)
 	spans[len(lines)-1] = []baseSpan{{start: len(datePrefix), end: len(datePrefix) + len(dateText), style: dateStyle}}
 

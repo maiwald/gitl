@@ -246,7 +246,7 @@ func TestHeaderLinesForColorsHashAuthorAndDate(t *testing.T) {
 	}
 
 	dateLine := authorLine + 1
-	dateText := d.AuthorDate.Format("2006-01-02 15:04:05 -0700")
+	dateText := d.AuthorDate.Local().Format("2006-01-02 15:04:05 -0700")
 	dateSpans := spans[dateLine]
 	if len(dateSpans) != 1 || lines[dateLine][dateSpans[0].start:dateSpans[0].end] != dateText {
 		t.Fatalf("spans[dateLine] = %+v on line %q, want a single span covering %q", dateSpans, lines[dateLine], dateText)
