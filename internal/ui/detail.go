@@ -262,7 +262,7 @@ type baseSpan struct {
 func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int, spans map[int][]baseSpan) {
 	spans = make(map[int][]baseSpan)
 
-	const commitPrefix = "commit  "
+	const commitPrefix = "Commit: "
 	lines = append(lines, commitPrefix+d.Hash)
 	spans[0] = []baseSpan{{start: len(commitPrefix), end: len(commitPrefix) + len(d.Hash), style: shaStyle}}
 
