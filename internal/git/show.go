@@ -38,9 +38,9 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetai
 		return nil, err
 	}
 
-	// Merge commits (len(Parents) > 1) intentionally have no Files: with
-	// more than one parent there's no single canonical diff to pick.
-	if len(detail.Parents) <= 1 {
+	// Merge commits intentionally have no Files: with more than one
+	// parent there's no single canonical diff to pick.
+	if !detail.IsMerge() {
 		from := emptyTreeHash
 		if len(detail.Parents) == 1 {
 			from = detail.Parents[0]

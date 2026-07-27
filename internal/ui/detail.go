@@ -265,7 +265,7 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 	lines = append(lines, commitPrefix+d.Hash)
 	spans[0] = []baseSpan{{start: len(commitPrefix), end: len(commitPrefix) + len(d.Hash), style: shaStyle}}
 
-	if len(d.Parents) > 1 {
+	if d.IsMerge() {
 		const mergePrefix = "Merge:  "
 		lines = append(lines, mergePrefix+strings.Join(d.Parents, " "))
 		mergeSpans := make([]baseSpan, 0, len(d.Parents))
@@ -558,7 +558,7 @@ func (m DetailModel) MatchPosition() (pos, total int) {
 }
 
 func noDiffNotice(d *git.CommitDetail) string {
-	if len(d.Parents) > 1 {
+	if d.IsMerge() {
 		return binaryNoticeStyle.Render("Merge commit: diff not shown (viewing merge diffs isn't supported yet).")
 	}
 	return binaryNoticeStyle.Render("No changes in this commit.")

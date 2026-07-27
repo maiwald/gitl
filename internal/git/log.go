@@ -34,6 +34,11 @@ type Commit struct {
 	Subject     string
 }
 
+// IsMerge reports whether c has more than one parent.
+func (c Commit) IsMerge() bool {
+	return len(c.Parents) > 1
+}
+
 // FetchLogBatch fetches up to limit commits starting at skip, in the order
 // git log would normally produce them (most recent first).
 func (r *Repo) FetchLogBatch(ctx context.Context, skip, limit int) ([]Commit, error) {
