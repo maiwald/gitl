@@ -13,7 +13,6 @@ type KeyMap struct {
 	Enter        key.Binding
 	Back         key.Binding
 	Quit         key.Binding
-	Tab          key.Binding
 	Search       key.Binding
 	NextMatch    key.Binding
 	PrevMatch    key.Binding
@@ -30,7 +29,6 @@ var DefaultKeyMap = KeyMap{
 	Enter:        key.NewBinding(key.WithKeys("enter")),
 	Back:         key.NewBinding(key.WithKeys("esc", "q")),
 	Quit:         key.NewBinding(key.WithKeys("ctrl+c")),
-	Tab:          key.NewBinding(key.WithKeys("tab", "shift+tab")),
 	Search:       key.NewBinding(key.WithKeys("/")),
 	NextMatch:    key.NewBinding(key.WithKeys("n")),
 	PrevMatch:    key.NewBinding(key.WithKeys("N")),

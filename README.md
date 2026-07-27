@@ -6,11 +6,11 @@ A terminal UI for browsing git history, with vim-style navigation.
 
 - **Commit list** — scrollable log of commits showing date, author, ref
   decorations (branches/tags/HEAD), and subject line.
-- **Commit detail** — full metadata and commit message, plus a two-pane
-  diff view: a highlighted, scrollable diff on the left and the list of
-  changed files on the right, kept in sync as you scroll.
+- **Commit detail** — full metadata and commit message, plus a highlighted,
+  scrollable diff with a sticky header showing which file is currently in
+  view.
 - **Vim-style keys** throughout — `hjkl`/arrows, `ctrl-d`/`ctrl-u` half-page
-  paging, `g`/`G` to jump to top/bottom, `Tab` to switch panes.
+  paging, `g`/`G` to jump to top/bottom.
 - **Search** — `/` to search, `n`/`N` to cycle matches (wrapping at both
   ends), with all matches highlighted and the current one visually
   distinct. In the commit list, search covers author name and the full
@@ -49,11 +49,9 @@ gitl
 | Key(s)                | Action                                  |
 |------------------------|------------------------------------------|
 | `j`/`k`, `↓`/`↑`        | Move down/up                            |
-| `h`/`l`, `←`/`→`        | (reserved for pane focus in detail view) |
 | `ctrl-d` / `ctrl-u`     | Half-page down/up                       |
 | `g` / `G`               | Jump to top / bottom                    |
-| `Enter`                 | Open commit detail / jump to file       |
-| `Tab`                   | Switch focus between diff and file list |
+| `Enter`                 | Open commit detail                      |
 | `/`                     | Search (author + message, or diff content) |
 | `n` / `N`               | Next / previous search match (wraps)    |
 | `Esc` / `q`             | Back (detail view) / quit (list view)   |

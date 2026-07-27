@@ -12,44 +12,20 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
-// fileListWidthFraction is the share of the detail view's width given to
-// the right-hand file list; the remainder goes to the diff panel.
-const fileListWidthFraction = 0.25
-
-// minFileListWidth keeps the file list panel usable on narrow terminals.
-const minFileListWidth = 20
-
-// minDiffWidth keeps the diff panel usable on narrow terminals, taking
-// priority over the file list's target share of the width when the two
-// minimums can't both be satisfied.
-const minDiffWidth = 10
-
-// paneFocus identifies which of the two detail-view panes receives
-// navigation keys.
-type paneFocus int
-
-const (
-	focusDiff paneFocus = iota
-	focusFiles
-)
-
 // DetailModel renders a commit's metadata, message and diff as a single
-// scrollable left panel (so a long commit message doesn't permanently eat
-// into the screen), with the list of changed files on the right. The file
-// list entry for whichever file is currently in view in the diff panel is
-// highlighted, and the sync works both ways: navigating the file list and
-// pressing enter jumps the diff to that file. While the scroll position is
-// still within the header/message (above the first file), the first file is
-// treated as "current" since that's where scrolling down will land next.
+// scrollable panel (so a long commit message doesn't permanently eat into
+// the screen). A sticky header row above the panel always shows whichever
+// file is currently in view, updating as the user scrolls or jumps between
+// files with [ / ]. While the scroll position is still within the
+// header/message (above the first file), the first file is treated as
+// "current" since that's where scrolling down will land next.
 type DetailModel struct {
 	detail *git.CommitDetail
 
 	fileRanges  []FileRange
 	currentFile int
-	focus       paneFocus
 
 	leftVP viewport.Model
-	files  FileListModel
 
 	width, height int
 
@@ -79,7 +55,6 @@ func NewDetailModel(detail *git.CommitDetail) DetailModel {
 	return DetailModel{
 		detail:   detail,
 		leftVP:   viewport.New(0, 0),
-		files:    NewFileListModel(detail.Files),
 		matchPos: -1,
 	}
 }
@@ -96,21 +71,7 @@ func (m *DetailModel) reflow() {
 		return
 	}
 
-	fileListWidth := int(float64(m.width) * fileListWidthFraction)
-	if fileListWidth < minFileListWidth {
-		fileListWidth = minFileListWidth
-	}
-	maxFileListWidth := m.width - minDiffWidth
-	if maxFileListWidth < 0 {
-		maxFileListWidth = 0
-	}
-	if fileListWidth > maxFileListWidth {
-		fileListWidth = maxFileListWidth
-	}
-	diffWidth := m.width - fileListWidth
-	if diffWidth < 0 {
-		diffWidth = 0
-	}
+	diffWidth := m.width
 
 	var diffLines []string
 	var fileRanges []FileRange
@@ -163,9 +124,14 @@ func (m *DetailModel) reflow() {
 
 	m.leftVP.Width = diffWidth
 	m.leftVP.Height = m.height
+	if len(m.fileRanges) > 0 {
+		m.leftVP.Height--
+	}
+	if m.leftVP.Height < 0 {
+		m.leftVP.Height = 0
+	}
 	m.leftVP.SetContent(strings.Join(content, "\n"))
 
-	m.files.SetSize(fileListWidth, m.height)
 	m.syncHighlightFromScroll()
 }
 
@@ -361,33 +327,8 @@ func findMessageLineMatches(line, term string, lineIndex int) []MessageMatch {
 	return out
 }
 
-// Update handles a navigation key press: Tab switches which pane receives
-// further keys, and the rest are routed to whichever pane is focused.
+// Update handles a navigation key press against the diff viewport.
 func (m *DetailModel) Update(msg tea.KeyMsg) {
-	if key.Matches(msg, DefaultKeyMap.Tab) {
-		m.toggleFocus()
-		return
-	}
-
-	if m.focus == focusFiles {
-		m.updateFiles(msg)
-	} else {
-		m.updateDiff(msg)
-	}
-}
-
-func (m *DetailModel) toggleFocus() {
-	if len(m.fileRanges) == 0 {
-		return
-	}
-	if m.focus == focusDiff {
-		m.focus = focusFiles
-	} else {
-		m.focus = focusDiff
-	}
-}
-
-func (m *DetailModel) updateDiff(msg tea.KeyMsg) {
 	switch {
 	case key.Matches(msg, DefaultKeyMap.Up):
 		m.leftVP.LineUp(1)
@@ -406,10 +347,10 @@ func (m *DetailModel) updateDiff(msg tea.KeyMsg) {
 }
 
 // syncHighlightFromScroll recomputes which file the diff panel's topmost
-// visible line belongs to, and highlights that file in the list. Above the
-// first file (still within the header/commit message) FileAt has nothing to
-// report, so it clamps to the first file, since that's what scrolling down
-// reaches next.
+// visible line belongs to, for the sticky header. Above the first file
+// (still within the header/commit message) FileAt has nothing to report,
+// so it clamps to the first file, since that's what scrolling down reaches
+// next.
 func (m *DetailModel) syncHighlightFromScroll() {
 	if len(m.fileRanges) == 0 {
 		return
@@ -419,33 +360,6 @@ func (m *DetailModel) syncHighlightFromScroll() {
 		i = 0
 	}
 	m.currentFile = i
-	m.files.SetHighlight(i)
-}
-
-func (m *DetailModel) updateFiles(msg tea.KeyMsg) {
-	switch {
-	case key.Matches(msg, DefaultKeyMap.Up):
-		m.moveFileHighlight(-1)
-	case key.Matches(msg, DefaultKeyMap.Down):
-		m.moveFileHighlight(1)
-	case key.Matches(msg, DefaultKeyMap.Enter):
-		m.jumpToCurrentFile()
-	}
-}
-
-func (m *DetailModel) moveFileHighlight(delta int) {
-	if len(m.fileRanges) == 0 {
-		return
-	}
-	m.currentFile = clampIndex(m.currentFile+delta, len(m.fileRanges)-1)
-	m.files.SetHighlight(m.currentFile)
-}
-
-func (m *DetailModel) jumpToCurrentFile() {
-	if m.currentFile < 0 || m.currentFile >= len(m.fileRanges) {
-		return
-	}
-	m.leftVP.SetYOffset(m.fileRanges[m.currentFile].StartLine)
 }
 
 // RunSearch finds every occurrence of term across this commit's header and
@@ -547,5 +461,9 @@ func (m DetailModel) View() string {
 	if m.detail == nil {
 		return ""
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, m.leftVP.View(), m.files.View())
+	if len(m.fileRanges) == 0 {
+		return m.leftVP.View()
+	}
+	sticky := renderFileHeader(m.detail.Files[m.currentFile], m.width)
+	return lipgloss.JoinVertical(lipgloss.Left, sticky, m.leftVP.View())
 }

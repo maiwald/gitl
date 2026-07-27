@@ -3,8 +3,9 @@
 ## Overview
 
 `gitl` is a terminal UI for browsing git history: a scrollable commit list
-with vim-style navigation, and a commit detail view with a two-pane,
-highlighted diff synced to a file list. Written in Go, using
+with vim-style navigation, and a commit detail view with a highlighted,
+scrollable diff and a sticky file header that tracks scroll position.
+Written in Go, using
 [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the TUI
 runtime, [Lip Gloss](https://github.com/charmbracelet/lipgloss) for
 styling, and [go-gitdiff](https://github.com/bluekeyes/go-gitdiff) for
@@ -33,12 +34,11 @@ internal/ui/               Bubble Tea models, no direct git shelling out
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions
   list.go, commititem.go   commit list: cursor, viewport, lazy pagination, search
-  detail.go                commit detail: header + two-pane layout, focus/scroll sync, search
+  detail.go                commit detail: header + sticky file header, scroll sync, search
   diffview.go              RenderDiff (flatten+style diff), FileAt (scroll->file lookup),
                            FindDiffMatches (diff content search)
   statsview.go             statLinesFor: git-show---stat-style summary (per-file +N/-M,
                            totals line), spliced between message and diff in detail.go
-  filelist.go              right-pane file list
 ```
 
 `internal/git` and `internal/ui` are cleanly separated: the UI layer only
@@ -71,7 +71,7 @@ commit red.
   (`diff_test.go`) is tested against canned unified-diff text instead,
   since that doesn't need a real repo.
 - **`internal/ui`**: most model logic (cursor movement, pagination
-  triggers, focus/scroll sync) is tested by calling `Update` directly on a
+  triggers, scroll sync) is tested by calling `Update` directly on a
   model built from fixture data — no real terminal needed. A few tests use
   `github.com/charmbracelet/x/exp/teatest` for full quit/lifecycle
   behavior.

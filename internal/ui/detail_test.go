@@ -41,8 +41,8 @@ func fixtureDetailWithFiles(nFiles, linesPerFile int) *git.CommitDetail {
 
 // TestDetailModelMessageScrollsWithDiff pins down that the commit
 // message/header lives inside the scrollable diff content (rather than a
-// fixed row above it), and that the file list points at the first file
-// while still scrolled above it.
+// fixed row above it), and that currentFile points at the first file while
+// still scrolled above it.
 func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 20)
 	d.Body = "message-scroll-marker"
@@ -58,15 +58,15 @@ func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 
 	// Above the first file (still within the header/message), the first
 	// file is treated as current since that's where scrolling down lands.
-	if m.currentFile != 0 || m.files.highlightIndex != 0 {
-		t.Fatalf("currentFile=%d highlightIndex=%d while above first file, want both 0", m.currentFile, m.files.highlightIndex)
+	if m.currentFile != 0 {
+		t.Fatalf("currentFile=%d while above first file, want 0", m.currentFile)
 	}
 
 	// Scroll all the way to the bottom, into the last file's content.
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	lastFile := len(m.fileRanges) - 1
-	if m.currentFile != lastFile || m.files.highlightIndex != lastFile {
-		t.Fatalf("currentFile=%d highlightIndex=%d at bottom, want both %d", m.currentFile, m.files.highlightIndex, lastFile)
+	if m.currentFile != lastFile {
+		t.Fatalf("currentFile=%d at bottom, want %d", m.currentFile, lastFile)
 	}
 }
 
@@ -458,9 +458,6 @@ func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 	if m.currentFile != 0 {
 		t.Fatalf("initial currentFile = %d, want 0", m.currentFile)
 	}
-	if m.files.highlightIndex != 0 {
-		t.Fatalf("initial file list highlight = %d, want 0", m.files.highlightIndex)
-	}
 
 	// file 0 occupies fileRanges[0]; scroll past its end into file 1.
 	targetOffset := m.fileRanges[0].EndLine
@@ -471,65 +468,37 @@ func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 	if m.currentFile != 1 {
 		t.Fatalf("currentFile = %d after scrolling into file 1, want 1", m.currentFile)
 	}
-	if m.files.highlightIndex != 1 {
-		t.Fatalf("file list highlight = %d after scrolling into file 1, want 1", m.files.highlightIndex)
-	}
 }
 
-func TestDetailModelTabTogglesFocusAndFileListNavigation(t *testing.T) {
-	m := NewDetailModel(fixtureDetailWithFiles(3, 10))
+// TestDetailModelStickyHeaderTracksScroll pins down that View()'s sticky
+// row shows the file currently in view and updates as the user scrolls
+// between files.
+func TestDetailModelStickyHeaderTracksScroll(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithFiles(2, 20))
 	m.SetSize(80, 8)
 
-	if m.focus != focusDiff {
-		t.Fatalf("initial focus = %v, want focusDiff", m.focus)
+	if !strings.Contains(m.View(), "file0.txt") {
+		t.Fatalf("View() = %q, want sticky header to show file0.txt", m.View())
 	}
 
-	m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.focus != focusFiles {
-		t.Fatalf("focus after tab = %v, want focusFiles", m.focus)
-	}
-
-	// While focused on files, down moves the highlight without scrolling
-	// the diff panel.
-	yOffsetBefore := m.leftVP.YOffset
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	if m.currentFile != 1 {
-		t.Fatalf("currentFile after down in file list = %d, want 1", m.currentFile)
-	}
-	if m.files.highlightIndex != 1 {
-		t.Fatalf("file list highlight = %d, want 1", m.files.highlightIndex)
-	}
-	if m.leftVP.YOffset != yOffsetBefore {
-		t.Fatalf("diff YOffset changed to %d before enter, want unchanged %d", m.leftVP.YOffset, yOffsetBefore)
-	}
-
-	// Enter jumps the diff panel to the selected file's start.
-	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.leftVP.YOffset != m.fileRanges[1].StartLine {
-		t.Fatalf("diff YOffset after enter = %d, want %d", m.leftVP.YOffset, m.fileRanges[1].StartLine)
-	}
-
-	// Tab back to the diff panel; down should scroll the diff again.
-	m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.focus != focusDiff {
-		t.Fatalf("focus after second tab = %v, want focusDiff", m.focus)
-	}
-	yOffsetBeforeScroll := m.leftVP.YOffset
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	if m.leftVP.YOffset != yOffsetBeforeScroll+1 {
-		t.Fatalf("diff YOffset after down in diff focus = %d, want %d", m.leftVP.YOffset, yOffsetBeforeScroll+1)
+	m.leftVP.SetYOffset(m.fileRanges[1].StartLine)
+	m.syncHighlightFromScroll()
+	if !strings.Contains(m.View(), "file1.txt") {
+		t.Fatalf("View() = %q, want sticky header to show file1.txt after scrolling", m.View())
 	}
 }
 
-func TestDetailModelTabNoopsWithoutFiles(t *testing.T) {
+// TestDetailModelNoStickyHeaderWithoutFiles pins down that a merge/empty
+// commit (no fileRanges) doesn't render a sticky row or lose a line of
+// viewport height reserving one for nothing.
+func TestDetailModelNoStickyHeaderWithoutFiles(t *testing.T) {
 	m := NewDetailModel(&git.CommitDetail{
-		Commit: git.Commit{Hash: "abc", AuthorName: "A", AuthorDate: time.Now(), Subject: "s"},
+		Commit: git.Commit{Hash: "empty123", AuthorName: "A", AuthorDate: time.Now(), Subject: "empty"},
 	})
-	m.SetSize(80, 8)
+	m.SetSize(80, 24)
 
-	m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.focus != focusDiff {
-		t.Fatalf("focus = %v after tab with no files, want focusDiff (no-op)", m.focus)
+	if m.leftVP.Height != 24 {
+		t.Fatalf("leftVP.Height = %d, want 24 (no row reserved without files)", m.leftVP.Height)
 	}
 }
 
@@ -558,17 +527,5 @@ func TestDetailModelEmptyCommitShowsNoChangesNotice(t *testing.T) {
 
 	if !strings.Contains(m.View(), "No changes") {
 		t.Errorf("View() = %q, want it to say there are no changes", m.View())
-	}
-}
-
-func TestDetailModelReflowClampsWidthsOnNarrowTerminal(t *testing.T) {
-	m := NewDetailModel(fixtureDetailWithFiles(2, 5))
-	m.SetSize(15, 24) // narrower than minFileListWidth + minDiffWidth
-
-	if m.leftVP.Width < minDiffWidth {
-		t.Errorf("diff panel width = %d, want at least %d even on a narrow terminal", m.leftVP.Width, minDiffWidth)
-	}
-	if m.leftVP.Width < 0 {
-		t.Errorf("diff panel width = %d, must not be negative", m.leftVP.Width)
 	}
 }
