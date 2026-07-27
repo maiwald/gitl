@@ -10,16 +10,16 @@ var (
 				Foreground(lipgloss.Color("230"))
 
 	dateStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
+			Foreground(lipgloss.Color("34"))
 
 	shaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("136"))
+			Foreground(lipgloss.Color("220"))
 
 	authorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("109"))
+			Foreground(lipgloss.Color("39"))
 
 	refStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("212")).
+			Foreground(lipgloss.Color("203")).
 			Bold(true)
 
 	errStyle = lipgloss.NewStyle().

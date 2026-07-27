@@ -189,7 +189,7 @@ func TestDetailModelSearchFindsMessageMatchButIgnoresMetadata(t *testing.T) {
 }
 
 func TestFindMessageMatchesScansAuthorAndBodyOnly(t *testing.T) {
-	lines, authorLine, bodyStart := headerLinesFor(&git.CommitDetail{
+	lines, authorLine, bodyStart, _ := headerLinesFor(&git.CommitDetail{
 		Commit: git.Commit{
 			Hash:        "deadbeef",
 			AuthorName:  "Ada Lovelace",
@@ -210,6 +210,146 @@ func TestFindMessageMatchesScansAuthorAndBodyOnly(t *testing.T) {
 	}
 	if matches := FindMessageMatches(lines, authorLine, bodyStart, ""); matches != nil {
 		t.Fatalf("matches = %+v, want nil for an empty term", matches)
+	}
+}
+
+// TestHeaderLinesForColorsHashAuthorAndDate pins down which byte ranges
+// headerLinesFor marks for base coloring: the hash (not the "commit "
+// label), the author's name (not the email), and the date value (not the
+// "Date:   " label) — the same substrings commititem.go colors in the list
+// view, kept consistent in the detail header.
+func TestHeaderLinesForColorsHashAuthorAndDate(t *testing.T) {
+	d := &git.CommitDetail{
+		Commit: git.Commit{
+			Hash:        "deadbeef",
+			AuthorName:  "Ada Lovelace",
+			AuthorEmail: "ada@example.com",
+			AuthorDate:  time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	lines, authorLine, _, spans := headerLinesFor(d)
+
+	hashSpans := spans[0]
+	if len(hashSpans) != 1 || lines[0][hashSpans[0].start:hashSpans[0].end] != d.Hash {
+		t.Fatalf("spans[0] = %+v on line %q, want a single span covering %q", hashSpans, lines[0], d.Hash)
+	}
+	if hashSpans[0].style.GetForeground() != shaStyle.GetForeground() {
+		t.Errorf("hash span style = %v, want shaStyle", hashSpans[0].style)
+	}
+
+	authorSpans := spans[authorLine]
+	if len(authorSpans) != 1 || lines[authorLine][authorSpans[0].start:authorSpans[0].end] != d.AuthorName {
+		t.Fatalf("spans[authorLine] = %+v on line %q, want a single span covering %q", authorSpans, lines[authorLine], d.AuthorName)
+	}
+	if authorSpans[0].style.GetForeground() != authorStyle.GetForeground() {
+		t.Errorf("author span style = %v, want authorStyle", authorSpans[0].style)
+	}
+
+	dateLine := authorLine + 1
+	dateText := d.AuthorDate.Format("2006-01-02 15:04:05 -0700")
+	dateSpans := spans[dateLine]
+	if len(dateSpans) != 1 || lines[dateLine][dateSpans[0].start:dateSpans[0].end] != dateText {
+		t.Fatalf("spans[dateLine] = %+v on line %q, want a single span covering %q", dateSpans, lines[dateLine], dateText)
+	}
+	if dateSpans[0].style.GetForeground() != dateStyle.GetForeground() {
+		t.Errorf("date span style = %v, want dateStyle", dateSpans[0].style)
+	}
+}
+
+// TestHeaderLinesForColorsMergeParents pins down that every parent hash on
+// a merge commit's "Merge:  <hash> <hash>" line gets its own shaStyle span,
+// matching the primary commit hash's coloring.
+func TestHeaderLinesForColorsMergeParents(t *testing.T) {
+	d := &git.CommitDetail{
+		Commit: git.Commit{
+			Hash:       "abc123",
+			Parents:    []string{"parent1", "parent2"},
+			AuthorDate: time.Now(),
+		},
+	}
+	lines, _, _, spans := headerLinesFor(d)
+
+	mergeSpans := spans[1]
+	if len(mergeSpans) != 2 {
+		t.Fatalf("spans[1] = %+v, want 2 spans (one per parent)", mergeSpans)
+	}
+	for i, want := range d.Parents {
+		if got := lines[1][mergeSpans[i].start:mergeSpans[i].end]; got != want {
+			t.Errorf("mergeSpans[%d] covers %q, want %q", i, got, want)
+		}
+		if mergeSpans[i].style.GetForeground() != shaStyle.GetForeground() {
+			t.Errorf("mergeSpans[%d] style = %v, want shaStyle", i, mergeSpans[i].style)
+		}
+	}
+}
+
+// TestHeaderLinesForIndentsBody pins down that the message body is
+// indented 4 spaces, matching real `git show`'s own convention, while
+// metadata lines (commit/Author/Date) stay flush left.
+func TestHeaderLinesForIndentsBody(t *testing.T) {
+	lines, _, bodyStart, _ := headerLinesFor(&git.CommitDetail{
+		Commit: git.Commit{AuthorDate: time.Now()},
+		Body:   "subject\n\nbody line",
+	})
+
+	for i, want := range []string{"    subject", "    ", "    body line"} {
+		if got := lines[bodyStart+i]; got != want {
+			t.Errorf("body line %d = %q, want %q", i, got, want)
+		}
+	}
+	if strings.HasPrefix(lines[0], " ") {
+		t.Errorf("commit line = %q, want it to stay flush left (not indented)", lines[0])
+	}
+}
+
+// TestRenderLineWithBaseSpansMatchWinsOnOverlap pins down the composite
+// renderer's priority rule: a search match inside a colored base span
+// (e.g. a hit inside the author's name) shows the match style, not the
+// base color, and text outside both keeps its own base style.
+func TestRenderLineWithBaseSpansMatchWinsOnOverlap(t *testing.T) {
+	text := "Author: Ada Lovelace <ada@example.com>"
+	nameStart := strings.Index(text, "Ada Lovelace")
+	nameEnd := nameStart + len("Ada Lovelace")
+	spans := []baseSpan{{start: nameStart, end: nameEnd, style: authorStyle}}
+
+	matchStart := strings.Index(text, "Lovelace")
+	matchEnd := matchStart + len("Lovelace")
+	matches := []lineMatch{{start: matchStart, end: matchEnd, active: true}}
+
+	got := renderLineWithBaseSpans(text, spans, matches)
+
+	wantMatch := searchActiveMatchStyle.Render("Lovelace")
+	if !strings.Contains(got, wantMatch) {
+		t.Errorf("got %q, want the overlapping match styled with searchActiveMatchStyle, not authorStyle", got)
+	}
+	wantBase := authorStyle.Render("Ada ")
+	if !strings.Contains(got, wantBase) {
+		t.Errorf("got %q, want the non-matched part of the name (%q) still styled with authorStyle", got, "Ada ")
+	}
+	if strings.Contains(got, authorStyle.Render("Lovelace")) {
+		t.Errorf("got %q, the matched span must not also carry authorStyle", got)
+	}
+}
+
+// TestDetailModelHeaderColorsAndIndentationRenderInView is an end-to-end
+// check that headerLinesFor's spans and body indentation actually reach
+// the rendered viewport content, not just the intermediate data.
+func TestDetailModelHeaderColorsAndIndentationRenderInView(t *testing.T) {
+	d := fixtureDetailWithFiles(1, 3)
+	d.AuthorName = "Ada Lovelace"
+	d.Body = "subject line"
+	m := NewDetailModel(d)
+	m.SetSize(80, 30)
+
+	view := m.leftVP.View()
+	if !strings.Contains(view, shaStyle.Render(d.Hash)) {
+		t.Errorf("view does not contain the hash styled with shaStyle")
+	}
+	if !strings.Contains(view, authorStyle.Render(d.AuthorName)) {
+		t.Errorf("view does not contain the author name styled with authorStyle")
+	}
+	if !strings.Contains(view, "    subject line") {
+		t.Errorf("view does not contain the 4-space-indented message body")
 	}
 }
 

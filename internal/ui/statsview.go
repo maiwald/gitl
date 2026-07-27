@@ -22,48 +22,61 @@ func statLinesFor(files []git.File, width int) []string {
 	}
 
 	nameWidth := 0
-	for _, f := range files {
+	countWidth := 0
+	plainCounts := make([]string, len(files))
+	styledCounts := make([]string, len(files))
+	var totalAdd, totalDel int
+	for i, f := range files {
 		if n := len(filePathLabel(f)); n > nameWidth {
 			nameWidth = n
 		}
-	}
-
-	var totalAdd, totalDel int
-	lines := make([]string, 0, len(files)+1)
-	for _, f := range files {
+		if f.Binary {
+			plainCounts[i], styledCounts[i] = "Bin", binaryNoticeStyle.Render("Bin")
+		} else {
+			plainCounts[i], styledCounts[i] = formatCounts(f.Additions, f.Deletions)
+		}
+		if n := len(plainCounts[i]); n > countWidth {
+			countWidth = n
+		}
 		totalAdd += f.Additions
 		totalDel += f.Deletions
-		lines = append(lines, renderStatLine(f, nameWidth, width))
+	}
+
+	lines := make([]string, 0, len(files)+2)
+	lines = append(lines, renderClipped(fileHeaderStyle, "Files changed", width))
+	for i, f := range files {
+		lines = append(lines, renderStatLine(f, nameWidth, countWidth, plainCounts[i], styledCounts[i], width))
 	}
 	lines = append(lines, renderClipped(lipgloss.NewStyle(), statTotalsLine(len(files), totalAdd, totalDel), width))
 	return lines
 }
 
-func renderStatLine(f git.File, nameWidth, width int) string {
-	counts := binaryNoticeStyle.Render("Bin")
-	if !f.Binary {
-		counts = formatCounts(f.Additions, f.Deletions)
-	}
-	content := fmt.Sprintf(" %-*s  %s", nameWidth, filePathLabel(f), counts)
+func renderStatLine(f git.File, nameWidth, countWidth int, plainCounts, styledCounts string, width int) string {
+	pad := strings.Repeat(" ", countWidth-len(plainCounts))
+	content := fmt.Sprintf(" %-*s  %s%s", nameWidth, filePathLabel(f), pad, styledCounts)
 	return renderClipped(lipgloss.NewStyle(), content, width)
 }
 
-// formatCounts renders "+N -M", coloring each half like the corresponding
-// diff line op (diffAddStyle/diffDeleteStyle) and omitting either half when
+// formatCounts renders "+N -M" both plain (for width measurement, since
+// callers need to right-align counts across files without an ANSI-aware
+// width directive) and styled (coloring each half like the corresponding
+// diff line op, diffAddStyle/diffDeleteStyle), omitting either half when
 // its count is zero, mirroring how statTotalsLine drops a zero-valued
-// clause.
-func formatCounts(additions, deletions int) string {
-	var parts []string
+// clause. The two are computed together so they can't drift out of sync.
+func formatCounts(additions, deletions int) (plain, styled string) {
+	var plainParts, styledParts []string
 	if additions > 0 {
-		parts = append(parts, diffAddStyle.Render(fmt.Sprintf("+%d", additions)))
+		plainParts = append(plainParts, fmt.Sprintf("+%d", additions))
+		styledParts = append(styledParts, diffAddStyle.Render(fmt.Sprintf("+%d", additions)))
 	}
 	if deletions > 0 {
-		parts = append(parts, diffDeleteStyle.Render(fmt.Sprintf("-%d", deletions)))
+		plainParts = append(plainParts, fmt.Sprintf("-%d", deletions))
+		styledParts = append(styledParts, diffDeleteStyle.Render(fmt.Sprintf("-%d", deletions)))
 	}
-	if len(parts) == 0 {
-		return "0"
+	if len(plainParts) == 0 {
+		return "0", "0"
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(plainParts, " "), strings.Join(styledParts, " ")
 }
 
 // statTotalsLine mirrors git's own "N files changed, X insertions(+), Y

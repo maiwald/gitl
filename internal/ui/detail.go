@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -128,12 +129,12 @@ func (m *DetailModel) reflow() {
 	// visual row its own entry) so the line offset applied to fileRanges
 	// below stays exact regardless of terminal width — see the
 	// FileRange/FileAt convention in diffview.go.
-	headerLines, _, _ := headerLinesFor(m.detail)
+	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
 	msgActive := -1
 	if !m.searchDismissed && m.matchPos >= 0 && m.matchPos < len(m.messageMatches) {
 		msgActive = m.matchPos
 	}
-	wrappedHeader, messageMatchLines := renderHeaderLines(headerLines, diffWidth, m.messageMatches, msgActive, m.searchDismissed)
+	wrappedHeader, messageMatchLines := renderHeaderLines(headerLines, headerSpans, diffWidth, m.messageMatches, msgActive, m.searchDismissed)
 	statLines := statLinesFor(m.detail.Files, diffWidth)
 	offset := len(wrappedHeader) + 1 + len(statLines)
 	if len(statLines) > 0 {
@@ -168,6 +169,16 @@ func (m *DetailModel) reflow() {
 	m.syncHighlightFromScroll()
 }
 
+// baseSpan is a byte-offset [start,end) run of a header line rendered with
+// a specific non-match base style (e.g. the author's name colored
+// authorStyle), computed once per logical line in headerLinesFor alongside
+// its plain text so it composes with search-match highlighting the same
+// way a single uniform base already does for diff lines.
+type baseSpan struct {
+	start, end int
+	style      lipgloss.Style
+}
+
 // headerLinesFor builds the commit header's pre-wrap logical lines (one
 // entry per line; the message body is included verbatim, unwrapped —
 // wrapping happens later in renderHeaderLines so its matchLines bookkeeping
@@ -176,31 +187,67 @@ func (m *DetailModel) reflow() {
 // search — the author line and the message body — matching exactly what
 // internal/git.SearchCommitHashes matches for list search (author name OR
 // message), deliberately excluding the hash/parent/date metadata lines.
-func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int) {
-	lines = append(lines, fmt.Sprintf("commit %s", d.Hash))
+// spans (keyed by line index) marks the hash/name/date substrings that get
+// base coloring regardless of search state — computed here, where each
+// substring's byte offset is already known, rather than re-found later.
+// The body is indented 4 spaces, matching real `git show`'s own convention
+// of an indented subject/body under flush-left metadata; since both
+// FindMessageMatches and renderHeaderLines read these same stored strings,
+// the indentation is simply part of the line text from here on, with no
+// separate column-shifting logic needed elsewhere.
+func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int, spans map[int][]baseSpan) {
+	spans = make(map[int][]baseSpan)
+
+	const commitPrefix = "commit "
+	lines = append(lines, commitPrefix+d.Hash)
+	spans[0] = []baseSpan{{start: len(commitPrefix), end: len(commitPrefix) + len(d.Hash), style: shaStyle}}
+
 	if len(d.Parents) > 1 {
-		lines = append(lines, fmt.Sprintf("Merge:  %s", strings.Join(d.Parents, " ")))
+		const mergePrefix = "Merge:  "
+		lines = append(lines, mergePrefix+strings.Join(d.Parents, " "))
+		mergeSpans := make([]baseSpan, 0, len(d.Parents))
+		col := len(mergePrefix)
+		for i, p := range d.Parents {
+			mergeSpans = append(mergeSpans, baseSpan{start: col, end: col + len(p), style: shaStyle})
+			col += len(p)
+			if i < len(d.Parents)-1 {
+				col++ // the separating space strings.Join inserts
+			}
+		}
+		spans[len(lines)-1] = mergeSpans
 	}
+
 	authorLine = len(lines)
-	lines = append(lines, fmt.Sprintf("Author: %s <%s>", d.AuthorName, d.AuthorEmail))
-	lines = append(lines, fmt.Sprintf("Date:   %s", d.AuthorDate.Format("2006-01-02 15:04:05 -0700")))
+	const authorPrefix = "Author: "
+	lines = append(lines, fmt.Sprintf("%s%s <%s>", authorPrefix, d.AuthorName, d.AuthorEmail))
+	spans[authorLine] = []baseSpan{{start: len(authorPrefix), end: len(authorPrefix) + len(d.AuthorName), style: authorStyle}}
+
+	const datePrefix = "Date:   "
+	dateText := d.AuthorDate.Format("2006-01-02 15:04:05 -0700")
+	lines = append(lines, datePrefix+dateText)
+	spans[len(lines)-1] = []baseSpan{{start: len(datePrefix), end: len(datePrefix) + len(dateText), style: dateStyle}}
+
 	lines = append(lines, "")
 	bodyStart = len(lines)
-	lines = append(lines, strings.Split(strings.TrimRight(d.Body, "\n"), "\n")...)
-	return lines, authorLine, bodyStart
+	for _, l := range strings.Split(strings.TrimRight(d.Body, "\n"), "\n") {
+		lines = append(lines, "    "+l)
+	}
+	return lines, authorLine, bodyStart, spans
 }
 
 // renderHeaderLines word-wraps each logical header/message line to width,
-// applying search-match highlighting first — styling the plain pre-wrap
-// text via the same renderLineWithMatches helper diff lines use, so
-// highlighted spans survive wrapping (see CLAUDE.md's "style plain-text
-// spans before any .Render() call" rule) — then wrapping the already-styled
-// line via lipgloss, splitting on the resulting newlines exactly like
-// RenderDiff/renderDiffLine do. matchLines is parallel to matches: the
-// wrapped-line index each match's logical line starts at, computed from the
-// full matches list regardless of dismissed (see RenderDiff's doc comment
-// for why suppressing style doesn't need suppressing position tracking).
-func renderHeaderLines(lines []string, width int, matches []MessageMatch, activeIdx int, dismissed bool) (wrapped []string, matchLines []int) {
+// applying base coloring (spans, from headerLinesFor) and search-match
+// highlighting together first — styling the plain pre-wrap text via
+// renderLineWithBaseSpans so both survive wrapping (see CLAUDE.md's "style
+// plain-text spans before any .Render() call" rule) — then wrapping the
+// already-styled line via lipgloss, splitting on the resulting newlines
+// exactly like RenderDiff/renderDiffLine do. matchLines is parallel to
+// matches: the wrapped-line index each match's logical line starts at,
+// computed from the full matches list regardless of dismissed (see
+// RenderDiff's doc comment for why suppressing style doesn't need
+// suppressing position tracking) — spans, unlike matches, are never
+// suppressed by dismissed, since they're not part of search at all.
+func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool) (wrapped []string, matchLines []int) {
 	matchLines = make([]int, len(matches))
 	mi := 0
 	for li, line := range lines {
@@ -216,8 +263,8 @@ func renderHeaderLines(lines []string, width int, matches []MessageMatch, active
 			mi++
 		}
 		content := line
-		if len(lineMatches) > 0 {
-			content = renderLineWithMatches(line, 0, lipgloss.NewStyle(), lineMatches)
+		if len(spans[li]) > 0 || len(lineMatches) > 0 {
+			content = renderLineWithBaseSpans(line, spans[li], lineMatches)
 		}
 		if width <= 0 {
 			wrapped = append(wrapped, content)
@@ -226,6 +273,57 @@ func renderHeaderLines(lines []string, width int, matches []MessageMatch, active
 		wrapped = append(wrapped, strings.Split(lipgloss.NewStyle().Width(width).Render(content), "\n")...)
 	}
 	return wrapped, matchLines
+}
+
+// renderLineWithBaseSpans composites per-column base coloring (spans) with
+// search-match spans (matches) into one already-styled string: walks the
+// boundary points from both span lists, and for each resulting piece
+// renders with whichever match style covers it, else whichever baseSpan
+// covers it, else colorless — a match always wins over a base span on
+// overlap (e.g. a search hit inside the author's name still shows the
+// search highlight, not the name's blue).
+func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch) string {
+	bounds := map[int]bool{0: true, len(text): true}
+	for _, s := range spans {
+		bounds[s.start] = true
+		bounds[s.end] = true
+	}
+	for _, m := range matches {
+		bounds[m.start] = true
+		bounds[m.end] = true
+	}
+	points := make([]int, 0, len(bounds))
+	for p := range bounds {
+		points = append(points, p)
+	}
+	sort.Ints(points)
+
+	styleAt := func(pos int) lipgloss.Style {
+		for _, m := range matches {
+			if pos >= m.start && pos < m.end {
+				if m.active {
+					return searchActiveMatchStyle
+				}
+				return searchMatchStyle
+			}
+		}
+		for _, s := range spans {
+			if pos >= s.start && pos < s.end {
+				return s.style
+			}
+		}
+		return lipgloss.NewStyle()
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(points)-1; i++ {
+		start, end := points[i], points[i+1]
+		if start >= end {
+			continue
+		}
+		b.WriteString(styleAt(start).Render(text[start:end]))
+	}
+	return b.String()
 }
 
 // MessageMatch identifies one case-insensitive occurrence of a search term
@@ -363,7 +461,7 @@ func (m *DetailModel) RunSearch(term string) int {
 	if term == "" {
 		m.messageMatches, m.diffMatches = nil, nil
 	} else {
-		lines, authorLine, bodyStart := headerLinesFor(m.detail)
+		lines, authorLine, bodyStart, _ := headerLinesFor(m.detail)
 		m.messageMatches = FindMessageMatches(lines, authorLine, bodyStart, term)
 		m.diffMatches = FindDiffMatches(m.detail.Files, term)
 	}
