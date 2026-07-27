@@ -118,26 +118,6 @@ func findOccurrences(text, term string) [][2]int {
 	return occs
 }
 
-// FileAt returns the index into files (as returned alongside ranges by
-// RenderDiff) whose rendered lines contain lineIndex, via binary search.
-// It returns -1 if lineIndex falls outside all ranges (e.g. no files).
-func FileAt(ranges []FileRange, lineIndex int) int {
-	lo, hi := 0, len(ranges)-1
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		r := ranges[mid]
-		switch {
-		case lineIndex < r.StartLine:
-			hi = mid - 1
-		case lineIndex >= r.EndLine:
-			lo = mid + 1
-		default:
-			return r.FileIndex
-		}
-	}
-	return -1
-}
-
 func renderFileHeader(f git.File, width int) string {
 	label := fmt.Sprintf("%s %s", fileStatusGlyph(f.Status), filePathLabel(f))
 	return renderClipped(fileHeaderStyle, label, width)

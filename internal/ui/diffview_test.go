@@ -61,31 +61,6 @@ func TestRenderDiffProducesContiguousRanges(t *testing.T) {
 	}
 }
 
-func TestFileAtBoundaries(t *testing.T) {
-	files := fixtureDiffFiles()
-	_, ranges, _ := RenderDiff(files, 80, nil, -1, false)
-
-	tests := []struct {
-		name      string
-		lineIndex int
-		want      int
-	}{
-		{"first line of file 0", ranges[0].StartLine, 0},
-		{"last line of file 0", ranges[0].EndLine - 1, 0},
-		{"first line of file 1", ranges[1].StartLine, 1},
-		{"last line of file 1", ranges[1].EndLine - 1, 1},
-		{"before start", -1, -1},
-		{"past end", ranges[1].EndLine, -1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := FileAt(ranges, tt.lineIndex); got != tt.want {
-				t.Errorf("FileAt(ranges, %d) = %d, want %d", tt.lineIndex, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRenderDiffWrapsLongLinesAndKeepsRangesContiguous(t *testing.T) {
 	longText := strings.Repeat("word ", 40) // much wider than a 20-col panel
 	files := []git.File{
@@ -119,21 +94,9 @@ func TestRenderDiffWrapsLongLinesAndKeepsRangesContiguous(t *testing.T) {
 	}
 
 	// Ranges must still be contiguous and cover every line with no gaps or
-	// overlaps, so FileAt keeps working after wrapping expands a file's
-	// line count.
+	// overlaps, even after wrapping expands a file's line count.
 	if ranges[0].StartLine != 0 || ranges[0].EndLine != ranges[1].StartLine || ranges[1].EndLine != len(lines) {
 		t.Fatalf("ranges not contiguous: %+v (total lines %d)", ranges, len(lines))
-	}
-	for i := ranges[0].StartLine; i < ranges[0].EndLine; i++ {
-		if got := FileAt(ranges, i); got != 0 {
-			t.Errorf("FileAt(ranges, %d) = %d, want 0 (still within file 0 after wrapping)", i, got)
-		}
-	}
-}
-
-func TestFileAtEmptyRanges(t *testing.T) {
-	if got := FileAt(nil, 0); got != -1 {
-		t.Errorf("FileAt(nil, 0) = %d, want -1", got)
 	}
 }
 
@@ -269,9 +232,9 @@ func TestRenderDiffMatchLinesFallWithinCorrespondingFileRange(t *testing.T) {
 		t.Fatalf("got %d matches / %d matchLines, want 2/2", len(matches), len(matchLines))
 	}
 	for i, ln := range matchLines {
-		want := matches[i].FileIndex
-		if got := FileAt(ranges, ln); got != want {
-			t.Errorf("matchLines[%d] = %d, FileAt = %d, want %d", i, ln, got, want)
+		r := ranges[matches[i].FileIndex]
+		if ln < r.StartLine || ln >= r.EndLine {
+			t.Errorf("matchLines[%d] = %d, want within file %d's range [%d, %d)", i, ln, matches[i].FileIndex, r.StartLine, r.EndLine)
 		}
 	}
 }
