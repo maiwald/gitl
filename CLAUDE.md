@@ -35,7 +35,7 @@ internal/ui/               Bubble Tea models, no direct git shelling out
   styles.go                lipgloss style definitions
   list.go, commititem.go   commit list: cursor, viewport, lazy pagination, search
   detail.go                commit detail: header + sticky file header, scroll sync, search
-  diffview.go              RenderDiff (flatten+style diff), FileAt (scroll->file lookup),
+  diffview.go              RenderDiff (flatten+style diff),
                            FindDiffMatches (diff content search)
   statsview.go             statLinesFor: git-show---stat-style summary (per-file +N/-M,
                            totals line), spliced between message and diff in detail.go
@@ -97,8 +97,8 @@ commit red.
   collide with commit messages or paths.
 - Diff line wrapping: each wrapped visual row is its own entry in the
   flattened `RenderDiff` output (not a single multi-line string), so
-  `FileRange`/`FileAt` line-index bookkeeping stays correct regardless of
-  terminal width.
+  `FileRange` line-index bookkeeping stays correct regardless of terminal
+  width.
 - Search-match highlighting always styles plain-text spans *before* any
   `.Render()` call touches them, then concatenates the already-rendered
   pieces (see `highlightSpans` in `commititem.go`, `renderLineWithMatches`
@@ -121,5 +121,3 @@ commit red.
 - List search matching a commit's message body (not its one-line subject)
   has nothing to visibly highlight in that row, since the row never shows
   the body — it still counts correctly toward the match total.
-- Detail-view search covers diff content only, not the commit header or
-  message (an explicit scope decision, not an oversight).
