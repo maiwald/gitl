@@ -26,8 +26,9 @@ const (
 // which is expected.
 func renderCommitRow(c git.Commit, width int, selected bool, searchTerm string, isActiveMatch bool) string {
 	sha := fmt.Sprintf("%-*s", shaColumnWidth, shaPrefix(c.Hash))
-	date := c.AuthorDate.Local().Format("2006-01-02")
-	clock := c.AuthorDate.Local().Format("15:04")
+	localDate := c.AuthorDate.Local()
+	date := localDate.Format("2006-01-02")
+	clock := localDate.Format("15:04")
 	author := fmt.Sprintf("%-*s", authorColumnWidth, truncate(c.AuthorName, authorColumnWidth))
 	subject := c.Subject
 

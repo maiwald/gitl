@@ -280,30 +280,42 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	switch m.active {
-	case viewDetail:
-		if key.Matches(msg, DefaultKeyMap.Back) {
-			m.active = viewList
-			return m, nil
-		}
-		m.detail.Update(msg)
+	if m.active == viewDetail {
+		return m.handleDetailViewKey(msg)
+	}
+	return m.handleListViewKey(msg)
+}
+
+// handleDetailViewKey routes a key press while the detail view is active:
+// Back returns to the list, everything else goes to the diff viewport.
+func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, DefaultKeyMap.Back) {
+		m.active = viewList
 		return m, nil
-	default: // viewList
-		if key.Matches(msg, DefaultKeyMap.Back) {
-			m.quitting = true
-			return m, tea.Quit
-		}
-		if key.Matches(msg, DefaultKeyMap.Enter) {
-			if commit, ok := m.list.Selected(); ok {
-				return m, fetchDetailCmd(m.repo, commit.Hash)
-			}
-			return m, nil
-		}
-		if req, ok := m.list.Update(msg); ok {
-			return m, fetchMoreCmd(m.repo, req)
+	}
+	m.detail.Update(msg)
+	return m, nil
+}
+
+// handleListViewKey routes a key press while the list view is active: Back
+// quits (there's nowhere "back" to go from the list), Enter opens the
+// selected commit, everything else goes to the list's own cursor/scroll
+// handling.
+func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, DefaultKeyMap.Back) {
+		m.quitting = true
+		return m, tea.Quit
+	}
+	if key.Matches(msg, DefaultKeyMap.Enter) {
+		if commit, ok := m.list.Selected(); ok {
+			return m, fetchDetailCmd(m.repo, commit.Hash)
 		}
 		return m, nil
 	}
+	if req, ok := m.list.Update(msg); ok {
+		return m, fetchMoreCmd(m.repo, req)
+	}
+	return m, nil
 }
 
 // handleSearchPromptKey routes a key press while the search prompt is open.

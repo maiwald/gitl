@@ -14,6 +14,21 @@ import (
 // AllCommitHashes call would report for these commits.
 var fixtureHashOrder = []string{"a", "b", "c", "d", "e"}
 
+// fixtureMarkerCommitDetail is a commit whose only search-relevant text is
+// in its message body (not its subject), for tests covering the case a
+// commit matches only via a field the list row never displays.
+func fixtureMarkerCommitDetail() *git.CommitDetail {
+	return &git.CommitDetail{
+		Commit: git.Commit{
+			Hash:       "abc123",
+			AuthorName: "Someone",
+			AuthorDate: time.Now(),
+			Subject:    "subject",
+		},
+		Body: "message body with MARKER in it",
+	}
+}
+
 func newSearchableListModel() Model {
 	list := NewListModel(fixtureCommits(5))
 	list.SetSize(80, 20)
@@ -430,15 +445,7 @@ func TestOpeningCommitWithActiveSearchHighlightsMessageMatch(t *testing.T) {
 	m.width, m.height = 80, 24
 	m.setSearchDisplay("MARKER", false)
 
-	detail := &git.CommitDetail{
-		Commit: git.Commit{
-			Hash:       "abc123",
-			AuthorName: "Someone",
-			AuthorDate: time.Now(),
-			Subject:    "subject",
-		},
-		Body: "message body with MARKER in it",
-	}
+	detail := fixtureMarkerCommitDetail()
 	newModel, _ := m.Update(commitDetailLoadedMsg{detail: detail})
 	m = newModel.(Model)
 
@@ -460,15 +467,7 @@ func TestOpeningCommitWithDismissedSearchStaysDismissed(t *testing.T) {
 	m.width, m.height = 80, 24
 	m.setSearchDisplay("MARKER", true) // already dismissed in the list
 
-	detail := &git.CommitDetail{
-		Commit: git.Commit{
-			Hash:       "abc123",
-			AuthorName: "Someone",
-			AuthorDate: time.Now(),
-			Subject:    "subject",
-		},
-		Body: "message body with MARKER in it",
-	}
+	detail := fixtureMarkerCommitDetail()
 	newModel, _ := m.Update(commitDetailLoadedMsg{detail: detail})
 	m = newModel.(Model)
 
