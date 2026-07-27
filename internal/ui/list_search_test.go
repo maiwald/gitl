@@ -8,7 +8,7 @@ func TestListModelSearchJumpsToFirstMatchAtOrAfterCursorAndWraps(t *testing.T) {
 	m.SetSize(80, 5)
 	m.cursor = 4
 
-	needsLoad, target := m.Search("term", []int{1, 6, 8})
+	needsLoad, target := m.Search([]int{1, 6, 8})
 	if needsLoad {
 		t.Fatal("needsLoad = true for an already-loaded match, want false")
 	}
@@ -21,7 +21,7 @@ func TestListModelSearchJumpsToFirstMatchAtOrAfterCursorAndWraps(t *testing.T) {
 
 	// All matches before the cursor: wraps to the first.
 	m.cursor = 9
-	_, target = m.Search("term", []int{1, 6, 8})
+	_, target = m.Search([]int{1, 6, 8})
 	if target != 1 {
 		t.Fatalf("target = %d, want 1 (wrap to first match)", target)
 	}
@@ -33,7 +33,7 @@ func TestListModelNextPrevMatchCyclesAndWraps(t *testing.T) {
 	m.SetSize(80, 5)
 	m.cursor = 0
 
-	m.Search("term", []int{2, 5, 8})
+	m.Search([]int{2, 5, 8})
 
 	if _, target := m.NextMatch(); target != 5 {
 		t.Fatalf("target after NextMatch = %d, want 5", target)
@@ -54,7 +54,7 @@ func TestListModelSearchReportsNeedsLoadForUnloadedMatch(t *testing.T) {
 	m.SetTotalCount(100)
 	m.SetSize(80, 5)
 
-	needsLoad, target := m.Search("term", []int{50})
+	needsLoad, target := m.Search([]int{50})
 	if !needsLoad {
 		t.Fatal("needsLoad = false for a match beyond the loaded range, want true")
 	}
@@ -85,12 +85,12 @@ func TestListModelSearchNoMatches(t *testing.T) {
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
 
-	needsLoad, _ := m.Search("nope", nil)
+	needsLoad, _ := m.Search(nil)
 	if needsLoad {
 		t.Fatal("needsLoad = true with no matches, want false")
 	}
-	if term, pos, total, active := m.SearchStatus(); term != "nope" || pos != 0 || total != 0 || !active {
-		t.Fatalf("SearchStatus = (%q, %d, %d, %v), want (\"nope\", 0, 0, true)", term, pos, total, active)
+	if pos, total := m.MatchPosition(); pos != 0 || total != 0 {
+		t.Fatalf("MatchPosition = (%d, %d), want (0, 0)", pos, total)
 	}
 }
 
@@ -99,11 +99,11 @@ func TestListModelClearSearchResetsStatus(t *testing.T) {
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
 
-	m.Search("term", []int{2, 5})
+	m.Search([]int{2, 5})
 	m.ClearSearch()
 
-	if term, pos, total, active := m.SearchStatus(); active || term != "" || pos != 0 || total != 0 {
-		t.Fatalf("SearchStatus after ClearSearch = (%q, %d, %d, %v), want inactive/zero", term, pos, total, active)
+	if pos, total := m.MatchPosition(); pos != 0 || total != 0 {
+		t.Fatalf("MatchPosition after ClearSearch = (%d, %d), want (0, 0)", pos, total)
 	}
 	if _, target := m.NextMatch(); target != 0 {
 		t.Fatalf("NextMatch after ClearSearch should be a no-op, target = %d", target)

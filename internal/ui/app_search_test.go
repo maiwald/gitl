@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/maiwald/gitl/internal/git"
@@ -121,7 +122,7 @@ func TestEnterOnEmptyQueryClearsActiveSearch(t *testing.T) {
 	m = newModel.(Model)
 	newModel, _ = m.Update(searchHashesLoadedMsg{term: "Author", hashes: map[string]bool{"a": true}})
 	m = newModel.(Model)
-	if _, _, _, active := m.list.SearchStatus(); !active {
+	if !m.hasActiveSearch() {
 		t.Fatal("search should be active before submitting an empty query")
 	}
 
@@ -130,7 +131,7 @@ func TestEnterOnEmptyQueryClearsActiveSearch(t *testing.T) {
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(Model)
 
-	if _, _, _, active := m.list.SearchStatus(); active {
+	if m.hasActiveSearch() {
 		t.Fatal("an empty query should clear the active search")
 	}
 }
@@ -160,8 +161,9 @@ func TestListSearchResolvesRegardlessOfMessageOrder(t *testing.T) {
 			if m.pendingSearch != nil {
 				t.Fatal("pendingSearch should be resolved once both queries have arrived")
 			}
-			if term, pos, total, active := m.list.SearchStatus(); !active || term != "x" || total != 1 || pos != 1 {
-				t.Fatalf("SearchStatus = (%q, pos=%d, total=%d, active=%v), want (\"x\", 1, 1, true)", term, pos, total, active)
+			pos, total := m.list.MatchPosition()
+			if !m.hasActiveSearch() || m.searchTerm != "x" || total != 1 || pos != 1 {
+				t.Fatalf("term=%q pos=%d total=%d active=%v, want (\"x\", 1, 1, true)", m.searchTerm, pos, total, m.hasActiveSearch())
 			}
 			if c, ok := m.list.Selected(); !ok || c.Hash != "c" {
 				t.Fatalf("selection = %+v, ok=%v, want the matched commit (hash c)", c, ok)
@@ -192,8 +194,9 @@ func TestNAndShiftNCycleListMatchesEndToEnd(t *testing.T) {
 	newModel, _ = m.Update(searchHashesLoadedMsg{term: "Author", hashes: map[string]bool{"a": true, "b": true}})
 	m = newModel.(Model)
 
-	if term, _, total, active := m.list.SearchStatus(); !active || term != "Author" || total != 2 {
-		t.Fatalf("SearchStatus = (%q, total=%d, active=%v), want (\"Author\", 2, true)", term, total, active)
+	_, total := m.list.MatchPosition()
+	if !m.hasActiveSearch() || m.searchTerm != "Author" || total != 2 {
+		t.Fatalf("term=%q total=%d active=%v, want (\"Author\", 2, true)", m.searchTerm, total, m.hasActiveSearch())
 	}
 	if c, ok := m.list.Selected(); !ok || c.Hash != "a" {
 		t.Fatalf("initial match = %+v, ok=%v, want hash a", c, ok)
@@ -227,45 +230,49 @@ func TestSlashSearchesDetailViewContentSynchronously(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("detail search is fully synchronous (the diff is already in memory), should not dispatch a command")
 	}
-	if term, pos, total, active := m.detail.SearchStatus(); !active || term != "needle" || total != 2 || pos != 1 {
-		t.Fatalf("SearchStatus = (%q, pos=%d, total=%d, active=%v), want (\"needle\", 1, 2, true)", term, pos, total, active)
+	pos, total := m.detail.MatchPosition()
+	if !m.hasActiveSearch() || m.searchTerm != "needle" || total != 2 || pos != 1 {
+		t.Fatalf("term=%q pos=%d total=%d active=%v, want (\"needle\", 1, 2, true)", m.searchTerm, pos, total, m.hasActiveSearch())
 	}
 }
 
 func TestNAndShiftNCycleDetailMatchesEndToEnd(t *testing.T) {
 	m := newSearchableDetailModel()
-	m.detail.Search("needle")
+	m.setSearchDisplay("needle", false)
+	m.detail.RunSearch("needle")
 
 	newModel, _ := m.Update(keyRune('n'))
 	m = newModel.(Model)
-	if _, pos, total, _ := m.detail.SearchStatus(); pos != 2 || total != 2 {
-		t.Fatalf("SearchStatus pos/total after n = %d/%d, want 2/2", pos, total)
+	if pos, total := m.detail.MatchPosition(); pos != 2 || total != 2 {
+		t.Fatalf("MatchPosition after n = %d/%d, want 2/2", pos, total)
 	}
 
 	newModel, _ = m.Update(keyRune('N'))
 	m = newModel.(Model)
-	if _, pos, _, _ := m.detail.SearchStatus(); pos != 1 {
-		t.Fatalf("SearchStatus pos after N = %d, want wrap to 1", pos)
+	if pos, _ := m.detail.MatchPosition(); pos != 1 {
+		t.Fatalf("MatchPosition pos after N = %d, want wrap to 1", pos)
 	}
 }
 
 func TestEnterOnEmptyQueryClearsDetailSearch(t *testing.T) {
 	m := newSearchableDetailModel()
-	m.detail.Search("needle")
+	m.setSearchDisplay("needle", false)
+	m.detail.RunSearch("needle")
 
 	newModel, _ := m.Update(keyRune('/'))
 	m = newModel.(Model)
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(Model)
 
-	if _, _, _, active := m.detail.SearchStatus(); active {
+	if m.hasActiveSearch() {
 		t.Fatal("an empty query should clear the active detail search")
 	}
 }
 
 func TestStatusBarShowsDetailSearchPosition(t *testing.T) {
 	m := newSearchableDetailModel()
-	m.detail.Search("needle")
+	m.setSearchDisplay("needle", false)
+	m.detail.RunSearch("needle")
 
 	bar := m.renderStatusBar()
 	if !strings.Contains(bar, "needle") || !strings.Contains(bar, "1/2") {
@@ -284,5 +291,192 @@ func TestStatusBarShowsNoMatches(t *testing.T) {
 	bar := m.renderStatusBar()
 	if !strings.Contains(bar, "no matches") {
 		t.Fatalf("status bar = %q, want it to say no matches", bar)
+	}
+}
+
+// activeListSearch submits term as a list search and resolves it with the
+// given match set, the same two-message resolution
+// TestNAndShiftNCycleListMatchesEndToEnd drives manually.
+func activeListSearch(t *testing.T, m Model, term string, matchedHashes map[string]bool) Model {
+	t.Helper()
+	m = submitListSearch(t, m, term)
+	newModel, _ := m.Update(allHashesLoadedMsg{term: term, hashes: fixtureHashOrder})
+	m = newModel.(Model)
+	newModel, _ = m.Update(searchHashesLoadedMsg{term: term, hashes: matchedHashes})
+	return newModel.(Model)
+}
+
+func TestEscOnActiveListSearchDismissesWithoutQuitting(t *testing.T) {
+	m := newSearchableListModel()
+	m = activeListSearch(t, m, "Author", map[string]bool{"a": true, "b": true})
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+
+	if m.quitting {
+		t.Fatal("Esc on an active search should dismiss it, not quit")
+	}
+	if !m.hasActiveSearch() {
+		t.Fatal("dismissing must not discard the search term/matches")
+	}
+	if !m.searchDismissed {
+		t.Fatal("searchDismissed should be true after the first Esc")
+	}
+	if strings.Contains(m.renderStatusBar(), "Author") {
+		t.Fatalf("status bar = %q, should hide the search indicator while dismissed", m.renderStatusBar())
+	}
+}
+
+func TestSecondEscOnDismissedListSearchQuits(t *testing.T) {
+	m := newSearchableListModel()
+	m = activeListSearch(t, m, "Author", map[string]bool{"a": true, "b": true})
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // dismiss
+	m = newModel.(Model)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // now quit
+	m = newModel.(Model)
+
+	if !m.quitting {
+		t.Fatal("a second Esc, with the search already dismissed, should quit")
+	}
+}
+
+func TestNRevivesDismissedListSearchAndStatusBar(t *testing.T) {
+	m := newSearchableListModel()
+	m = activeListSearch(t, m, "Author", map[string]bool{"a": true, "b": true})
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+	if !m.searchDismissed {
+		t.Fatal("expected dismissed after Esc")
+	}
+
+	newModel, _ = m.Update(keyRune('n'))
+	m = newModel.(Model)
+
+	if m.searchDismissed {
+		t.Fatal("n should revive a dismissed search")
+	}
+	if c, ok := m.list.Selected(); !ok || c.Hash != "b" {
+		t.Fatalf("after reviving with n: selection = %+v, ok=%v, want hash b (the next match)", c, ok)
+	}
+	if !strings.Contains(m.renderStatusBar(), "Author") {
+		t.Fatalf("status bar = %q, want the search indicator to reappear after reviving", m.renderStatusBar())
+	}
+}
+
+func TestEscOnActiveDetailSearchDismissesWithoutGoingBack(t *testing.T) {
+	m := newSearchableDetailModel()
+	m.setSearchDisplay("needle", false)
+	m.detail.RunSearch("needle")
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+
+	if m.active != viewDetail {
+		t.Fatal("Esc on an active detail search should dismiss it, not go back to the list")
+	}
+	if !m.searchDismissed {
+		t.Fatal("searchDismissed should be true after the first Esc")
+	}
+}
+
+func TestSecondEscOnDismissedDetailSearchGoesBackToList(t *testing.T) {
+	m := newSearchableDetailModel()
+	m.setSearchDisplay("needle", false)
+	m.detail.RunSearch("needle")
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // dismiss
+	m = newModel.(Model)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // now go back
+	m = newModel.(Model)
+
+	if m.active != viewList {
+		t.Fatal("a second Esc, with the search already dismissed, should go back to the list")
+	}
+	if !m.searchDismissed {
+		t.Fatal("dismissed state should persist across the view transition, since it's shared")
+	}
+}
+
+func TestNRevivesDismissedDetailSearchAndStatusBar(t *testing.T) {
+	m := newSearchableDetailModel()
+	m.setSearchDisplay("needle", false)
+	m.detail.RunSearch("needle")
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+
+	newModel, _ = m.Update(keyRune('n'))
+	m = newModel.(Model)
+
+	if m.searchDismissed {
+		t.Fatal("n should revive a dismissed search")
+	}
+	if !strings.Contains(m.renderStatusBar(), "needle") {
+		t.Fatalf("status bar = %q, want the search indicator to reappear after reviving", m.renderStatusBar())
+	}
+}
+
+// TestOpeningCommitWithActiveSearchHighlightsMessageMatch covers the bug
+// this whole feature was built to fix: a commit matched only via its
+// message body (invisible in the list row, since the row only shows the
+// subject) must show the match the moment it's opened, not just once n/N
+// is pressed.
+func TestOpeningCommitWithActiveSearchHighlightsMessageMatch(t *testing.T) {
+	list := NewListModel(fixtureCommits(5))
+	list.SetSize(80, 20)
+	m := Model{active: viewList, list: list, repo: &git.Repo{}}
+	m.width, m.height = 80, 24
+	m.setSearchDisplay("MARKER", false)
+
+	detail := &git.CommitDetail{
+		Commit: git.Commit{
+			Hash:       "abc123",
+			AuthorName: "Someone",
+			AuthorDate: time.Now(),
+			Subject:    "subject",
+		},
+		Body: "message body with MARKER in it",
+	}
+	newModel, _ := m.Update(commitDetailLoadedMsg{detail: detail})
+	m = newModel.(Model)
+
+	if m.active != viewDetail {
+		t.Fatalf("active view = %v, want viewDetail", m.active)
+	}
+	if pos, total := m.detail.MatchPosition(); total != 1 || pos != 1 {
+		t.Fatalf("detail MatchPosition = (%d, %d), want (1, 1) — opening the commit should search it immediately", pos, total)
+	}
+	if !strings.Contains(m.View(), searchActiveMatchStyle.Render("MARKER")) {
+		t.Fatalf("detail view = %q, want the message match visibly highlighted right after opening", m.View())
+	}
+}
+
+func TestOpeningCommitWithDismissedSearchStaysDismissed(t *testing.T) {
+	list := NewListModel(fixtureCommits(5))
+	list.SetSize(80, 20)
+	m := Model{active: viewList, list: list, repo: &git.Repo{}}
+	m.width, m.height = 80, 24
+	m.setSearchDisplay("MARKER", true) // already dismissed in the list
+
+	detail := &git.CommitDetail{
+		Commit: git.Commit{
+			Hash:       "abc123",
+			AuthorName: "Someone",
+			AuthorDate: time.Now(),
+			Subject:    "subject",
+		},
+		Body: "message body with MARKER in it",
+	}
+	newModel, _ := m.Update(commitDetailLoadedMsg{detail: detail})
+	m = newModel.(Model)
+
+	if pos, total := m.detail.MatchPosition(); total != 1 || pos != 1 {
+		t.Fatalf("detail MatchPosition = (%d, %d), want (1, 1) — matches should still be computed even while dismissed", pos, total)
+	}
+	view := m.View()
+	if strings.Contains(view, searchActiveMatchStyle.Render("MARKER")) || strings.Contains(view, searchMatchStyle.Render("MARKER")) {
+		t.Fatalf("detail view = %q, want no highlight while the search is dismissed", view)
 	}
 }

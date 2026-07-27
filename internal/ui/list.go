@@ -30,7 +30,15 @@ type ListModel struct {
 	loadingMore      bool
 	jumpToEndPending bool
 
-	searchTerm       string
+	// displayTerm and searchDismissed mirror the root Model's canonical
+	// search state (searchTerm/searchDismissed in app.go), pushed down via
+	// SetSearchDisplay. They exist here purely so render() — called
+	// internally by cursor movement, scrolling, and resizing — doesn't need
+	// them threaded through as parameters everywhere; the root Model is the
+	// only writer.
+	displayTerm     string
+	searchDismissed bool
+
 	matches          []int // absolute commit positions, ascending
 	matchPos         int   // index into matches; -1 when there are none
 	matchJumpPending bool
@@ -212,9 +220,10 @@ func (m *ListModel) ensureVisible() {
 // at or after the cursor, wrapping to the first match if none qualify. It
 // reports needsLoad=true when that position isn't loaded yet, in which
 // case the caller should dispatch a fetch via RequestLoadUpTo(target); the
-// jump completes automatically once AppendCommits delivers it.
-func (m *ListModel) Search(term string, matches []int) (needsLoad bool, target int) {
-	m.searchTerm = term
+// jump completes automatically once AppendCommits delivers it. The search
+// term itself is set separately via SetSearchDisplay, since it's shared
+// with the detail view and owned by the root Model.
+func (m *ListModel) Search(matches []int) (needsLoad bool, target int) {
 	m.matches = matches
 	m.matchPos = -1
 	m.matchJumpPending = false
@@ -260,32 +269,45 @@ func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
 	return false, target
 }
 
-// ClearSearch discards the active search and its highlighting.
+// ClearSearch discards the active search's matches. The term/dismissed
+// display state is cleared separately via SetSearchDisplay.
 func (m *ListModel) ClearSearch() {
-	m.searchTerm = ""
 	m.matches = nil
 	m.matchPos = -1
 	m.matchJumpPending = false
 	m.render()
 }
 
-// SearchStatus reports the active search term and match position (1-based)
-// for status-bar display, and whether a search is active at all.
-func (m ListModel) SearchStatus() (term string, pos, total int, active bool) {
-	if m.searchTerm == "" {
-		return "", 0, 0, false
+// SetSearchDisplay updates the term to highlight and whether highlighting
+// is currently dismissed, then re-renders. The root Model calls this
+// whenever the shared search state changes — see the doc comment on the
+// displayTerm/searchDismissed fields.
+func (m *ListModel) SetSearchDisplay(term string, dismissed bool) {
+	m.displayTerm = term
+	m.searchDismissed = dismissed
+	m.render()
+}
+
+// MatchPosition reports the current match position (1-based) and total
+// count for status-bar display.
+func (m ListModel) MatchPosition() (pos, total int) {
+	if len(m.matches) == 0 {
+		return 0, 0
 	}
-	return m.searchTerm, m.matchPos + 1, len(m.matches), true
+	return m.matchPos + 1, len(m.matches)
 }
 
 func (m *ListModel) render() {
+	term := m.displayTerm
 	activeMatch := -1
-	if m.matchPos >= 0 && m.matchPos < len(m.matches) {
+	if m.searchDismissed {
+		term = ""
+	} else if m.matchPos >= 0 && m.matchPos < len(m.matches) {
 		activeMatch = m.matches[m.matchPos]
 	}
 	lines := make([]string, len(m.commits))
 	for i, c := range m.commits {
-		lines[i] = renderCommitRow(c, m.vp.Width, i == m.cursor, m.searchTerm, i == activeMatch)
+		lines[i] = renderCommitRow(c, m.vp.Width, i == m.cursor, term, i == activeMatch)
 	}
 	m.vp.SetContent(strings.Join(lines, "\n"))
 }

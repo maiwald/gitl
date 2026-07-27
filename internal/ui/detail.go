@@ -52,10 +52,23 @@ type DetailModel struct {
 
 	width, height int
 
-	searchTerm string
-	matches    []DiffMatch
-	matchLines []int // parallel to matches, offset by header/message length
-	matchPos   int
+	// displayTerm and searchDismissed mirror the root Model's canonical
+	// search state (searchTerm/searchDismissed in app.go), pushed down via
+	// SetSearchDisplay — see the identical comment on ListModel's fields
+	// for why a local mirror exists at all.
+	displayTerm     string
+	searchDismissed bool
+
+	// messageMatches and diffMatches together form one ordered sequence
+	// (message matches first, in document order, then diff matches in
+	// existing file/hunk/line order) that matchPos indexes into, so n/N
+	// sweeps a commit top to bottom the way you'd read it.
+	messageMatches []MessageMatch
+	diffMatches    []DiffMatch
+	matchPos       int // index into the combined sequence; -1 when there are none
+
+	messageMatchLines []int // parallel to messageMatches: wrapped-line index within the header block
+	diffMatchLines    []int // parallel to diffMatches: wrapped-line index within the flattened content (offset applied)
 }
 
 // NewDetailModel constructs a detail view for the given commit.
@@ -98,22 +111,31 @@ func (m *DetailModel) reflow() {
 
 	var diffLines []string
 	var fileRanges []FileRange
-	var matchLines []int
+	var rawDiffMatchLines []int
 	if len(m.detail.Files) == 0 {
 		diffLines = []string{noDiffNotice(m.detail)}
 	} else {
-		diffLines, fileRanges, matchLines = RenderDiff(m.detail.Files, diffWidth, m.matches, m.matchPos)
+		diffActive := -1
+		if !m.searchDismissed && m.matchPos >= len(m.messageMatches) {
+			diffActive = m.matchPos - len(m.messageMatches)
+		}
+		diffLines, fileRanges, rawDiffMatchLines = RenderDiff(m.detail.Files, diffWidth, m.diffMatches, diffActive, m.searchDismissed)
 	}
 
 	// The header/message is wrapped the same way diff lines are (each
 	// visual row its own entry) so the line offset applied to fileRanges
 	// below stays exact regardless of terminal width — see the
 	// FileRange/FileAt convention in diffview.go.
-	headerLines := wrapPlain(renderCommitHeader(m.detail), diffWidth)
-	offset := len(headerLines) + 1
+	headerLines, _, _ := headerLinesFor(m.detail)
+	msgActive := -1
+	if !m.searchDismissed && m.matchPos >= 0 && m.matchPos < len(m.messageMatches) {
+		msgActive = m.matchPos
+	}
+	wrappedHeader, messageMatchLines := renderHeaderLines(headerLines, diffWidth, m.messageMatches, msgActive, m.searchDismissed)
+	offset := len(wrappedHeader) + 1
 
-	content := make([]string, 0, len(headerLines)+1+len(diffLines))
-	content = append(content, headerLines...)
+	content := make([]string, 0, len(wrappedHeader)+1+len(diffLines))
+	content = append(content, wrappedHeader...)
 	content = append(content, "")
 	content = append(content, diffLines...)
 
@@ -122,9 +144,10 @@ func (m *DetailModel) reflow() {
 		m.fileRanges[i] = FileRange{FileIndex: r.FileIndex, StartLine: r.StartLine + offset, EndLine: r.EndLine + offset}
 	}
 
-	m.matchLines = make([]int, len(matchLines))
-	for i, ln := range matchLines {
-		m.matchLines[i] = ln + offset
+	m.messageMatchLines = messageMatchLines
+	m.diffMatchLines = make([]int, len(rawDiffMatchLines))
+	for i, ln := range rawDiffMatchLines {
+		m.diffMatchLines[i] = ln + offset
 	}
 
 	m.leftVP.Width = diffWidth
@@ -135,15 +158,104 @@ func (m *DetailModel) reflow() {
 	m.syncHighlightFromScroll()
 }
 
-// wrapPlain word-wraps text to width, flattening every visual row into its
-// own slice entry (see the comment in reflow for why that matters).
-func wrapPlain(text string, width int) []string {
-	if width <= 0 {
-		return strings.Split(text, "\n")
+// headerLinesFor builds the commit header's pre-wrap logical lines (one
+// entry per line; the message body is included verbatim, unwrapped —
+// wrapping happens later in renderHeaderLines so its matchLines bookkeeping
+// stays exact, the same convention RenderDiff/renderDiffLine use for diff
+// content). authorLine and bodyStart mark the two regions eligible for
+// search — the author line and the message body — matching exactly what
+// internal/git.SearchCommitHashes matches for list search (author name OR
+// message), deliberately excluding the hash/parent/date metadata lines.
+func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int) {
+	lines = append(lines, fmt.Sprintf("commit %s", d.Hash))
+	if len(d.Parents) > 1 {
+		lines = append(lines, fmt.Sprintf("Merge:  %s", strings.Join(d.Parents, " ")))
 	}
-	var out []string
-	for _, line := range strings.Split(text, "\n") {
-		out = append(out, strings.Split(lipgloss.NewStyle().Width(width).Render(line), "\n")...)
+	authorLine = len(lines)
+	lines = append(lines, fmt.Sprintf("Author: %s <%s>", d.AuthorName, d.AuthorEmail))
+	lines = append(lines, fmt.Sprintf("Date:   %s", d.AuthorDate.Format("2006-01-02 15:04:05 -0700")))
+	lines = append(lines, "")
+	bodyStart = len(lines)
+	lines = append(lines, strings.Split(strings.TrimRight(d.Body, "\n"), "\n")...)
+	return lines, authorLine, bodyStart
+}
+
+// renderHeaderLines word-wraps each logical header/message line to width,
+// applying search-match highlighting first — styling the plain pre-wrap
+// text via the same renderLineWithMatches helper diff lines use, so
+// highlighted spans survive wrapping (see CLAUDE.md's "style plain-text
+// spans before any .Render() call" rule) — then wrapping the already-styled
+// line via lipgloss, splitting on the resulting newlines exactly like
+// RenderDiff/renderDiffLine do. matchLines is parallel to matches: the
+// wrapped-line index each match's logical line starts at, computed from the
+// full matches list regardless of dismissed (see RenderDiff's doc comment
+// for why suppressing style doesn't need suppressing position tracking).
+func renderHeaderLines(lines []string, width int, matches []MessageMatch, activeIdx int, dismissed bool) (wrapped []string, matchLines []int) {
+	matchLines = make([]int, len(matches))
+	mi := 0
+	for li, line := range lines {
+		lineStart := len(wrapped)
+		var lineMatches []lineMatch
+		for mi < len(matches) && matches[mi].LineIndex == li {
+			if !dismissed {
+				lineMatches = append(lineMatches, lineMatch{
+					start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeIdx,
+				})
+			}
+			matchLines[mi] = lineStart
+			mi++
+		}
+		content := line
+		if len(lineMatches) > 0 {
+			content = renderLineWithMatches(line, 0, lipgloss.NewStyle(), lineMatches)
+		}
+		if width <= 0 {
+			wrapped = append(wrapped, content)
+			continue
+		}
+		wrapped = append(wrapped, strings.Split(lipgloss.NewStyle().Width(width).Render(content), "\n")...)
+	}
+	return wrapped, matchLines
+}
+
+// MessageMatch identifies one case-insensitive occurrence of a search term
+// within a single pre-wrap header/message line (see headerLinesFor):
+// LineIndex indexes into that line slice, not diff content.
+type MessageMatch struct {
+	LineIndex        int
+	StartCol, EndCol int
+}
+
+// FindMessageMatches returns every occurrence of term in the header lines
+// eligible for search: the author line and every line from bodyStart
+// onward (see headerLinesFor) — deliberately not the hash/parent/date
+// lines, keeping scope consistent with internal/git.SearchCommitHashes.
+func FindMessageMatches(lines []string, authorLine, bodyStart int, term string) []MessageMatch {
+	if term == "" {
+		return nil
+	}
+	var matches []MessageMatch
+	if authorLine < len(lines) {
+		matches = append(matches, findMessageLineMatches(lines[authorLine], term, authorLine)...)
+	}
+	for li := bodyStart; li < len(lines); li++ {
+		matches = append(matches, findMessageLineMatches(lines[li], term, li)...)
+	}
+	return matches
+}
+
+func findMessageLineMatches(line, term string, lineIndex int) []MessageMatch {
+	lowerLine, lowerTerm := strings.ToLower(line), strings.ToLower(term)
+	var out []MessageMatch
+	pos := 0
+	for {
+		idx := strings.Index(lowerLine[pos:], lowerTerm)
+		if idx < 0 {
+			break
+		}
+		idx += pos
+		out = append(out, MessageMatch{LineIndex: lineIndex, StartCol: idx, EndCol: idx + len(term)})
+		pos = idx + len(term)
 	}
 	return out
 }
@@ -242,68 +354,96 @@ func (m *DetailModel) jumpToCurrentFile() {
 	m.leftVP.SetYOffset(m.fileRanges[m.currentFile].StartLine)
 }
 
-// Search finds every occurrence of term in the diff content and jumps to
-// the first one, returning the total match count. Unlike list search, this
-// is fully synchronous: the whole diff is already in memory once a commit
-// is open, so there's no async loading to wait for.
-func (m *DetailModel) Search(term string) int {
-	m.searchTerm = term
+// RunSearch finds every occurrence of term across this commit's header and
+// message (the author line and body — the same two fields
+// internal/git.SearchCommitHashes matches for list search) and its diff
+// content, message matches first in document order and diff matches after,
+// and jumps to the first one, returning the total match count. Unlike list
+// search this is fully synchronous: the whole commit is already in memory
+// once it's open, so there's no async loading to wait for. The term/
+// dismissed display state is set separately via SetSearchDisplay, since
+// it's shared with the list view and owned by the root Model.
+func (m *DetailModel) RunSearch(term string) int {
 	if term == "" {
-		m.matches = nil
+		m.messageMatches, m.diffMatches = nil, nil
 	} else {
-		m.matches = FindDiffMatches(m.detail.Files, term)
+		lines, authorLine, bodyStart := headerLinesFor(m.detail)
+		m.messageMatches = FindMessageMatches(lines, authorLine, bodyStart, term)
+		m.diffMatches = FindDiffMatches(m.detail.Files, term)
 	}
 	m.matchPos = -1
-	if len(m.matches) > 0 {
+	if m.totalMatches() > 0 {
 		m.matchPos = 0
 	}
 	m.jumpToMatch()
-	return len(m.matches)
+	return m.totalMatches()
 }
 
-// NextMatch and PrevMatch cycle to the following/preceding match, wrapping
-// at both ends, and report the new 1-based position and total count.
+func (m DetailModel) totalMatches() int { return len(m.messageMatches) + len(m.diffMatches) }
+
+// NextMatch and PrevMatch cycle to the following/preceding match (across
+// the combined message+diff sequence), wrapping at both ends, and report
+// the new 1-based position and total count.
 func (m *DetailModel) NextMatch() (pos, total int) { return m.stepMatch(1) }
 func (m *DetailModel) PrevMatch() (pos, total int) { return m.stepMatch(-1) }
 
 func (m *DetailModel) stepMatch(delta int) (pos, total int) {
-	if len(m.matches) == 0 {
+	total = m.totalMatches()
+	if total == 0 {
 		return 0, 0
 	}
-	m.matchPos = (m.matchPos + delta + len(m.matches)) % len(m.matches)
+	m.matchPos = (m.matchPos + delta + total) % total
 	m.jumpToMatch()
-	return m.matchPos + 1, len(m.matches)
+	return m.matchPos + 1, total
 }
 
 // jumpToMatch re-renders (so the newly active match gets its distinct
-// style) and scrolls the diff panel to bring it into view. Re-running
-// reflow on every match change — rather than patching just the affected
-// lines — is the same cost already paid on every resize, and it's pure
-// in-memory string work with no I/O.
+// style) and scrolls the diff panel to bring it into view, whether the
+// current match is a message match (within the header block) or a diff
+// match. Re-running reflow on every match change — rather than patching
+// just the affected lines — is the same cost already paid on every resize,
+// and it's pure in-memory string work with no I/O.
 func (m *DetailModel) jumpToMatch() {
 	m.reflow()
-	if m.matchPos < 0 || m.matchPos >= len(m.matchLines) {
+	switch {
+	case m.matchPos < 0:
 		return
+	case m.matchPos < len(m.messageMatches):
+		m.leftVP.SetYOffset(m.messageMatchLines[m.matchPos])
+	default:
+		if di := m.matchPos - len(m.messageMatches); di < len(m.diffMatchLines) {
+			m.leftVP.SetYOffset(m.diffMatchLines[di])
+		}
 	}
-	m.leftVP.SetYOffset(m.matchLines[m.matchPos])
 	m.syncHighlightFromScroll()
 }
 
-// ClearSearch discards the active search and its highlighting.
+// ClearSearch discards the active search's matches. The term/dismissed
+// display state is cleared separately via SetSearchDisplay.
 func (m *DetailModel) ClearSearch() {
-	m.searchTerm = ""
-	m.matches = nil
+	m.messageMatches, m.diffMatches = nil, nil
 	m.matchPos = -1
 	m.reflow()
 }
 
-// SearchStatus reports the active search term and match position (1-based)
-// for status-bar display, and whether a search is active at all.
-func (m DetailModel) SearchStatus() (term string, pos, total int, active bool) {
-	if m.searchTerm == "" {
-		return "", 0, 0, false
+// SetSearchDisplay updates the term (informational only — matches were
+// already computed by RunSearch) and whether highlighting is currently
+// dismissed, then re-renders. The root Model calls this whenever the
+// shared search state changes.
+func (m *DetailModel) SetSearchDisplay(term string, dismissed bool) {
+	m.displayTerm = term
+	m.searchDismissed = dismissed
+	m.reflow()
+}
+
+// MatchPosition reports the current match position (1-based) and total
+// count for status-bar display.
+func (m DetailModel) MatchPosition() (pos, total int) {
+	total = m.totalMatches()
+	if total == 0 {
+		return 0, 0
 	}
-	return m.searchTerm, m.matchPos + 1, len(m.matches), true
+	return m.matchPos + 1, total
 }
 
 func noDiffNotice(d *git.CommitDetail) string {
@@ -311,18 +451,6 @@ func noDiffNotice(d *git.CommitDetail) string {
 		return binaryNoticeStyle.Render("Merge commit: diff not shown (viewing merge diffs isn't supported yet).")
 	}
 	return binaryNoticeStyle.Render("No changes in this commit.")
-}
-
-func renderCommitHeader(d *git.CommitDetail) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "commit %s\n", d.Hash)
-	if len(d.Parents) > 1 {
-		fmt.Fprintf(&b, "Merge:  %s\n", strings.Join(d.Parents, " "))
-	}
-	fmt.Fprintf(&b, "Author: %s <%s>\n", d.AuthorName, d.AuthorEmail)
-	fmt.Fprintf(&b, "Date:   %s\n\n", d.AuthorDate.Format("2006-01-02 15:04:05 -0700"))
-	b.WriteString(strings.TrimRight(d.Body, "\n"))
-	return b.String()
 }
 
 func (m DetailModel) View() string {

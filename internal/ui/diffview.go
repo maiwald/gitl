@@ -21,13 +21,18 @@ type FileRange struct {
 // lines suitable for a single scrollable viewport, along with the line
 // range each file occupies within that flattened content. matches (from
 // FindDiffMatches, in the same file/hunk/line traversal order this function
-// uses) are highlighted inline; activeMatch is an index into matches for
-// the one that should stand out with a distinct style (-1 for none). The
-// returned matchLines is parallel to matches: the flattened line index of
-// each match's logical line (the start of the line, not the precise
-// wrapped sub-row/column — landing on the line is enough to bring it into
-// view).
-func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int) ([]string, []FileRange, []int) {
+// uses) are highlighted inline unless dismissed is true, in which case no
+// match is styled at all — but matchLines is still computed from the full
+// matches list either way, since word-wrapping (which determines line
+// positions) doesn't depend on whether a span carries highlight color:
+// wrapping is ANSI-aware and ignores zero-width escape codes, so jumping to
+// a dismissed match still lands in the right place once n/N revives it.
+// activeMatch is an index into matches for the one that should stand out
+// with a distinct style (-1 for none; ignored when dismissed). The returned
+// matchLines is parallel to matches: the flattened line index of each
+// match's logical line (the start of the line, not the precise wrapped
+// sub-row/column — landing on the line is enough to bring it into view).
+func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool) ([]string, []FileRange, []int) {
 	var lines []string
 	ranges := make([]FileRange, 0, len(files))
 	matchLines := make([]int, len(matches))
@@ -45,9 +50,11 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 				lineStart := len(lines)
 				var lineMatches []lineMatch
 				for mi < len(matches) && matches[mi].FileIndex == fi && matches[mi].HunkIndex == hi && matches[mi].LineIndex == li {
-					lineMatches = append(lineMatches, lineMatch{
-						start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
-					})
+					if !dismissed {
+						lineMatches = append(lineMatches, lineMatch{
+							start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
+						})
+					}
 					matchLines[mi] = lineStart
 					mi++
 				}

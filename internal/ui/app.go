@@ -37,6 +37,15 @@ type Model struct {
 	searchPromptOpen bool
 	searchInput      textinput.Model
 	pendingSearch    *pendingSearch
+
+	// searchTerm and searchDismissed are the single, canonical search state
+	// shared by both views — see setSearchDisplay, the only place that
+	// writes them. Neither ListModel nor DetailModel owns its own copy;
+	// each keeps a display mirror pushed down from here (via
+	// SetSearchDisplay) purely so their own internal render calls don't
+	// need term/dismissed threaded through as parameters everywhere.
+	searchTerm      string
+	searchDismissed bool
 }
 
 // pendingSearch tracks the two independent, concurrent git queries a list
@@ -175,6 +184,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail = NewDetailModel(msg.detail)
 		m.detail.SetSize(m.width, m.contentHeight())
 		m.active = viewDetail
+		if m.searchTerm != "" {
+			// A freshly constructed DetailModel defaults to
+			// searchDismissed=false; mirror the real shared state before
+			// searching so an already-dismissed search doesn't suddenly
+			// reappear just because a new commit was opened.
+			m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
+			m.detail.RunSearch(m.searchTerm)
+		}
 		return m, nil
 	case searchHashesLoadedMsg:
 		if m.pendingSearch != nil && m.pendingSearch.term == msg.term {
@@ -226,7 +243,7 @@ func (m Model) pumpPendingSearch() (Model, tea.Cmd) {
 		}
 	}
 
-	needsLoad, target := m.list.Search(p.term, matches)
+	needsLoad, target := m.list.Search(matches)
 	if needsLoad {
 		if req, ok := m.list.RequestLoadUpTo(target); ok {
 			return m, fetchMoreCmd(m.repo, req)
@@ -257,6 +274,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, DefaultKeyMap.PrevMatch) {
 			return m.advanceMatch(-1)
+		}
+		if !m.searchDismissed && key.Matches(msg, DefaultKeyMap.Back) {
+			return m.dismissSearch()
 		}
 	}
 
@@ -306,44 +326,63 @@ func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // submitSearch closes the prompt on Enter and starts a search for the
-// submitted term in whichever view is active. An empty term clears that
-// view's search instead (a vim-:noh-like escape hatch).
+// submitted term in whichever view is active. An empty term clears the
+// search entirely instead (a vim-:noh-like escape hatch) — unlike
+// dismissSearch, which only hides it.
 func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	term := m.searchInput.Value()
 	m.searchPromptOpen = false
 	m.searchInput.Blur()
 
 	if term == "" {
-		if m.active == viewDetail {
-			m.detail.ClearSearch()
-		} else {
-			m.list.ClearSearch()
-		}
+		m.setSearchDisplay("", false)
+		m.list.ClearSearch()
+		m.detail.ClearSearch()
 		return m, nil
 	}
+
+	m.setSearchDisplay(term, false)
 	if m.active == viewDetail {
-		m.detail.Search(term)
+		m.detail.RunSearch(term)
 		return m, nil
 	}
 	return m.startListSearch(term)
 }
 
-// hasActiveSearch reports whether the currently active view has a search
-// in progress, gating n/N interception in handleKey.
+// setSearchDisplay is the sole writer of the canonical search term/
+// dismissed state, pushing both down to each view's own display mirror so
+// highlighting and the status bar stay consistent no matter which view is
+// active when the change happens or which view later becomes active.
+func (m *Model) setSearchDisplay(term string, dismissed bool) {
+	m.searchTerm = term
+	m.searchDismissed = dismissed
+	m.list.SetSearchDisplay(term, dismissed)
+	m.detail.SetSearchDisplay(term, dismissed)
+}
+
+// hasActiveSearch reports whether a search is currently active, gating n/N
+// and Esc/q-dismiss interception in handleKey. It's shared by both views —
+// see setSearchDisplay.
 func (m Model) hasActiveSearch() bool {
-	if m.active == viewDetail {
-		_, _, _, active := m.detail.SearchStatus()
-		return active
-	}
-	_, _, _, active := m.list.SearchStatus()
-	return active
+	return m.searchTerm != ""
+}
+
+// dismissSearch hides the active search's highlighting without discarding
+// its term/matches (vim :noh-style) — the first Esc/q after a search goes
+// active is absorbed here instead of falling through to Back's normal
+// quit/go-back handling; n/N (via advanceMatch) revives it.
+func (m Model) dismissSearch() (Model, tea.Cmd) {
+	m.setSearchDisplay(m.searchTerm, true)
+	return m, nil
 }
 
 // advanceMatch cycles the active view's search to the next (delta>0) or
-// previous match. In the list view, this may dispatch a targeted fetch if
-// the newly-selected match isn't loaded yet; the detail view is fully
-// synchronous and never needs one.
+// previous match, reviving a dismissed search first. In the list view,
+// this may dispatch a targeted fetch if the newly-selected match isn't
+// loaded yet; the detail view is fully synchronous and never needs one.
 func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
+	m.setSearchDisplay(m.searchTerm, false)
+
 	if m.active == viewDetail {
 		if delta > 0 {
 			m.detail.NextMatch()
@@ -405,21 +444,17 @@ func (m Model) renderStatusBar() string {
 		content = m.searchInput.View()
 	case m.pendingSearch != nil:
 		content = fmt.Sprintf("/%s  searching…", m.pendingSearch.term)
-	default:
-		var term string
+	case m.searchTerm != "" && !m.searchDismissed:
 		var pos, total int
-		var active bool
 		if m.active == viewDetail {
-			term, pos, total, active = m.detail.SearchStatus()
+			pos, total = m.detail.MatchPosition()
 		} else {
-			term, pos, total, active = m.list.SearchStatus()
+			pos, total = m.list.MatchPosition()
 		}
-		if active {
-			if total == 0 {
-				content = fmt.Sprintf("/%s  no matches", term)
-			} else {
-				content = fmt.Sprintf("/%s  [%d/%d]", term, pos, total)
-			}
+		if total == 0 {
+			content = fmt.Sprintf("/%s  no matches", m.searchTerm)
+		} else {
+			content = fmt.Sprintf("/%s  [%d/%d]", m.searchTerm, pos, total)
 		}
 	}
 	return statusBarStyle.Width(m.width).Render(content)

@@ -125,39 +125,133 @@ func TestDetailModelSearchFindsAndJumpsToMatch(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch())
 	m.SetSize(80, 4)
 
-	total := m.Search("needle")
+	total := m.RunSearch("needle")
 	if total != 2 {
-		t.Fatalf("Search returned %d matches, want 2", total)
+		t.Fatalf("RunSearch returned %d matches, want 2", total)
 	}
-	if m.leftVP.YOffset != m.matchLines[0] {
-		t.Fatalf("YOffset = %d after Search, want %d (first match's line)", m.leftVP.YOffset, m.matchLines[0])
+	if m.leftVP.YOffset != m.diffMatchLines[0] {
+		t.Fatalf("YOffset = %d after RunSearch, want %d (first match's line)", m.leftVP.YOffset, m.diffMatchLines[0])
 	}
 	if m.currentFile != 0 {
 		t.Fatalf("currentFile = %d after jumping to the first match, want 0 (a.txt)", m.currentFile)
 	}
 }
 
-func TestDetailModelSearchIgnoresHeaderAndMessageText(t *testing.T) {
+// TestDetailModelSearchFindsMessageMatchButIgnoresMetadata pins down the
+// boundary of what "message" search covers: the body (here, "MARKER"), but
+// not the hash/parent/date metadata lines — matching exactly what
+// internal/git.SearchCommitHashes matches for list search (author name OR
+// message).
+func TestDetailModelSearchFindsMessageMatchButIgnoresMetadata(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch())
 	m.SetSize(80, 4)
 
-	total := m.Search("MARKER")
+	total := m.RunSearch("MARKER")
+	if total != 1 {
+		t.Fatalf("RunSearch(\"MARKER\") returned %d matches, want 1 (the body match; the subject field itself isn't scanned)", total)
+	}
+	// The sole match is also the current (n/N) match, so it renders with
+	// searchActiveMatchStyle rather than the plain searchMatchStyle.
+	if !strings.Contains(m.leftVP.View(), searchActiveMatchStyle.Render("MARKER")) {
+		t.Fatalf("leftVP content = %q, want the message match visibly highlighted", m.leftVP.View())
+	}
+
+	total = m.RunSearch(m.detail.Hash)
 	if total != 0 {
-		t.Fatalf("Search(\"MARKER\") returned %d matches, want 0 (MARKER only appears in the subject/body, not the diff)", total)
+		t.Fatalf("RunSearch(hash) returned %d matches, want 0 (the commit-hash metadata line isn't searched)", total)
+	}
+}
+
+func TestFindMessageMatchesScansAuthorAndBodyOnly(t *testing.T) {
+	lines, authorLine, bodyStart := headerLinesFor(&git.CommitDetail{
+		Commit: git.Commit{
+			Hash:        "deadbeef",
+			AuthorName:  "Ada Lovelace",
+			AuthorEmail: "ada@example.com",
+			AuthorDate:  time.Now(),
+		},
+		Body: "first line\nsecond dual line",
+	})
+
+	if matches := FindMessageMatches(lines, authorLine, bodyStart, "dual"); len(matches) != 1 || matches[0].LineIndex != bodyStart+1 {
+		t.Fatalf("matches = %+v, want exactly one match on body line %d", matches, bodyStart+1)
+	}
+	if matches := FindMessageMatches(lines, authorLine, bodyStart, "Lovelace"); len(matches) != 1 || matches[0].LineIndex != authorLine {
+		t.Fatalf("matches = %+v, want exactly one match on the author line %d", matches, authorLine)
+	}
+	if matches := FindMessageMatches(lines, authorLine, bodyStart, "deadbeef"); len(matches) != 0 {
+		t.Fatalf("matches = %+v, want none (the hash line isn't searched)", matches)
+	}
+	if matches := FindMessageMatches(lines, authorLine, bodyStart, ""); matches != nil {
+		t.Fatalf("matches = %+v, want nil for an empty term", matches)
+	}
+}
+
+// TestDetailModelRunSearchOrdersMessageMatchesBeforeDiffMatches pins down
+// the combined n/N traversal order: message matches (document order) come
+// before diff matches (file/hunk/line order), so n/N sweeps a commit the
+// way you'd read it top to bottom.
+func TestDetailModelRunSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T) {
+	d := &git.CommitDetail{
+		Commit: git.Commit{
+			Hash:       "abc123",
+			AuthorName: "Someone",
+			AuthorDate: time.Now(),
+			Subject:    "subject",
+		},
+		Body: "message body mentions dual right here",
+		Files: []git.File{{
+			Path:   "a.txt",
+			Status: git.StatusModified,
+			Hunks: []git.Hunk{{
+				Header: "@@ -1 +1 @@",
+				Lines: append(
+					[]git.DiffLine{{Op: git.OpAdd, Text: "diff also mentions dual here"}},
+					fillerLines(10)...,
+				),
+			}},
+		}},
+	}
+	m := NewDetailModel(d)
+	// A small viewport (well under the total content length, padded by
+	// fillerLines) so SetYOffset actually moves rather than clamping to 0
+	// because everything already fits on screen.
+	m.SetSize(80, 4)
+
+	total := m.RunSearch("dual")
+	if total != 2 {
+		t.Fatalf("RunSearch returned %d matches, want 2 (one message, one diff)", total)
+	}
+	if len(m.messageMatches) != 1 || len(m.diffMatches) != 1 {
+		t.Fatalf("messageMatches=%d diffMatches=%d, want 1 and 1", len(m.messageMatches), len(m.diffMatches))
+	}
+	if m.leftVP.YOffset != m.messageMatchLines[0] {
+		t.Fatalf("YOffset after RunSearch = %d, want %d (the message match, visited first)", m.leftVP.YOffset, m.messageMatchLines[0])
+	}
+	if m.fileRanges[0].StartLine <= m.leftVP.YOffset {
+		t.Fatalf("expected the message match's line (%d) to precede the first file's content (starts at %d)", m.leftVP.YOffset, m.fileRanges[0].StartLine)
+	}
+
+	pos, total := m.NextMatch()
+	if pos != 2 || total != 2 {
+		t.Fatalf("NextMatch = (%d, %d), want (2, 2)", pos, total)
+	}
+	if m.leftVP.YOffset != m.diffMatchLines[0] {
+		t.Fatalf("YOffset after NextMatch = %d, want %d (the diff match)", m.leftVP.YOffset, m.diffMatchLines[0])
 	}
 }
 
 func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch())
 	m.SetSize(80, 4)
-	m.Search("needle")
+	m.RunSearch("needle")
 
 	pos, total := m.NextMatch()
 	if pos != 2 || total != 2 {
 		t.Fatalf("NextMatch = (%d, %d), want (2, 2)", pos, total)
 	}
-	if m.leftVP.YOffset != m.matchLines[1] {
-		t.Fatalf("YOffset = %d after NextMatch, want %d (second match's line)", m.leftVP.YOffset, m.matchLines[1])
+	if m.leftVP.YOffset != m.diffMatchLines[1] {
+		t.Fatalf("YOffset = %d after NextMatch, want %d (second match's line)", m.leftVP.YOffset, m.diffMatchLines[1])
 	}
 	if m.currentFile != 1 {
 		t.Fatalf("currentFile = %d after jumping to the second match, want 1 (b.txt)", m.currentFile)
@@ -180,11 +274,11 @@ func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 func TestDetailModelClearSearchRemovesHighlightState(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch())
 	m.SetSize(80, 4)
-	m.Search("needle")
+	m.RunSearch("needle")
 
 	m.ClearSearch()
-	if term, pos, total, active := m.SearchStatus(); active || term != "" || pos != 0 || total != 0 {
-		t.Fatalf("SearchStatus after ClearSearch = (%q, %d, %d, %v), want inactive/zero", term, pos, total, active)
+	if pos, total := m.MatchPosition(); pos != 0 || total != 0 {
+		t.Fatalf("MatchPosition after ClearSearch = (%d, %d), want (0, 0)", pos, total)
 	}
 	if _, total := m.NextMatch(); total != 0 {
 		t.Fatalf("NextMatch after ClearSearch should be a no-op, total = %d", total)
