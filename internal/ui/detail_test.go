@@ -517,6 +517,25 @@ func TestDetailModelNextPrevFileJumpsAndClamps(t *testing.T) {
 	}
 }
 
+// TestDetailModelNextFileReachesShortTrailingFile pins down that ] can
+// reach the last file's header even when that file's own content is too
+// short to fill the remaining viewport on its own — viewport.SetYOffset
+// clamps to the content's natural max scroll position, which without
+// padding would leave the last file's StartLine unreachable as the
+// top-of-viewport line, the same way scrolling a short final section to
+// the top of the screen would otherwise be impossible.
+func TestDetailModelNextFileReachesShortTrailingFile(t *testing.T) {
+	d := fixtureDetailWithFiles(2, 30)
+	d.Files[1].Hunks[0].Lines = d.Files[1].Hunks[0].Lines[:2] // short trailing file
+	m := NewDetailModel(d)
+	m.SetSize(80, 20) // tall enough that the short file alone can't fill it
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	if m.currentFile != 1 || m.leftVP.YOffset != m.fileRanges[1].StartLine {
+		t.Fatalf("after ']': currentFile=%d YOffset=%d, want file 1 at %d", m.currentFile, m.leftVP.YOffset, m.fileRanges[1].StartLine)
+	}
+}
+
 // TestDetailModelNextPrevFileNoopWithoutFiles pins down that [ / ] don't
 // panic or move anything on a diff-less commit (merge commit / no diff).
 func TestDetailModelNextPrevFileNoopWithoutFiles(t *testing.T) {

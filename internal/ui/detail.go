@@ -130,6 +130,19 @@ func (m *DetailModel) reflow() {
 	if m.leftVP.Height < 0 {
 		m.leftVP.Height = 0
 	}
+	// viewport.SetYOffset clamps to the content's own max scroll position,
+	// which is normally what you want (no blank space below the last
+	// line) — but it also means a short trailing file's StartLine can be
+	// unreachable as the top-of-viewport line if what follows it doesn't
+	// fill a whole screen. Pad with blank lines so jumpToFile can always
+	// bring the last file's header to the top, the same way editors let
+	// you scroll the last line of a file to the top of the screen.
+	if len(m.fileRanges) > 0 {
+		lastStart := m.fileRanges[len(m.fileRanges)-1].StartLine
+		if need := lastStart + m.leftVP.Height - len(content); need > 0 {
+			content = append(content, make([]string, need)...)
+		}
+	}
 	m.leftVP.SetContent(strings.Join(content, "\n"))
 
 	m.syncHighlightFromScroll()
