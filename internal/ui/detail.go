@@ -15,15 +15,25 @@ import (
 // DetailModel renders a commit's metadata, message and diff as a single
 // scrollable panel (so a long commit message doesn't permanently eat into
 // the screen). A sticky header row above the panel always shows whichever
-// file is currently in view, updating as the user scrolls or jumps between
-// files with [ / ]. While the scroll position is still within the
-// header/message (above the first file), the first file is treated as
-// "current" since that's where scrolling down will land next.
+// section is currently in view — "Commit" for the metadata/message block,
+// "Files changed" for the stats block, or the file header for whichever
+// diff file is in view — updating as the user scrolls or jumps between
+// sections with [ / ].
 type DetailModel struct {
 	detail *git.CommitDetail
 
-	fileRanges  []FileRange
-	currentFile int
+	fileRanges []FileRange
+
+	// sections covers the whole flattened content (commit metadata+message,
+	// the optional stats block, then each diff file) contiguously and in
+	// document order, so a scroll position maps to exactly one section —
+	// used for the sticky header's title and for [ / ] navigation. It's
+	// built from fileRanges (for the file entries) plus the header/stats
+	// boundaries already computed in reflow, so it's never present without
+	// fileRanges also being present (see the len(m.fileRanges) == 0 guards
+	// below, which double as "is there anything to be sticky about").
+	sections       []detailSection
+	currentSection int
 
 	leftVP viewport.Model
 
@@ -48,6 +58,48 @@ type DetailModel struct {
 
 	messageMatchLines []int // parallel to messageMatches: wrapped-line index within the header block
 	diffMatchLines    []int // parallel to diffMatches: wrapped-line index within the flattened content (offset applied)
+}
+
+// sectionKind distinguishes the three kinds of entry that can appear in
+// DetailModel.sections, since only sectionKindFile carries a fileIndex into
+// m.detail.Files — the other two always render a fixed title.
+type sectionKind int
+
+const (
+	sectionKindCommit sectionKind = iota
+	sectionKindStats
+	sectionKindFile
+)
+
+// detailSection marks one contiguous, offset-adjusted line range within the
+// flattened viewport content (see DetailModel.sections), used to resolve a
+// scroll position to a sticky-header title and to drive [ / ] navigation.
+type detailSection struct {
+	kind      sectionKind
+	fileIndex int // meaningful only when kind == sectionKindFile
+	startLine int
+	endLine   int // exclusive
+}
+
+// sectionAt returns the index into sections whose range contains lineIndex.
+// sections are contiguous and gapless in document order (unlike FileRange,
+// which only covers diff files), so the answer is simply the last section
+// whose startLine doesn't exceed lineIndex — clamped to the first section
+// for any line above it (there is none, since section 0 always starts at
+// 0) and to the last section for any line past the final one (e.g. the
+// bottom-padding rows reflow adds past the last file's content).
+func sectionAt(sections []detailSection, lineIndex int) int {
+	if len(sections) == 0 {
+		return -1
+	}
+	idx := sort.Search(len(sections), func(i int) bool { return sections[i].startLine > lineIndex }) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sections) {
+		idx = len(sections) - 1
+	}
+	return idx
 }
 
 // NewDetailModel constructs a detail view for the given commit.
@@ -116,6 +168,20 @@ func (m *DetailModel) reflow() {
 		m.fileRanges[i] = FileRange{FileIndex: r.FileIndex, StartLine: r.StartLine + offset, EndLine: r.EndLine + offset}
 	}
 
+	metaEnd := offset
+	if len(statLines) > 0 {
+		metaEnd = len(wrappedHeader) + 1
+	}
+	sections := make([]detailSection, 0, len(m.fileRanges)+2)
+	sections = append(sections, detailSection{kind: sectionKindCommit, startLine: 0, endLine: metaEnd})
+	if len(statLines) > 0 {
+		sections = append(sections, detailSection{kind: sectionKindStats, startLine: metaEnd, endLine: offset})
+	}
+	for _, r := range m.fileRanges {
+		sections = append(sections, detailSection{kind: sectionKindFile, fileIndex: r.FileIndex, startLine: r.StartLine, endLine: r.EndLine})
+	}
+	m.sections = sections
+
 	m.messageMatchLines = messageMatchLines
 	m.diffMatchLines = make([]int, len(rawDiffMatchLines))
 	for i, ln := range rawDiffMatchLines {
@@ -134,7 +200,7 @@ func (m *DetailModel) reflow() {
 	// which is normally what you want (no blank space below the last
 	// line) — but it also means a short trailing file's StartLine can be
 	// unreachable as the top-of-viewport line if what follows it doesn't
-	// fill a whole screen. Pad with blank lines so jumpToFile can always
+	// fill a whole screen. Pad with blank lines so jumpToSection can always
 	// bring the last file's header to the top, the same way editors let
 	// you scroll the last line of a file to the top of the screen.
 	if len(m.fileRanges) > 0 {
@@ -356,38 +422,33 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 	case key.Matches(msg, DefaultKeyMap.Bottom):
 		m.leftVP.GotoBottom()
 	case key.Matches(msg, DefaultKeyMap.PrevFile):
-		m.jumpToFile(-1)
+		m.jumpToSection(-1)
 	case key.Matches(msg, DefaultKeyMap.NextFile):
-		m.jumpToFile(1)
+		m.jumpToSection(1)
 	}
 	m.syncHighlightFromScroll()
 }
 
-// jumpToFile scrolls the diff panel directly to the start of the file
-// currentFile+delta files away, clamping at the first/last file (no
-// wraparound).
-func (m *DetailModel) jumpToFile(delta int) {
-	if len(m.fileRanges) == 0 {
+// jumpToSection scrolls the diff panel directly to the start of the section
+// currentSection+delta away (commit metadata, the stats block, or a diff
+// file — see DetailModel.sections), clamping at the first/last section (no
+// wraparound). A no-op on a diff-less commit, where the commit section is
+// the only one there is.
+func (m *DetailModel) jumpToSection(delta int) {
+	if len(m.sections) <= 1 {
 		return
 	}
-	target := clampIndex(m.currentFile+delta, len(m.fileRanges)-1)
-	m.leftVP.SetYOffset(m.fileRanges[target].StartLine)
+	target := clampIndex(m.currentSection+delta, len(m.sections)-1)
+	m.leftVP.SetYOffset(m.sections[target].startLine)
 }
 
-// syncHighlightFromScroll recomputes which file the diff panel's topmost
-// visible line belongs to, for the sticky header. Above the first file
-// (still within the header/commit message) FileAt has nothing to report,
-// so it clamps to the first file, since that's what scrolling down reaches
-// next.
+// syncHighlightFromScroll recomputes which section the diff panel's topmost
+// visible line belongs to, for the sticky header.
 func (m *DetailModel) syncHighlightFromScroll() {
-	if len(m.fileRanges) == 0 {
+	if len(m.sections) == 0 {
 		return
 	}
-	i := FileAt(m.fileRanges, m.leftVP.YOffset)
-	if i < 0 {
-		i = 0
-	}
-	m.currentFile = i
+	m.currentSection = sectionAt(m.sections, m.leftVP.YOffset)
 }
 
 // RunSearch finds every occurrence of term across this commit's header and
@@ -492,6 +553,21 @@ func (m DetailModel) View() string {
 	if len(m.fileRanges) == 0 {
 		return m.leftVP.View()
 	}
-	sticky := renderFileHeader(m.detail.Files[m.currentFile], m.width)
-	return lipgloss.JoinVertical(lipgloss.Left, sticky, m.leftVP.View())
+	return lipgloss.JoinVertical(lipgloss.Left, m.renderStickyHeader(), m.leftVP.View())
+}
+
+// renderStickyHeader renders the sticky row's title for whichever section
+// currentSection points at: "Commit" for the metadata/message block,
+// statsSectionTitle (matching the stats block's own in-content heading, see
+// statsview.go) for the stats block, or the file header for a diff file.
+func (m DetailModel) renderStickyHeader() string {
+	s := m.sections[m.currentSection]
+	switch s.kind {
+	case sectionKindStats:
+		return renderClipped(fileHeaderStyle, statsSectionTitle, m.width)
+	case sectionKindFile:
+		return renderFileHeader(m.detail.Files[s.fileIndex], m.width)
+	default:
+		return renderClipped(fileHeaderStyle, "Commit", m.width)
+	}
 }

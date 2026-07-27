@@ -8,6 +8,11 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
+// statsSectionTitle is the stats block's in-content heading, reused as-is
+// for the detail view's sticky header (detail.go) while the stats block is
+// in view, so the two stay identical without a second literal to drift.
+const statsSectionTitle = "Files changed"
+
 // statLinesFor renders a `git show --stat`-style summary: one line per file
 // with exact +N/-M counts, followed by a totals line. It's computed
 // entirely from the already-parsed diff data in CommitDetail.Files (see
@@ -43,7 +48,7 @@ func statLinesFor(files []git.File, width int) []string {
 	}
 
 	lines := make([]string, 0, len(files)+2)
-	lines = append(lines, renderClipped(fileHeaderStyle, "Files changed", width))
+	lines = append(lines, renderClipped(fileHeaderStyle, statsSectionTitle, width))
 	for i, f := range files {
 		lines = append(lines, renderStatLine(f, nameWidth, countWidth, plainCounts[i], styledCounts[i], width))
 	}

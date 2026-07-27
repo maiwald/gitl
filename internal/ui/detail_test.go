@@ -39,10 +39,23 @@ func fixtureDetailWithFiles(nFiles, linesPerFile int) *git.CommitDetail {
 	}
 }
 
+// fileSectionIndex returns the index into sections of the file section for
+// fileIndex, or -1 if not found. Tests use this instead of hardcoding a
+// section index, since the file sections' position shifts depending on
+// whether a stats block precedes them (see DetailModel.sections).
+func fileSectionIndex(sections []detailSection, fileIndex int) int {
+	for i, s := range sections {
+		if s.kind == sectionKindFile && s.fileIndex == fileIndex {
+			return i
+		}
+	}
+	return -1
+}
+
 // TestDetailModelMessageScrollsWithDiff pins down that the commit
 // message/header lives inside the scrollable diff content (rather than a
-// fixed row above it), and that currentFile points at the first file while
-// still scrolled above it.
+// fixed row above it), and that currentSection points at the commit section
+// while still scrolled above the diff.
 func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 20)
 	d.Body = "message-scroll-marker"
@@ -56,17 +69,17 @@ func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 		t.Fatalf("fileRanges[0].StartLine = 0, want > 0 (message should precede the diff content)")
 	}
 
-	// Above the first file (still within the header/message), the first
-	// file is treated as current since that's where scrolling down lands.
-	if m.currentFile != 0 {
-		t.Fatalf("currentFile=%d while above first file, want 0", m.currentFile)
+	// At the top, still within the header/message, the current section is
+	// the commit metadata section itself.
+	if m.currentSection != 0 || m.sections[0].kind != sectionKindCommit {
+		t.Fatalf("currentSection=%d kind=%v at top, want section 0 (commit)", m.currentSection, m.sections[m.currentSection].kind)
 	}
 
 	// Scroll all the way to the bottom, into the last file's content.
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
-	lastFile := len(m.fileRanges) - 1
-	if m.currentFile != lastFile {
-		t.Fatalf("currentFile=%d at bottom, want %d", m.currentFile, lastFile)
+	lastSection := len(m.sections) - 1
+	if m.currentSection != lastSection || m.sections[lastSection].kind != sectionKindFile {
+		t.Fatalf("currentSection=%d at bottom, want last section (%d), a file", m.currentSection, lastSection)
 	}
 }
 
@@ -158,8 +171,8 @@ func TestDetailModelSearchFindsAndJumpsToMatch(t *testing.T) {
 	if m.leftVP.YOffset != m.diffMatchLines[0] {
 		t.Fatalf("YOffset = %d after RunSearch, want %d (first match's line)", m.leftVP.YOffset, m.diffMatchLines[0])
 	}
-	if m.currentFile != 0 {
-		t.Fatalf("currentFile = %d after jumping to the first match, want 0 (a.txt)", m.currentFile)
+	if want := fileSectionIndex(m.sections, 0); m.currentSection != want {
+		t.Fatalf("currentSection = %d after jumping to the first match, want %d (a.txt)", m.currentSection, want)
 	}
 }
 
@@ -419,16 +432,16 @@ func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 	if m.leftVP.YOffset != m.diffMatchLines[1] {
 		t.Fatalf("YOffset = %d after NextMatch, want %d (second match's line)", m.leftVP.YOffset, m.diffMatchLines[1])
 	}
-	if m.currentFile != 1 {
-		t.Fatalf("currentFile = %d after jumping to the second match, want 1 (b.txt)", m.currentFile)
+	if want := fileSectionIndex(m.sections, 1); m.currentSection != want {
+		t.Fatalf("currentSection = %d after jumping to the second match, want %d (b.txt)", m.currentSection, want)
 	}
 
 	pos, total = m.NextMatch()
 	if pos != 1 || total != 2 {
 		t.Fatalf("NextMatch past the last match = (%d, %d), want wrap to (1, 2)", pos, total)
 	}
-	if m.currentFile != 0 {
-		t.Fatalf("currentFile = %d after wrapping to the first match, want 0", m.currentFile)
+	if want := fileSectionIndex(m.sections, 0); m.currentSection != want {
+		t.Fatalf("currentSection = %d after wrapping to the first match, want %d (a.txt)", m.currentSection, want)
 	}
 
 	pos, _ = m.PrevMatch()
@@ -455,8 +468,8 @@ func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 	m := NewDetailModel(fixtureDetailWithFiles(3, 10))
 	m.SetSize(80, 8) // small viewport so scrolling moves meaningfully
 
-	if m.currentFile != 0 {
-		t.Fatalf("initial currentFile = %d, want 0", m.currentFile)
+	if m.currentSection != 0 || m.sections[0].kind != sectionKindCommit {
+		t.Fatalf("initial currentSection = %d, want 0 (commit)", m.currentSection)
 	}
 
 	// file 0 occupies fileRanges[0]; scroll past its end into file 1.
@@ -465,55 +478,71 @@ func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 
-	if m.currentFile != 1 {
-		t.Fatalf("currentFile = %d after scrolling into file 1, want 1", m.currentFile)
+	if want := fileSectionIndex(m.sections, 1); m.currentSection != want {
+		t.Fatalf("currentSection = %d after scrolling into file 1, want %d", m.currentSection, want)
 	}
 }
 
-// TestDetailModelStickyHeaderTracksScroll pins down that View()'s sticky
-// row shows the file currently in view and updates as the user scrolls
-// between files.
-func TestDetailModelStickyHeaderTracksScroll(t *testing.T) {
+// TestDetailModelStickyHeaderShowsSectionTitles pins down that the sticky
+// row shows "Commit" while scrolled within the header/message, the stats
+// block's own heading (statsSectionTitle) while scrolled within it, and
+// each file's own header while scrolled within its diff — stepping through
+// via jumpToSection the same way [ / ] does.
+func TestDetailModelStickyHeaderShowsSectionTitles(t *testing.T) {
 	m := NewDetailModel(fixtureDetailWithFiles(2, 20))
 	m.SetSize(80, 8)
 
+	if !strings.Contains(m.View(), "Commit") {
+		t.Fatalf("View() = %q, want sticky header to show \"Commit\" at the top", m.View())
+	}
+
+	m.jumpToSection(1)
+	if !strings.Contains(m.View(), statsSectionTitle) {
+		t.Fatalf("View() = %q, want sticky header to show %q over the stats block", m.View(), statsSectionTitle)
+	}
+
+	m.jumpToSection(1)
 	if !strings.Contains(m.View(), "file0.txt") {
 		t.Fatalf("View() = %q, want sticky header to show file0.txt", m.View())
 	}
 
-	m.jumpToFile(1)
+	m.jumpToSection(1)
 	if !strings.Contains(m.View(), "file1.txt") {
 		t.Fatalf("View() = %q, want sticky header to show file1.txt after jumping", m.View())
 	}
 }
 
-// TestDetailModelNextPrevFileJumpsAndClamps pins down [ / ] navigation:
-// each key jumps straight to the adjacent file's header, clamping (not
-// wrapping) at the first/last file.
-func TestDetailModelNextPrevFileJumpsAndClamps(t *testing.T) {
+// TestDetailModelNextPrevSectionJumpsAndClamps pins down [ / ] navigation:
+// each key jumps straight to the adjacent section (commit metadata, the
+// stats block, or a file's diff), clamping (not wrapping) at the first/last
+// section.
+func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
 	m := NewDetailModel(fixtureDetailWithFiles(3, 10))
 	m.SetSize(80, 8)
+	last := len(m.sections) - 1
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
-	if m.currentFile != 1 || m.leftVP.YOffset != m.fileRanges[1].StartLine {
-		t.Fatalf("after ']': currentFile=%d YOffset=%d, want file 1 at %d", m.currentFile, m.leftVP.YOffset, m.fileRanges[1].StartLine)
+	if m.currentSection != 1 || m.leftVP.YOffset != m.sections[1].startLine {
+		t.Fatalf("after ']': currentSection=%d YOffset=%d, want section 1 at %d", m.currentSection, m.leftVP.YOffset, m.sections[1].startLine)
 	}
 
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")}) // clamp at last file
-	if m.currentFile != 2 {
-		t.Fatalf("currentFile = %d after repeated ']', want clamped at 2", m.currentFile)
+	for i := 0; i < last; i++ { // more than enough presses to clamp at the last section
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	}
+	if m.currentSection != last {
+		t.Fatalf("currentSection = %d after repeated ']', want clamped at %d (last section)", m.currentSection, last)
 	}
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
-	if m.currentFile != 1 || m.leftVP.YOffset != m.fileRanges[1].StartLine {
-		t.Fatalf("after '[': currentFile=%d YOffset=%d, want file 1 at %d", m.currentFile, m.leftVP.YOffset, m.fileRanges[1].StartLine)
+	if m.currentSection != last-1 || m.leftVP.YOffset != m.sections[last-1].startLine {
+		t.Fatalf("after '[': currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.leftVP.YOffset, last-1, m.sections[last-1].startLine)
 	}
 
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")}) // clamp at first file
-	if m.currentFile != 0 {
-		t.Fatalf("currentFile = %d after repeated '[', want clamped at 0", m.currentFile)
+	for i := 0; i < last; i++ { // more than enough presses to clamp at the first section
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	}
+	if m.currentSection != 0 {
+		t.Fatalf("currentSection = %d after repeated '[', want clamped at 0", m.currentSection)
 	}
 }
 
@@ -530,14 +559,18 @@ func TestDetailModelNextFileReachesShortTrailingFile(t *testing.T) {
 	m := NewDetailModel(d)
 	m.SetSize(80, 20) // tall enough that the short file alone can't fill it
 
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
-	if m.currentFile != 1 || m.leftVP.YOffset != m.fileRanges[1].StartLine {
-		t.Fatalf("after ']': currentFile=%d YOffset=%d, want file 1 at %d", m.currentFile, m.leftVP.YOffset, m.fileRanges[1].StartLine)
+	target := fileSectionIndex(m.sections, 1)
+	for i := 0; i < target; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	}
+	if m.currentSection != target || m.leftVP.YOffset != m.sections[target].startLine {
+		t.Fatalf("after %d ']' presses: currentSection=%d YOffset=%d, want section %d at %d", target, m.currentSection, m.leftVP.YOffset, target, m.sections[target].startLine)
 	}
 }
 
 // TestDetailModelNextPrevFileNoopWithoutFiles pins down that [ / ] don't
-// panic or move anything on a diff-less commit (merge commit / no diff).
+// panic or move anything on a diff-less commit (merge commit / no diff),
+// where the commit section is the only section there is.
 func TestDetailModelNextPrevFileNoopWithoutFiles(t *testing.T) {
 	m := NewDetailModel(&git.CommitDetail{
 		Commit: git.Commit{
@@ -549,8 +582,8 @@ func TestDetailModelNextPrevFileNoopWithoutFiles(t *testing.T) {
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
-	if m.currentFile != 0 {
-		t.Fatalf("currentFile = %d after [/] on a diff-less commit, want 0 (untouched)", m.currentFile)
+	if m.currentSection != 0 {
+		t.Fatalf("currentSection = %d after [/] on a diff-less commit, want 0 (untouched)", m.currentSection)
 	}
 }
 
