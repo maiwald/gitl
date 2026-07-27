@@ -1,6 +1,10 @@
 package ui
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestListModelSearchJumpsToFirstMatchAtOrAfterCursorAndWraps(t *testing.T) {
 	m := NewListModel(fixtureCommits(10))
@@ -107,6 +111,55 @@ func TestListModelClearSearchResetsStatus(t *testing.T) {
 	}
 	if _, target := m.NextMatch(); target != 0 {
 		t.Fatalf("NextMatch after ClearSearch should be a no-op, target = %d", target)
+	}
+}
+
+// TestListModelRenderDimsRowsOutsideMatchSet pins down that render()
+// dims exactly the rows ListModel.matches doesn't cover — the actual git
+// match set, not a re-derivation from visible-text highlighting — and
+// leaves the matched, non-selected row at full brightness. All fixture
+// commits share the same author/subject text, so "zzz" (absent from every
+// field) is used as the display term: it activates dimming without also
+// activating per-substring highlighting, keeping each field a single,
+// easily comparable span.
+func TestListModelRenderDimsRowsOutsideMatchSet(t *testing.T) {
+	m := NewListModel(fixtureCommits(4))
+	m.SetTotalCount(4)
+	m.SetSize(80, 6)
+	m.SetSearchDisplay("zzz", false)
+	m.Search([]int{1})
+	m.cursor = 3 // keep the selected row away from both rows under test
+	m.render()
+
+	lines := strings.Split(m.vp.View(), "\n")
+	paddedAuthor := fmt.Sprintf("%-*s", authorColumnWidth, "Author")
+	dimmedAuthor := dimStyle.Render(paddedAuthor)
+	normalAuthor := authorStyle.Render(paddedAuthor)
+
+	if !strings.Contains(lines[0], dimmedAuthor) {
+		t.Errorf("row 0 (not a match) = %q, want it dimmed", lines[0])
+	}
+	if strings.Contains(lines[1], dimmedAuthor) || !strings.Contains(lines[1], normalAuthor) {
+		t.Errorf("row 1 (a match) = %q, should render at normal brightness", lines[1])
+	}
+	if !strings.Contains(lines[2], dimmedAuthor) {
+		t.Errorf("row 2 (not a match) = %q, want it dimmed", lines[2])
+	}
+}
+
+// TestListModelRenderSkipsDimmingWithoutActiveSearch pins down that dimming
+// only kicks in once a search term is actually being displayed — an empty
+// match set with no term (e.g. before any search has run) must not dim
+// every row in the list.
+func TestListModelRenderSkipsDimmingWithoutActiveSearch(t *testing.T) {
+	m := NewListModel(fixtureCommits(2))
+	m.SetTotalCount(2)
+	m.SetSize(80, 3)
+	m.render()
+
+	paddedAuthor := fmt.Sprintf("%-*s", authorColumnWidth, "Author")
+	if strings.Contains(m.vp.View(), dimStyle.Render(paddedAuthor)) {
+		t.Errorf("view = %q, should not dim any row without an active search", m.vp.View())
 	}
 }
 

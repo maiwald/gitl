@@ -312,8 +312,14 @@ func (m *ListModel) render() {
 		activeMatch = m.matches[m.matchPos]
 	}
 	lines := make([]string, len(m.commits))
+	mi := 0 // walks m.matches (ascending) alongside i, since both are sorted
 	for i, c := range m.commits {
-		lines[i] = renderCommitRow(c, m.vp.Width, i == m.cursor, term, i == activeMatch)
+		for mi < len(m.matches) && m.matches[mi] < i {
+			mi++
+		}
+		isMatch := mi < len(m.matches) && m.matches[mi] == i
+		dimmed := term != "" && !isMatch
+		lines[i] = renderCommitRow(c, m.vp.Width, i == m.cursor, dimmed, term, i == activeMatch)
 	}
 	m.vp.SetContent(strings.Join(lines, "\n"))
 }

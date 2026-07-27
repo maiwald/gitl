@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func fixtureCommitForRow() git.Commit {
 }
 
 func TestRenderCommitRowHighlightsAuthorMatch(t *testing.T) {
-	row := renderCommitRow(fixtureCommitForRow(), 80, false, "alice", false)
+	row := renderCommitRow(fixtureCommitForRow(), 80, false, false, "alice", false)
 	want := searchMatchStyle.Render("Alice")
 	if !strings.Contains(row, want) {
 		t.Errorf("row = %q, want it to contain the highlighted author %q", row, want)
@@ -67,7 +68,7 @@ func TestRenderCommitRowHighlightsAuthorMatch(t *testing.T) {
 }
 
 func TestRenderCommitRowHighlightsSubjectMatch(t *testing.T) {
-	row := renderCommitRow(fixtureCommitForRow(), 80, false, "searchable", false)
+	row := renderCommitRow(fixtureCommitForRow(), 80, false, false, "searchable", false)
 	want := searchMatchStyle.Render("searchable")
 	if !strings.Contains(row, want) {
 		t.Errorf("row = %q, want it to contain the highlighted subject match %q", row, want)
@@ -76,8 +77,8 @@ func TestRenderCommitRowHighlightsSubjectMatch(t *testing.T) {
 
 func TestRenderCommitRowActiveMatchUsesDistinctStyleFromOrdinaryMatch(t *testing.T) {
 	c := fixtureCommitForRow()
-	ordinary := renderCommitRow(c, 80, false, "alice", false)
-	active := renderCommitRow(c, 80, false, "alice", true)
+	ordinary := renderCommitRow(c, 80, false, false, "alice", false)
+	active := renderCommitRow(c, 80, false, false, "alice", true)
 
 	if strings.Contains(ordinary, searchActiveMatchStyle.Render("Alice")) {
 		t.Error("ordinary match row unexpectedly used the active-match style")
@@ -91,8 +92,37 @@ func TestRenderCommitRowActiveMatchUsesDistinctStyleFromOrdinaryMatch(t *testing
 }
 
 func TestRenderCommitRowSkipsHighlightingWhenSelected(t *testing.T) {
-	row := renderCommitRow(fixtureCommitForRow(), 80, true, "alice", true)
+	row := renderCommitRow(fixtureCommitForRow(), 80, true, false, "alice", true)
 	if strings.Contains(row, searchMatchStyle.Render("Alice")) || strings.Contains(row, searchActiveMatchStyle.Render("Alice")) {
 		t.Errorf("selected row = %q, should not apply search highlight styles (selection style stays authoritative)", row)
+	}
+}
+
+// TestRenderCommitRowDimsNonMatch pins down that dimmed replaces a row's
+// normal per-field colors with dimStyle, the mechanism that lets a commit
+// matched only via its message body (nothing visibly highlighted in the
+// row) still read as "a match" by contrast with true non-matches.
+func TestRenderCommitRowDimsNonMatch(t *testing.T) {
+	c := fixtureCommitForRow()
+	normal := renderCommitRow(c, 80, false, false, "", false)
+	dimmed := renderCommitRow(c, 80, false, true, "", false)
+
+	if normal == dimmed {
+		t.Fatal("dimmed row should render differently from a normal row")
+	}
+	paddedAuthor := fmt.Sprintf("%-*s", authorColumnWidth, "Alice")
+	if !strings.Contains(dimmed, dimStyle.Render(paddedAuthor)) {
+		t.Errorf("dimmed row = %q, want the author rendered with dimStyle", dimmed)
+	}
+	if strings.Contains(dimmed, authorStyle.Render(paddedAuthor)) {
+		t.Errorf("dimmed row = %q, should not still use authorStyle's normal color", dimmed)
+	}
+}
+
+func TestRenderCommitRowSkipsDimmingWhenSelected(t *testing.T) {
+	row := renderCommitRow(fixtureCommitForRow(), 80, true, true, "", false)
+	paddedAuthor := fmt.Sprintf("%-*s", authorColumnWidth, "Alice")
+	if strings.Contains(row, dimStyle.Render(paddedAuthor)) {
+		t.Errorf("selected row = %q, should not apply dimming (selection style stays authoritative)", row)
 	}
 }

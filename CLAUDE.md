@@ -110,6 +110,17 @@ commit red.
   which commits a search matches is cheap (`git log --grep`/`--author`,
   independent of what's loaded), but jumping to a match still has to load
   up to it, reusing the same lazy-pagination mechanism scrolling uses.
+- List rows outside the active search's real match set (`ListModel.matches`,
+  from the actual `git log --grep`/`--author` query — not from
+  re-scanning a row's own visible text) are dimmed via `dimStyle`
+  (`commititem.go`). Dimming is applied per-field (sha/date/author/subject/
+  refs each swap in `dimStyle` as their base) rather than by wrapping the
+  whole rendered row in one outer faint style, because every field is
+  already independently `.Render()`'d and each `Render()` call ends with
+  its own ANSI reset — an outer style wrapped around the concatenation
+  would get cancelled by the first inner reset it hits (the same reset
+  hazard `formatRefs`'s own doc comment calls out for the selected-row
+  case).
 
 ## Known limitations (intentional, not bugs)
 
@@ -120,4 +131,5 @@ commit red.
   coloring (add/delete/context).
 - List search matching a commit's message body (not its one-line subject)
   has nothing to visibly highlight in that row, since the row never shows
-  the body — it still counts correctly toward the match total.
+  the body — it still counts correctly toward the match total, and is
+  distinguishable from a true non-match by not being dimmed.

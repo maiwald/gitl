@@ -24,7 +24,19 @@ const (
 // be a search match via its full message body, which isn't shown in the
 // row at all — in that case there's simply nothing here to highlight,
 // which is expected.
-func renderCommitRow(c git.Commit, width int, selected bool, searchTerm string, isActiveMatch bool) string {
+//
+// dimmed fades a row that isn't among the search's real matches (as
+// determined by the actual git query, not by whether this row's visible
+// text happens to contain the term — see ListModel.render) — this is what
+// makes a body-only match (nothing highlighted in the row itself) visually
+// distinguishable from an outright non-match. It replaces each field's own
+// color with dimStyle rather than wrapping the whole rendered row in an
+// outer faint style: every field below is already independently
+// Render()'d, and each Render() call ends with its own ANSI reset, which
+// would cancel an outer style applied around the concatenated result (see
+// the same concern in formatRefs below) — so faintness has to be baked
+// into each field's own style instead.
+func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm string, isActiveMatch bool) string {
 	sha := fmt.Sprintf("%-*s", shaColumnWidth, shaPrefix(c.Hash))
 	localDate := c.AuthorDate.Local()
 	date := localDate.Format("2006-01-02")
@@ -37,13 +49,17 @@ func renderCommitRow(c git.Commit, width int, selected bool, searchTerm string, 
 		if isActiveMatch {
 			matchStyle = searchActiveMatchStyle
 		}
-		sha = highlightSpans(sha, searchTerm, shaStyle, matchStyle)
-		date = highlightSpans(date, searchTerm, dateStyle, matchStyle)
-		clock = highlightSpans(clock, searchTerm, dateStyle, matchStyle)
-		author = highlightSpans(author, searchTerm, authorStyle, matchStyle)
-		subject = highlightSpans(subject, searchTerm, lipgloss.NewStyle(), matchStyle)
+		shaBase, dateBase, authorBase, subjectBase := shaStyle, dateStyle, authorStyle, lipgloss.NewStyle()
+		if dimmed {
+			shaBase, dateBase, authorBase, subjectBase = dimStyle, dimStyle, dimStyle, dimStyle
+		}
+		sha = highlightSpans(sha, searchTerm, shaBase, matchStyle)
+		date = highlightSpans(date, searchTerm, dateBase, matchStyle)
+		clock = highlightSpans(clock, searchTerm, dateBase, matchStyle)
+		author = highlightSpans(author, searchTerm, authorBase, matchStyle)
+		subject = highlightSpans(subject, searchTerm, subjectBase, matchStyle)
 	}
-	refs := formatRefs(c.Refs, selected)
+	refs := formatRefs(c.Refs, selected, dimmed)
 
 	var row string
 	if refs != "" {
@@ -86,17 +102,24 @@ func highlightSpans(text, term string, base, match lipgloss.Style) string {
 // end of its span) would terminate the selected row's background applied
 // by the outer style.Render(row) call in renderCommitRow, leaving
 // everything after the ref badge — the subject, in particular —
-// unhighlighted for the rest of the line.
-func formatRefs(refs []string, selected bool) string {
+// unhighlighted for the rest of the line. dimmed swaps in the same
+// dimStyle used for the rest of a non-matching row, rather than leaving
+// refs at their normal bold/colored style, so a badge doesn't stand out
+// against an otherwise faded row.
+func formatRefs(refs []string, selected, dimmed bool) string {
 	if len(refs) == 0 {
 		return ""
+	}
+	style := refStyle
+	if dimmed {
+		style = dimStyle
 	}
 	parts := make([]string, len(refs))
 	for i, r := range refs {
 		if selected {
 			parts[i] = "[" + r + "]"
 		} else {
-			parts[i] = refStyle.Render("[" + r + "]")
+			parts[i] = style.Render("[" + r + "]")
 		}
 	}
 	return strings.Join(parts, " ")

@@ -56,6 +56,12 @@ var (
 			Foreground(lipgloss.Color("252")).
 			Padding(0, 1)
 
+	// dimStyle uses the terminal-native Faint attribute rather than a fixed
+	// color (see the dateStyle/shaStyle/authorStyle comment above) so a
+	// dimmed row still respects the user's own palette/contrast instead of
+	// fighting it with a hardcoded grey.
+	dimStyle = lipgloss.NewStyle().Faint(true)
+
 	searchMatchStyle = lipgloss.NewStyle().
 				Background(lipgloss.Color("226")).
 				Foreground(lipgloss.Color("0"))

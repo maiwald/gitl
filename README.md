@@ -15,6 +15,9 @@ A terminal UI for browsing git history, with vim-style navigation.
   ends), with all matches highlighted and the current one visually
   distinct. In the commit list, search covers author name and the full
   commit message; in the commit detail view, it covers the diff content.
+  Commits that don't match a search are dimmed in the list, so a match
+  whose only hit is in the message body (nothing visible to highlight in
+  the row) still stands out by contrast with the surrounding non-matches.
 - Handles large repositories: commits are fetched in lazily-loaded batches
   rather than all at once, so startup and memory use don't scale with the
   size of the history. Searching the list only loads as much history as a
@@ -67,7 +70,8 @@ gitl
   add/delete/context coloring.
 - In the commit list, a commit that matches search only via its full
   message body (not the one-line subject shown in the row) counts toward
-  the match total but has nothing visible to highlight in that row.
+  the match total but has nothing visible to highlight in that row —
+  distinguishable from a true non-match only by not being dimmed.
 - Detail-view search covers diff content only, not the commit message.
 
 ## Development
