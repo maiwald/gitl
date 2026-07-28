@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -145,6 +146,114 @@ func TestEntryDetail(t *testing.T) {
 	}
 	if detail.Hash != "" {
 		t.Errorf("Hash = %q, want empty (no commit metadata)", detail.Hash)
+	}
+}
+
+func TestWorktreeDiffIncludesUntrackedFile(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	dir := repo.Path
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("brand new\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	files, err := repo.FetchWorktreeEntry(context.Background(), EntryWorktree)
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryWorktree): %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("got %d files, want 1: %+v", len(files), files)
+	}
+	f := files[0]
+	if f.Path != "new.txt" {
+		t.Errorf("Path = %q, want new.txt", f.Path)
+	}
+	if f.OldPath != "" {
+		t.Errorf("OldPath = %q, want empty", f.OldPath)
+	}
+	if f.Status != StatusAdded {
+		t.Errorf("Status = %v, want StatusAdded", f.Status)
+	}
+	if f.Additions != 1 {
+		t.Errorf("Additions = %d, want 1", f.Additions)
+	}
+}
+
+func TestWorktreeDiffIncludesNestedUntrackedFile(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	dir := repo.Path
+	if err := os.MkdirAll(filepath.Join(dir, "sub", "dir"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "dir", "nested.txt"), []byte("deep\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	files, err := repo.FetchWorktreeEntry(context.Background(), EntryWorktree)
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryWorktree): %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "sub/dir/nested.txt" {
+		t.Fatalf("got files = %+v, want one file sub/dir/nested.txt", files)
+	}
+}
+
+func TestWorktreeDiffExcludesGitignoredFile(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	dir := repo.Path
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", ".gitignore")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "add gitignore")
+	if err := os.WriteFile(filepath.Join(dir, "ignored.txt"), []byte("should not appear\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	files, err := repo.FetchWorktreeEntry(context.Background(), EntryWorktree)
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryWorktree): %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("got files = %+v, want none (ignored.txt should be excluded)", files)
+	}
+}
+
+func TestWorktreeDiffUntrackedFileBeyondCapDegradesGracefully(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	dir := repo.Path
+
+	// Names sort so that files past maxUntrackedDiffs are the ones without
+	// individually-diffed content, matching ls-files -z's lexical order.
+	total := maxUntrackedDiffs + 1
+	for i := 0; i < total; i++ {
+		name := fmt.Sprintf("f%04d.txt", i)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(fmt.Sprintf("content %d\n", i)), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s): %v", name, err)
+		}
+	}
+
+	files, err := repo.FetchWorktreeEntry(context.Background(), EntryWorktree)
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryWorktree): %v", err)
+	}
+	if len(files) != total {
+		t.Fatalf("got %d files, want %d", len(files), total)
+	}
+
+	last := files[total-1]
+	if last.Path != fmt.Sprintf("f%04d.txt", total-1) {
+		t.Fatalf("last file = %q, want f%04d.txt", last.Path, total-1)
+	}
+	if last.Status != StatusAdded {
+		t.Errorf("last file Status = %v, want StatusAdded", last.Status)
+	}
+	if len(last.Hunks) != 0 || last.Additions != 0 {
+		t.Errorf("last file beyond the cap should be hunk-less, got %+v", last)
+	}
+
+	first := files[0]
+	if len(first.Hunks) == 0 {
+		t.Errorf("first file within the cap should have hunks, got %+v", first)
 	}
 }
 

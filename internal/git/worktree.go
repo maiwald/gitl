@@ -91,12 +91,81 @@ func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
 	return ParseUnifiedDiff(bytes.NewReader(out))
 }
 
-// worktreeDiff diffs tracked files against the index. Untracked files are
-// added separately (see untracked.go).
+// worktreeDiff diffs tracked files against the index, then appends one
+// synthesized added-file entry per untracked file, so the working-tree view
+// covers everything `git status` would flag as new (not just what plain
+// `git diff` shows).
 func (r *Repo) worktreeDiff(ctx context.Context) ([]File, error) {
 	out, err := runGit(ctx, r.Path, "diff", "--no-color", "-U3")
 	if err != nil {
 		return nil, err
 	}
-	return ParseUnifiedDiff(bytes.NewReader(out))
+	files, err := ParseUnifiedDiff(bytes.NewReader(out))
+	if err != nil {
+		return nil, err
+	}
+
+	untracked, err := r.untrackedFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(files, untracked...), nil
+}
+
+// maxUntrackedDiffs caps how many untracked files get their own `git diff
+// --no-index` subprocess call; beyond it, remaining untracked files fall
+// back to a hunk-less added-file entry, so a repo with a huge untracked
+// build directory can't spawn hundreds of git invocations.
+const maxUntrackedDiffs = 200
+
+// untrackedFiles returns one synthesized File per untracked path, rendered
+// as an added-file diff against /dev/null — the same approach lazygit/tig
+// use for showing untracked files alongside a real diff.
+func (r *Repo) untrackedFiles(ctx context.Context) ([]File, error) {
+	paths, err := r.untrackedPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	files := make([]File, 0, len(paths))
+	for i, path := range paths {
+		if i >= maxUntrackedDiffs {
+			files = append(files, File{Path: path, Status: StatusAdded})
+			continue
+		}
+		files = append(files, r.untrackedDiff(ctx, path))
+	}
+	return files, nil
+}
+
+func (r *Repo) untrackedPaths(ctx context.Context) ([]string, error) {
+	out, err := runGit(ctx, r.Path, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	return splitNullTerminated(out), nil
+}
+
+// untrackedDiff synthesizes an added-file diff for a single untracked path
+// via `git diff --no-index` against /dev/null. Path/OldPath/Status are
+// overwritten unconditionally regardless of what the parser produced, so
+// the result can't be affected by however go-gitdiff happens to parse a
+// /dev/null header. If the diff can't be run or parsed at all (an
+// unreadable path, a symlink, a fifo) — or the path is empty, which
+// produces no textual delta to parse — this degrades to a hunk-less
+// added-file entry rather than failing the whole worktree fetch.
+func (r *Repo) untrackedDiff(ctx context.Context, path string) File {
+	out, _, err := runGitDiffExit(ctx, r.Path, "diff", "--no-color", "-U3", "--no-index", "--", "/dev/null", path)
+	if err != nil {
+		return File{Path: path, Status: StatusAdded}
+	}
+	parsed, err := ParseUnifiedDiff(bytes.NewReader(out))
+	if err != nil || len(parsed) == 0 {
+		return File{Path: path, Status: StatusAdded}
+	}
+	f := parsed[0]
+	f.Path = path
+	f.OldPath = ""
+	f.Status = StatusAdded
+	return f
 }

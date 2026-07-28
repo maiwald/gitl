@@ -81,3 +81,22 @@ func splitLines(out []byte) []string {
 	}
 	return result
 }
+
+// splitNullTerminated splits NUL-delimited git output (from a -z flag) into
+// non-empty entries. Unlike splitLines, this is safe for paths that
+// themselves contain newlines and avoids git's own quoting of unusual path
+// characters, since -z output is never quoted.
+func splitNullTerminated(out []byte) []string {
+	text := strings.TrimRight(string(out), "\x00")
+	if text == "" {
+		return nil
+	}
+	parts := strings.Split(text, "\x00")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
