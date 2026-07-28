@@ -145,3 +145,16 @@ func TestRenderCommitRowSkipsDimmingWhenSelected(t *testing.T) {
 		t.Errorf("selected row = %q, should not apply dimming (selection style stays authoritative)", row)
 	}
 }
+
+func TestRenderCommitListJoinsPlainRows(t *testing.T) {
+	commits := []git.Commit{fixtureCommitForRow(), fixtureCommitForRow()}
+	got := RenderCommitList(commits, 80)
+
+	want := strings.Join([]string{
+		renderCommitRow(commits[0], 80, false, false, "", false),
+		renderCommitRow(commits[1], 80, false, false, "", false),
+	}, "\n")
+	if got != want {
+		t.Errorf("RenderCommitList = %q, want %q", got, want)
+	}
+}

@@ -111,6 +111,16 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 	return row
 }
 
+// RenderCommitList renders commits as plain list rows, one per line, with
+// no selection/dim/search styling — used by the -n non-interactive flag.
+func RenderCommitList(commits []git.Commit, width int) string {
+	lines := make([]string, len(commits))
+	for i, c := range commits {
+		lines[i] = renderCommitRow(c, width, false, false, "", false)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // highlightSpans splits text at case-insensitive occurrences of term,
 // rendering unmatched runs with base and matched runs with match, then
 // concatenating the already-rendered pieces — the same nested-style
