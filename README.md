@@ -6,6 +6,11 @@ A terminal UI for browsing git history, with vim-style navigation.
 
 - **Commit list** — scrollable log of commits showing date, author, ref
   decorations (branches/tags/HEAD), and subject line.
+- **Working tree and staged changes** — shown as two rows above the commit
+  list (working tree first, then staged; either is hidden when there's
+  nothing to show), openable just like a commit. The working-tree row
+  includes untracked files as synthesized added-file diffs, so it covers
+  everything `git status` would flag as new, not just tracked changes.
 - **Commit detail** — full metadata and commit message, plus a highlighted,
   scrollable diff with a sticky header showing which file is currently in
   view.
@@ -47,6 +52,23 @@ Run it inside any git repository:
 gitl
 ```
 
+It also accepts a startup target, jumping straight to a detail view instead
+of the list:
+
+```sh
+gitl <rev>        # open a specific commit's detail view (any git-resolvable
+                   # revision — a sha, branch, tag, HEAD~2, ...); the list
+                   # loads behind it, positioned on that commit, so q/Esc
+                   # returns to it exactly as if you'd navigated there
+                   # manually, and only quits from the list itself.
+
+gitl --staged      # open the staged-changes (index vs HEAD) detail view
+                   # directly, no list involved — a drop-in replacement for
+                   # `git diff --staged | less`: q/Esc quits outright.
+```
+
+`--staged` and a revision argument are mutually exclusive.
+
 ### Keybindings
 
 | Key(s)                | Action                                  |
@@ -73,6 +95,15 @@ gitl
   the match total but has nothing visible to highlight in that row —
   distinguishable from a true non-match only by not being dimmed.
 - Detail-view search covers diff content only, not the commit message.
+- The working-tree/staged rows are a snapshot taken at startup, like the
+  rest of the app's data — there's no key to refresh them if you edit files
+  in another terminal while gitl is running.
+- Only the first 200 untracked files each get their own diffed entry;
+  beyond that, remaining untracked files still show up (correctly counted
+  and marked as added) but without their own content diffed.
+- `gitl <rev>` for a revision that isn't reachable from HEAD (e.g. a commit
+  that only exists on another branch) still opens its detail view, but the
+  list can't sensibly position a cursor on it, so it's left at the top.
 
 ## Development
 

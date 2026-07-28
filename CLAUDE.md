@@ -20,20 +20,30 @@ Module path: `github.com/maiwald/gitl`. Requires Go 1.25+ and `git` on
 ## Project layout
 
 ```
-main.go                    entry point: builds and runs the root tea.Program
+main.go                    entry point: builds and runs the root tea.Program,
+                           parses -n / --staged / a positional revision arg
 internal/git/              data access layer, no TUI dependencies
   repo.go                  Repo, OpenRepo, HasCommits
   exec.go                  runGit: shells out, wraps stderr into errors
   log.go                   Commit type, FetchLogBatch, CommitCount (paged log)
-  show.go                  CommitDetail, FetchCommitDetail (metadata + diff)
+  show.go                  CommitDetail (+ EntryKind), FetchCommitDetail (metadata + diff)
   diff.go                  File/Hunk/DiffLine, ParseUnifiedDiff (go-gitdiff wrapper)
   search.go                SearchCommitHashes (author+message, OR), AllCommitHashes
+  rev.go                   ResolveRevision, CommitPosition (CLI revision jump support)
+  worktree.go              EntryKind/WorktreeEntry, FetchWorktreeEntries/FetchWorktreeEntry
+                           (staged + working-tree diffs, untracked files as synthesized
+                           added-file diffs), HasStagedChanges, EntryDetail
 internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
-                           commands, search prompt overlay + status bar
+                           commands, search prompt overlay + status bar, StartTarget
+                           dispatch (plain / --staged / <rev>)
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions
   list.go, commititem.go   commit list: cursor, viewport, lazy pagination, search
+  worktreerow.go           renderWorktreeRow: the two synthetic leading rows
+  entry.go                 entryTitle/entryDescription/entrySectionTitle: display
+                           strings shared by worktreerow.go and detail.go's pseudo-entry
+                           branch
   detail.go                commit detail: header + sticky file header, scroll sync, search
   diffview.go              RenderDiff (flatten+style diff),
                            FindDiffMatches (diff content search)
@@ -121,6 +131,20 @@ commit red.
   would get cancelled by the first inner reset it hits (the same reset
   hazard `formatRefs`'s own doc comment calls out for the selected-row
   case).
+- `ListModel.cursor` stays an index into `commits` and goes **negative** to
+  address the synthetic leading rows (`leading[i]` ⟺
+  `cursor == i-len(leading)`, see the field's doc comment in `list.go`).
+  This is deliberate: every other index computation in that file (`matches`,
+  `fetchRequest` skip/limit, `totalCount` comparisons, `maybeLoadMore`'s
+  lookahead check) is keyed to real positions in HEAD's history and stays
+  completely unaware synthetic rows exist — don't "fix" the negative
+  values by switching to a combined row-space index; that would require
+  touching all of those instead of none of them.
+- A synthetic leading row (working tree/staged) is represented as a
+  `git.CommitDetail` with `Kind != EntryCommit` and the embedded `Commit`
+  left zero-valued (`IsPseudo()`). `detail.go`'s diff/stats/sections/search
+  machinery all operate on `[]git.File` and need no knowledge of this; only
+  `headerLinesFor`, `noDiffNotice`, and `renderStickyHeader` branch on it.
 
 ## Known limitations (intentional, not bugs)
 
@@ -133,3 +157,15 @@ commit red.
   has nothing to visibly highlight in that row, since the row never shows
   the body — it still counts correctly toward the match total, and is
   distinguishable from a true non-match by not being dimmed.
+- The working-tree/staged rows and their diffs are fetched once at startup,
+  like the rest of the app's data — there's no refresh key, so edits made
+  in another terminal while gitl is running aren't reflected.
+- Only the first `maxUntrackedDiffs` (200) untracked files get their own
+  `git diff --no-index` call in the working-tree view; beyond that, an
+  untracked file still appears (correctly counted, marked `StatusAdded`)
+  but without its own hunks, so a repo with a huge untracked directory
+  doesn't spawn hundreds of subprocesses.
+- `gitl <rev>` for a revision not reachable from HEAD still opens its
+  detail view (via `FetchCommitDetail`, which accepts any git-resolvable
+  revision), but `CommitPosition` has no list position to offer, so the
+  list is simply left at the top rather than erroring.
