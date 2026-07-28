@@ -3,13 +3,16 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 )
 
-// runGit runs git with the given arguments in dir and returns stdout.
-// On failure, the error includes stderr output for diagnosability.
+// runGit runs git with the given arguments in dir and returns stdout. On
+// failure, stdout is still returned alongside the error (needed by
+// runGitDiffExit's --no-index case, where a nonzero exit still carries the
+// diff on stdout) and the error includes stderr output for diagnosability.
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
@@ -21,12 +24,29 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	if err := cmd.Run(); err != nil {
 		stderrText := strings.TrimSpace(stderr.String())
 		if stderrText != "" {
-			return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderrText)
+			return stdout.Bytes(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderrText)
 		}
-		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+		return stdout.Bytes(), fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 
 	return stdout.Bytes(), nil
+}
+
+// runGitDiffExit runs a git diff variant whose exit status is itself part of
+// the answer, not a failure: 0 means no differences, 1 means differences
+// were found (and for --no-index, stdout still holds the diff), anything
+// else is a real error. Mirrors the exit-code-as-signal pattern
+// Repo.HasCommits uses for `git rev-parse --verify`.
+func runGitDiffExit(ctx context.Context, dir string, args ...string) (out []byte, differs bool, err error) {
+	out, err = runGit(ctx, dir, args...)
+	if err == nil {
+		return out, false, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return out, true, nil
+	}
+	return nil, false, err
 }
 
 // runGitTrimmed runs git like runGit, but trims the trailing whitespace

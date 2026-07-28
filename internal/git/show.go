@@ -20,11 +20,22 @@ const emptyTreeHash = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // the commit's diff. Files is left empty for merge commits: with more than
 // one parent there's no single canonical diff, and picking one (e.g.
 // first-parent) is deferred to a later stage.
+//
+// Kind is EntryCommit (its zero value) for every CommitDetail built by
+// FetchCommitDetail below; EntryDetail (worktree.go) builds the other two
+// kinds directly, with Commit and Body left zero since a synthetic entry has
+// no commit metadata.
 type CommitDetail struct {
+	Kind EntryKind
 	Commit
 	Body  string
 	Files []File
 }
+
+// IsPseudo reports whether d describes a synthetic working-tree/staged entry
+// rather than a real commit, in which case its Commit metadata and Body are
+// meaningless.
+func (d CommitDetail) IsPseudo() bool { return d.Kind != EntryCommit }
 
 // FetchCommitDetail retrieves full metadata, message body, and diff for
 // hash.
