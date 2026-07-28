@@ -42,9 +42,16 @@ type ListModel struct {
 	// layered on at render time only.
 	leading []git.WorktreeEntry
 
-	totalCount       int
-	loadingMore      bool
-	jumpToEndPending bool
+	totalCount  int
+	loadingMore bool
+	// pendingCursor is an absolute commit position not yet loaded, that
+	// should become the cursor as soon as AppendCommits brings it into the
+	// loaded range — set by jumpToBottom, applyCurrentMatch, and JumpTo,
+	// the three ways a navigation can target a position past what's
+	// currently loaded. -1 means nothing is pending. A newer pending
+	// target simply overwrites an older one: only the most recent
+	// navigation's destination should win once its fetch lands.
+	pendingCursor int
 
 	// displayTerm and searchDismissed mirror the root Model's canonical
 	// search state (searchTerm/searchDismissed in app.go), pushed down via
@@ -55,18 +62,18 @@ type ListModel struct {
 	displayTerm     string
 	searchDismissed bool
 
-	matches          []int // absolute commit positions, ascending
-	matchPos         int   // index into matches; -1 when there are none
-	matchJumpPending bool
+	matches  []int // absolute commit positions, ascending
+	matchPos int   // index into matches; -1 when there are none
 }
 
 // NewListModel constructs a list model over the given commits.
 func NewListModel(commits []git.Commit) ListModel {
 	return ListModel{
-		commits:    commits,
-		vp:         viewport.New(0, 0),
-		totalCount: len(commits),
-		matchPos:   -1,
+		commits:       commits,
+		vp:            viewport.New(0, 0),
+		totalCount:    len(commits),
+		matchPos:      -1,
+		pendingCursor: -1,
 	}
 }
 
@@ -84,19 +91,13 @@ func (m *ListModel) SetTotalCount(n int) {
 }
 
 // AppendCommits adds a freshly fetched batch to the loaded set, completing
-// any pending jump-to-bottom or jump-to-search-match once the target
-// position is in view.
+// a pending jump (see pendingCursor) once its target position is in view.
 func (m *ListModel) AppendCommits(commits []git.Commit) {
 	m.commits = append(m.commits, commits...)
 	m.loadingMore = false
-	if m.jumpToEndPending && len(m.commits) >= m.totalCount {
-		m.jumpToEndPending = false
-		m.cursor = len(m.commits) - 1
-		m.ensureVisible()
-	}
-	if m.matchJumpPending && m.matchPos >= 0 && m.matches[m.matchPos] < len(m.commits) {
-		m.matchJumpPending = false
-		m.cursor = m.matches[m.matchPos]
+	if m.pendingCursor >= 0 && m.pendingCursor < len(m.commits) {
+		m.cursor = m.pendingCursor
+		m.pendingCursor = -1
 		m.ensureVisible()
 	}
 	m.render()
@@ -215,7 +216,7 @@ func (m *ListModel) jumpToBottom() (fetchRequest, bool) {
 		m.render()
 		return fetchRequest{}, false
 	}
-	m.jumpToEndPending = true
+	m.pendingCursor = m.totalCount - 1
 	return m.beginLoadingUpTo(m.totalCount - 1)
 }
 
@@ -291,7 +292,7 @@ func (m *ListModel) ensureVisible() {
 func (m *ListModel) Search(matches []int) (needsLoad bool, target int) {
 	m.matches = matches
 	m.matchPos = -1
-	m.matchJumpPending = false
+	m.pendingCursor = -1
 	if len(matches) == 0 {
 		m.render()
 		return false, 0
@@ -324,14 +325,29 @@ func (m *ListModel) stepMatch(delta int) (needsLoad bool, target int) {
 // reports needsLoad so the caller dispatches a targeted fetch.
 func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
 	target = m.matches[m.matchPos]
+	return m.jumpOrDefer(target), target
+}
+
+// JumpTo positions the cursor at absolute commit position target, or, if
+// it isn't loaded yet, marks it as pending (resolved by AppendCommits, the
+// same mechanism jumpToBottom/applyCurrentMatch use) and reports needsLoad
+// so the caller dispatches a fetch via RequestLoadUpTo. Used for a
+// CLI-requested jump to a specific commit's position in history.
+func (m *ListModel) JumpTo(target int) (needsLoad bool) {
+	return m.jumpOrDefer(target)
+}
+
+// jumpOrDefer is the shared "move the cursor there now, or defer until it's
+// loaded" logic behind applyCurrentMatch and JumpTo.
+func (m *ListModel) jumpOrDefer(target int) (needsLoad bool) {
 	if target >= len(m.commits) {
-		m.matchJumpPending = true
-		return true, target
+		m.pendingCursor = target
+		return true
 	}
 	m.cursor = target
 	m.ensureVisible()
 	m.render()
-	return false, target
+	return false
 }
 
 // ClearSearch discards the active search's matches. The term/dismissed
@@ -339,7 +355,7 @@ func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
 func (m *ListModel) ClearSearch() {
 	m.matches = nil
 	m.matchPos = -1
-	m.matchJumpPending = false
+	m.pendingCursor = -1
 	m.render()
 }
 

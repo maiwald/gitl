@@ -71,6 +71,44 @@ func TestListModelScrollsToKeepCursorVisible(t *testing.T) {
 	}
 }
 
+// TestListModelJumpToAlreadyLoaded pins down JumpTo's immediate path: when
+// the target position is already loaded, the cursor moves there right
+// away and no fetch is needed.
+func TestListModelJumpToAlreadyLoaded(t *testing.T) {
+	m := NewListModel(fixtureCommits(5))
+	m.SetSize(80, 3)
+	m.SetTotalCount(5)
+
+	if needsLoad := m.JumpTo(3); needsLoad {
+		t.Fatal("JumpTo(3): needsLoad = true, want false (already loaded)")
+	}
+	if c, ok := m.Selected(); !ok || c.Hash != "d" {
+		t.Fatalf("after JumpTo(3): selection = %+v ok=%v, want hash d (commit index 3)", c, ok)
+	}
+}
+
+// TestListModelJumpToDefersUntilLoaded pins down JumpTo's deferred path:
+// when the target isn't loaded yet, it reports needsLoad and the cursor
+// only moves once AppendCommits brings the target into range — the same
+// pendingCursor mechanism jumpToBottom and search jumps use.
+func TestListModelJumpToDefersUntilLoaded(t *testing.T) {
+	m := NewListModel(fixtureCommits(5))
+	m.SetSize(80, 3)
+	m.SetTotalCount(10)
+
+	if needsLoad := m.JumpTo(7); !needsLoad {
+		t.Fatal("JumpTo(7): needsLoad = false, want true (not loaded yet)")
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want unchanged at 0 until AppendCommits delivers the target", m.cursor)
+	}
+
+	m.AppendCommits(fixtureCommits(5)) // brings total loaded to 10, including index 7
+	if c, ok := m.Selected(); !ok || c.Hash != "c" {
+		t.Fatalf("after AppendCommits: selection = %+v ok=%v, want hash c (the new batch's local index 2, i.e. absolute index 7)", c, ok)
+	}
+}
+
 func fixtureLeadingEntries() []git.WorktreeEntry {
 	return []git.WorktreeEntry{
 		{Kind: git.EntryWorktree, Files: []git.File{{Path: "a.txt", Additions: 1}}},
