@@ -48,6 +48,82 @@ func TestEnterOnSyntheticRowOpensDetailSynchronously(t *testing.T) {
 	}
 }
 
+// TestNewModelSetsQuitOnBackFromStagedTarget pins down that quitOnBack is
+// wired purely from StartTarget.Staged at construction time — nothing else
+// ever writes it, so the interactively-opened staged row (Enter from the
+// list) is unaffected by construction rather than by a runtime check.
+func TestNewModelSetsQuitOnBackFromStagedTarget(t *testing.T) {
+	if !NewModel(StartTarget{Staged: true}).quitOnBack {
+		t.Error("quitOnBack = false for StartTarget{Staged: true}, want true")
+	}
+	if NewModel(StartTarget{}).quitOnBack {
+		t.Error("quitOnBack = true for StartTarget{}, want false")
+	}
+}
+
+// TestQuitOnBackGate pins down handleDetailViewKey's Back branch: with
+// quitOnBack set (a `gitl --staged` startup jump), Back quits the program
+// outright; otherwise it returns to the list, exactly as it does for a real
+// commit's detail view (see TestEnterRequestsDetailAndEscReturnsToSameListState
+// in app_detail_test.go).
+func TestQuitOnBackGate(t *testing.T) {
+	t.Run("quits when quitOnBack is set", func(t *testing.T) {
+		m := Model{active: viewDetail, quitOnBack: true}
+		newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		m = newModel.(Model)
+		if !m.quitting {
+			t.Error("quitting = false, want true")
+		}
+		if cmd == nil {
+			t.Fatal("expected a command")
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Errorf("cmd() = %T, want tea.QuitMsg", cmd())
+		}
+	})
+
+	t.Run("returns to list when quitOnBack is unset", func(t *testing.T) {
+		m := Model{active: viewDetail, quitOnBack: false}
+		newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		m = newModel.(Model)
+		if m.active != viewList {
+			t.Errorf("active = %v, want viewList", m.active)
+		}
+		if m.quitting {
+			t.Error("quitting = true, want false")
+		}
+		if cmd != nil {
+			t.Errorf("cmd = %v, want nil", cmd())
+		}
+	})
+}
+
+// TestRepoOpenedStagedPathSkipsNoCommitsError pins down that a commit-less
+// repo is not an error on the --staged startup path (there's no HEAD to
+// diff against yet, but FetchWorktreeEntry already treats that as the
+// empty tree), unlike the plain startup path (see
+// TestRepoOpenedPlainPathErrorsOnNoCommits).
+func TestRepoOpenedStagedPathSkipsNoCommitsError(t *testing.T) {
+	m := Model{start: StartTarget{Staged: true}}
+	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
+	m = newModel.(Model)
+	if m.err != nil {
+		t.Errorf("err = %v, want nil (a commit-less repo is fine for --staged)", m.err)
+	}
+	if cmd == nil {
+		t.Fatal("expected a command to fetch the staged entry")
+	}
+}
+
+func TestRepoOpenedPlainPathErrorsOnNoCommits(t *testing.T) {
+	m := Model{}
+	newModel, _ := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
+	m = newModel.(Model)
+	if m.err == nil {
+		t.Fatal("expected an error for a commit-less repo on the plain startup path")
+	}
+}
+
 // TestWorktreeEntriesMirroredRegardlessOfArrivalOrder pins down that
 // worktreeEntriesLoadedMsg and commitsLoadedMsg are independent concurrent
 // fetches that can land in either order, and both orders end up with the

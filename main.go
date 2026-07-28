@@ -20,7 +20,13 @@ const fallbackListWidth = 120
 
 func main() {
 	n := flag.Int("n", 0, "print the N most recent commits non-interactively and exit")
+	staged := flag.Bool("staged", false, "open the staged changes (index vs HEAD) directly; q exits")
 	flag.Parse()
+
+	if *n > 0 && *staged {
+		fmt.Fprintln(os.Stderr, "error: -n cannot be combined with --staged")
+		os.Exit(2)
+	}
 
 	if *n > 0 {
 		if err := printCommits(*n); err != nil {
@@ -30,11 +36,35 @@ func main() {
 		return
 	}
 
-	p := tea.NewProgram(ui.NewModel(), tea.WithAltScreen())
+	if *staged {
+		hasStaged, err := checkHasStagedChanges()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		if !hasStaged {
+			fmt.Fprintln(os.Stderr, "no staged changes")
+			return
+		}
+	}
+
+	p := tea.NewProgram(ui.NewModel(ui.StartTarget{Staged: *staged}), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// checkHasStagedChanges is a pre-flight for --staged, so an empty index
+// prints a one-line message and exits instead of flashing an alt-screen TUI
+// just to immediately say there's nothing to show.
+func checkHasStagedChanges() (bool, error) {
+	ctx := context.Background()
+	repo, err := git.OpenRepo(ctx, ".")
+	if err != nil {
+		return false, err
+	}
+	return repo.HasStagedChanges(ctx)
 }
 
 func printCommits(n int) error {
