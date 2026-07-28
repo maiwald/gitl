@@ -14,6 +14,11 @@ const (
 	// hash (7 chars) to make same-prefix commits easier to tell apart at a
 	// glance.
 	shaColumnWidth = 10
+	// dateColumnWidth and clockColumnWidth match the "2006-01-02"/"15:04"
+	// formats renderCommitRow uses. Named here (rather than left implicit)
+	// so renderWorktreeRow's blank columns can't drift from these.
+	dateColumnWidth  = 10
+	clockColumnWidth = 5
 )
 
 // renderCommitRow renders a single commit list row: abbreviated sha, date,
@@ -97,13 +102,18 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 	if selected {
 		style = selectedRowStyle
 	}
-	// MaxWidth alone (no Width) truncates in place; combining Width with
-	// MaxWidth here would run row — which already contains several
-	// independently-Rendered, reset-terminated spans — through lipgloss's
-	// paragraph reflow, which miscounts cell positions across those resets
-	// and can hard-wrap in the middle of a field (e.g. mid-date) regardless
-	// of the requested width. Padding to width is done by hand below
-	// instead, since Width() no longer does it for us.
+	return padRow(row, width, style)
+}
+
+// padRow truncates row to width and pads any remainder with trailing
+// spaces in style. MaxWidth alone (no Width) truncates in place; combining
+// Width with MaxWidth here would run row — which already contains several
+// independently-Rendered, reset-terminated spans — through lipgloss's
+// paragraph reflow, which miscounts cell positions across those resets and
+// can hard-wrap in the middle of a field (e.g. mid-date) regardless of the
+// requested width. Padding to width is done by hand instead, since Width()
+// no longer does it for us.
+func padRow(row string, width int, style lipgloss.Style) string {
 	row = style.MaxWidth(width).Render(row)
 	if pad := width - lipgloss.Width(row); pad > 0 {
 		row += style.Render(strings.Repeat(" ", pad))

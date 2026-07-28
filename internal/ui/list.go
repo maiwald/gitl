@@ -23,8 +23,24 @@ type fetchRequest struct {
 // lazily requesting more commits as the cursor approaches the loaded end.
 type ListModel struct {
 	commits []git.Commit
-	cursor  int
-	vp      viewport.Model
+	// cursor is a position in commits. Negative values address the
+	// synthetic leading rows instead: leading[i] corresponds to
+	// cursor == i-len(leading), so -1 is the row directly above commits[0].
+	// Keeping the cursor in commit-index space rather than a combined row
+	// space is what lets every other index computation in this file
+	// (matches, fetchRequest skip/limit, totalCount comparisons,
+	// maybeLoadMore's lookahead check) stay exactly as it was before
+	// synthetic rows existed — none of them are meant to know leading rows
+	// exist at all.
+	cursor int
+	vp     viewport.Model
+
+	// leading holds the synthetic, non-commit rows rendered above real
+	// history (working tree, then staged), in display order. They take no
+	// part in the skip/limit/totalCount/match index arithmetic below, all
+	// of which is keyed to real positions in HEAD's history; they're
+	// layered on at render time only.
+	leading []git.WorktreeEntry
 
 	totalCount       int
 	loadingMore      bool
@@ -86,12 +102,41 @@ func (m *ListModel) AppendCommits(commits []git.Commit) {
 	m.render()
 }
 
-// Selected returns the commit currently under the cursor, if any.
+// Selected returns the commit currently under the cursor, if any — false
+// when the cursor is on a synthetic leading row instead (see SelectedEntry).
 func (m ListModel) Selected() (git.Commit, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.commits) {
 		return git.Commit{}, false
 	}
 	return m.commits[m.cursor], true
+}
+
+// SelectedEntry returns the synthetic leading row currently under the
+// cursor, if any — false when the cursor is on a real commit instead (see
+// Selected).
+func (m ListModel) SelectedEntry() (git.WorktreeEntry, bool) {
+	if m.cursor >= 0 {
+		return git.WorktreeEntry{}, false
+	}
+	return m.leading[m.cursor+len(m.leading)], true
+}
+
+// topIndex is the cursor position of the topmost row, whether that's a
+// synthetic leading row or (with none loaded) commits[0].
+func (m ListModel) topIndex() int {
+	return -len(m.leading)
+}
+
+// SetLeadingEntries installs the synthetic rows shown above the commit
+// list. The cursor itself needs no adjustment: it stays a position in
+// commits regardless of how many leading rows precede it, so a change here
+// can't move it off whatever commit (or leading row) it already points to —
+// only the rendered row it corresponds to shifts, which ensureVisible
+// accounts for.
+func (m *ListModel) SetLeadingEntries(entries []git.WorktreeEntry) {
+	m.leading = entries
+	m.ensureVisible()
+	m.render()
 }
 
 // Update processes a navigation key press. It returns a fetchRequest and
@@ -109,7 +154,7 @@ func (m *ListModel) Update(msg tea.KeyMsg) (fetchRequest, bool) {
 	case key.Matches(msg, DefaultKeyMap.HalfPageDown):
 		m.moveCursor(m.halfPageSize())
 	case key.Matches(msg, DefaultKeyMap.Top):
-		m.cursor = 0
+		m.cursor = m.topIndex()
 		m.ensureVisible()
 		m.render()
 	case key.Matches(msg, DefaultKeyMap.Bottom):
@@ -127,16 +172,22 @@ func (m *ListModel) halfPageSize() int {
 }
 
 func (m *ListModel) moveCursor(delta int) {
-	m.cursor = clampIndex(m.cursor+delta, len(m.commits)-1)
+	m.cursor = clampBetween(m.cursor+delta, m.topIndex(), len(m.commits)-1)
 	m.ensureVisible()
 	m.render()
 }
 
 // clampIndex constrains next to the valid index range [0, max], as used by
-// cursor/highlight movement in both ListModel and DetailModel.
+// [/] section movement in DetailModel (which has no synthetic-row concept
+// and so always clamps at 0).
 func clampIndex(next, max int) int {
-	if next < 0 {
-		return 0
+	return clampBetween(next, 0, max)
+}
+
+// clampBetween constrains next to the valid range [min, max].
+func clampBetween(next, min, max int) int {
+	if next < min {
+		return min
 	}
 	if next > max {
 		return max
@@ -209,15 +260,20 @@ func (m *ListModel) maybeLoadMore() (fetchRequest, bool) {
 	return fetchRequest{skip: len(m.commits), limit: batchSize}, true
 }
 
-// ensureVisible scrolls the viewport so the cursor row stays on screen.
+// ensureVisible scrolls the viewport so the cursor row stays on screen. The
+// comparison is against the cursor's actual rendered row (row, offset by
+// len(leading)), not m.cursor directly, since the cursor itself stays in
+// commit-index space and can be negative (see the cursor field's doc
+// comment).
 func (m *ListModel) ensureVisible() {
 	if m.vp.Height <= 0 {
 		return
 	}
-	if m.cursor < m.vp.YOffset {
-		m.vp.YOffset = m.cursor
-	} else if m.cursor >= m.vp.YOffset+m.vp.Height {
-		m.vp.YOffset = m.cursor - m.vp.Height + 1
+	row := m.cursor + len(m.leading)
+	if row < m.vp.YOffset {
+		m.vp.YOffset = row
+	} else if row >= m.vp.YOffset+m.vp.Height {
+		m.vp.YOffset = row - m.vp.Height + 1
 	}
 	if m.vp.YOffset < 0 {
 		m.vp.YOffset = 0
@@ -311,7 +367,14 @@ func (m *ListModel) render() {
 	} else if m.matchPos >= 0 && m.matchPos < len(m.matches) {
 		activeMatch = m.matches[m.matchPos]
 	}
-	lines := make([]string, len(m.commits))
+	lines := make([]string, len(m.leading)+len(m.commits))
+	for i, e := range m.leading {
+		selected := i-len(m.leading) == m.cursor
+		// A synthetic row can never be a search match (matches come from
+		// git log queries over real commits only), so it's dimmed whenever
+		// a search is active — the correct behavior, not a compromise.
+		lines[i] = renderWorktreeRow(e, m.vp.Width, selected, term != "")
+	}
 	mi := 0 // walks m.matches (ascending) alongside i, since both are sorted
 	for i, c := range m.commits {
 		for mi < len(m.matches) && m.matches[mi] < i {
@@ -319,7 +382,7 @@ func (m *ListModel) render() {
 		}
 		isMatch := mi < len(m.matches) && m.matches[mi] == i
 		dimmed := term != "" && !isMatch
-		lines[i] = renderCommitRow(c, m.vp.Width, i == m.cursor, dimmed, term, i == activeMatch)
+		lines[len(m.leading)+i] = renderCommitRow(c, m.vp.Width, i == m.cursor, dimmed, term, i == activeMatch)
 	}
 	m.vp.SetContent(strings.Join(lines, "\n"))
 }

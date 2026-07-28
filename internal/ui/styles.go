@@ -62,6 +62,13 @@ var (
 			Foreground(lipgloss.Color("252")).
 			Padding(0, 1)
 
+	// entryTitleStyle is the "Staged changes"/"Working tree" title in a
+	// synthetic leading row (worktreerow.go), bold so it stands out the way
+	// a commit's subject doesn't need to (a real row already has color-coded
+	// sha/date/author fields drawing the eye; a synthetic row has none of
+	// those, so the title carries that job instead).
+	entryTitleStyle = lipgloss.NewStyle().Bold(true)
+
 	// dimStyle uses the terminal-native Faint attribute rather than a fixed
 	// color (see the dateStyle/shaStyle/authorStyle comment above) so a
 	// dimmed row still respects the user's own palette/contrast instead of

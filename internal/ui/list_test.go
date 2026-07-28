@@ -70,3 +70,137 @@ func TestListModelScrollsToKeepCursorVisible(t *testing.T) {
 		t.Fatalf("cursor %d not visible with YOffset=%d height=%d", m.cursor, m.vp.YOffset, m.vp.Height)
 	}
 }
+
+func fixtureLeadingEntries() []git.WorktreeEntry {
+	return []git.WorktreeEntry{
+		{Kind: git.EntryWorktree, Files: []git.File{{Path: "a.txt", Additions: 1}}},
+		{Kind: git.EntryStaged, Files: []git.File{{Path: "b.txt", Additions: 2}}},
+	}
+}
+
+// TestListModelCursorMovesOntoLeadingRowsAndClamps pins down the
+// negative-cursor scheme: moving up from commits[0] steps onto the
+// synthetic leading rows (staged, then working tree, matching display
+// order), Selected() reports false there while SelectedEntry() reports the
+// entry, and the cursor clamps at the topmost leading row rather than going
+// negative indefinitely.
+func TestListModelCursorMovesOntoLeadingRowsAndClamps(t *testing.T) {
+	m := NewListModel(fixtureCommits(3))
+	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetSize(80, 10)
+
+	if c, ok := m.Selected(); !ok || c.Hash != "a" {
+		t.Fatalf("initial selection = %+v ok=%v, want hash a", c, ok)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if _, ok := m.Selected(); ok {
+		t.Fatal("Selected() = true while cursor is on a leading row, want false")
+	}
+	if e, ok := m.SelectedEntry(); !ok || e.Kind != git.EntryStaged {
+		t.Fatalf("after 1 up: entry = %+v ok=%v, want EntryStaged", e, ok)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if e, ok := m.SelectedEntry(); !ok || e.Kind != git.EntryWorktree {
+		t.Fatalf("after 2 up: entry = %+v ok=%v, want EntryWorktree", e, ok)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyUp}) // one more: should clamp, not go further negative
+	if e, ok := m.SelectedEntry(); !ok || e.Kind != git.EntryWorktree {
+		t.Fatalf("after clamping: entry = %+v ok=%v, want still EntryWorktree", e, ok)
+	}
+}
+
+// TestListModelTopKeyLandsOnTopmostLeadingRow pins down that 'g' (Top) goes
+// all the way to the topmost synthetic row when leading rows are present,
+// not just to commits[0].
+func TestListModelTopKeyLandsOnTopmostLeadingRow(t *testing.T) {
+	m := NewListModel(fixtureCommits(5))
+	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetSize(80, 3)
+
+	for i := 0; i < 3; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+
+	e, ok := m.SelectedEntry()
+	if !ok || e.Kind != git.EntryWorktree {
+		t.Fatalf("after 'g': entry = %+v ok=%v, want topmost EntryWorktree", e, ok)
+	}
+}
+
+// TestSetLeadingEntriesDoesNotMoveCursorOffCommit pins down that installing
+// leading rows after the cursor is already on a commit leaves that
+// selection untouched — the cursor stays in commit-index space regardless
+// of how many synthetic rows precede it.
+func TestSetLeadingEntriesDoesNotMoveCursorOffCommit(t *testing.T) {
+	m := NewListModel(fixtureCommits(5))
+	m.SetSize(80, 3)
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	m.SetLeadingEntries(fixtureLeadingEntries())
+
+	c, ok := m.Selected()
+	if !ok || c.Hash != "c" {
+		t.Fatalf("after SetLeadingEntries: selection = %+v ok=%v, want hash c (unmoved)", c, ok)
+	}
+}
+
+// TestListModelSearchIndicesUnaffectedByLeadingRows is the key regression
+// check for the negative-cursor design: with leading rows present, search
+// match positions are still real commit indices (never offset by
+// len(leading)), so Search/NextMatch land the cursor on the correct commit.
+func TestListModelSearchIndicesUnaffectedByLeadingRows(t *testing.T) {
+	m := NewListModel(fixtureCommits(5))
+	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetSize(80, 3)
+	m.SetTotalCount(5)
+
+	needsLoad, target := m.Search([]int{2, 4})
+	if needsLoad {
+		t.Fatal("Search: needsLoad = true, want false (already loaded)")
+	}
+	if target != 2 {
+		t.Fatalf("Search: target = %d, want 2", target)
+	}
+	if c, ok := m.Selected(); !ok || c.Hash != "c" {
+		t.Fatalf("after Search: selection = %+v ok=%v, want hash c (commit index 2)", c, ok)
+	}
+
+	needsLoad, target = m.NextMatch()
+	if needsLoad || target != 4 {
+		t.Fatalf("NextMatch: needsLoad=%v target=%d, want false,4", needsLoad, target)
+	}
+	if c, ok := m.Selected(); !ok || c.Hash != "e" {
+		t.Fatalf("after NextMatch: selection = %+v ok=%v, want hash e (commit index 4)", c, ok)
+	}
+}
+
+// TestListModelLoadMoreSkipLimitUnaffectedByLeadingRows is the other key
+// regression check: maybeLoadMore's fetchRequest is still keyed to
+// len(commits), never shifted by len(leading).
+func TestListModelLoadMoreSkipLimitUnaffectedByLeadingRows(t *testing.T) {
+	m := NewListModel(fixtureCommits(30))
+	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetTotalCount(100)
+	m.SetSize(80, 5)
+
+	// loadingMore latches true on the first triggering press (see
+	// maybeLoadMore), so only the first press that crosses the lookahead
+	// threshold actually returns a fetch request — later presses in the
+	// same loop would see loadingMore already true and report false.
+	var req fetchRequest
+	var ok bool
+	for i := 0; i < 15 && !ok; i++ {
+		req, ok = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if !ok {
+		t.Fatal("expected a fetch request once the cursor is within lookahead of the loaded end")
+	}
+	if req.skip != 30 || req.limit != batchSize {
+		t.Fatalf("fetchRequest = %+v, want skip=30 limit=%d (unaffected by leading rows)", req, batchSize)
+	}
+}

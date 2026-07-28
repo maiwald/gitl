@@ -69,19 +69,40 @@ func renderStatLine(f git.File, nameWidth, countWidth int, plainCounts, styledCo
 // its count is zero, mirroring how statTotalsLine drops a zero-valued
 // clause. The two are computed together so they can't drift out of sync.
 func formatCounts(additions, deletions int) (plain, styled string) {
+	return formatCountsStyled(additions, deletions, diffAddStyle, diffDeleteStyle)
+}
+
+// formatCountsStyled is formatCounts generalized over the add/delete
+// styles used for the styled half, so a selected/dimmed row elsewhere (e.g.
+// renderWorktreeRow) can swap in its own per-state styles the same way
+// every other per-field style on such a row does, rather than always using
+// the plain diffAddStyle/diffDeleteStyle colors.
+func formatCountsStyled(additions, deletions int, addStyle, delStyle lipgloss.Style) (plain, styled string) {
 	var plainParts, styledParts []string
 	if additions > 0 {
 		plainParts = append(plainParts, fmt.Sprintf("+%d", additions))
-		styledParts = append(styledParts, diffAddStyle.Render(fmt.Sprintf("+%d", additions)))
+		styledParts = append(styledParts, addStyle.Render(fmt.Sprintf("+%d", additions)))
 	}
 	if deletions > 0 {
 		plainParts = append(plainParts, fmt.Sprintf("-%d", deletions))
-		styledParts = append(styledParts, diffDeleteStyle.Render(fmt.Sprintf("-%d", deletions)))
+		styledParts = append(styledParts, delStyle.Render(fmt.Sprintf("-%d", deletions)))
 	}
 	if len(plainParts) == 0 {
 		return "0", "0"
 	}
 	return strings.Join(plainParts, " "), strings.Join(styledParts, " ")
+}
+
+// diffTotals sums additions/deletions across files — used by
+// renderWorktreeRow's own +A -D summary (statLinesFor accumulates its
+// per-file totals inline, alongside the width computation its own loop
+// already does, so it doesn't go through this).
+func diffTotals(files []git.File) (additions, deletions int) {
+	for _, f := range files {
+		additions += f.Additions
+		deletions += f.Deletions
+	}
+	return additions, deletions
 }
 
 // statTotalsLine mirrors git's own "N files changed, X insertions(+), Y
