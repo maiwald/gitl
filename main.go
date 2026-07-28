@@ -23,8 +23,22 @@ func main() {
 	staged := flag.Bool("staged", false, "open the staged changes (index vs HEAD) directly; q exits")
 	flag.Parse()
 
-	if *n > 0 && *staged {
-		fmt.Fprintln(os.Stderr, "error: -n cannot be combined with --staged")
+	args := flag.Args()
+	if len(args) > 1 {
+		fmt.Fprintln(os.Stderr, "error: expected at most one revision argument")
+		os.Exit(2)
+	}
+	var rev string
+	if len(args) == 1 {
+		rev = args[0]
+	}
+
+	if *staged && rev != "" {
+		fmt.Fprintln(os.Stderr, "error: --staged and a revision argument are mutually exclusive")
+		os.Exit(2)
+	}
+	if *n > 0 && (*staged || rev != "") {
+		fmt.Fprintln(os.Stderr, "error: -n cannot be combined with --staged or a revision argument")
 		os.Exit(2)
 	}
 
@@ -48,7 +62,7 @@ func main() {
 		}
 	}
 
-	p := tea.NewProgram(ui.NewModel(ui.StartTarget{Staged: *staged}), tea.WithAltScreen())
+	p := tea.NewProgram(ui.NewModel(ui.StartTarget{Rev: rev, Staged: *staged}), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
