@@ -262,6 +262,16 @@ type baseSpan struct {
 func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int, spans map[int][]baseSpan) {
 	spans = make(map[int][]baseSpan)
 
+	// A pseudo entry (working tree/staged) has no commit metadata to show —
+	// just a title and a dim description — and nothing eligible for message
+	// search, hence authorLine = -1 (see FindMessageMatches's guard).
+	if d.IsPseudo() {
+		desc := entryDescription(d.Kind)
+		lines = append(lines, entryTitle(d.Kind), desc)
+		spans[1] = []baseSpan{{start: 0, end: len(desc), style: dimStyle}}
+		return lines, -1, len(lines), spans
+	}
+
 	const commitPrefix = "Commit: "
 	lines = append(lines, commitPrefix+d.Hash)
 	spans[0] = []baseSpan{{start: len(commitPrefix), end: len(commitPrefix) + len(d.Hash), style: shaStyle}}
@@ -407,7 +417,7 @@ func FindMessageMatches(lines []string, authorLine, bodyStart int, term string) 
 		return nil
 	}
 	var matches []MessageMatch
-	if authorLine < len(lines) {
+	if authorLine >= 0 && authorLine < len(lines) {
 		matches = append(matches, findMessageLineMatches(lines[authorLine], term, authorLine)...)
 	}
 	for li := bodyStart; li < len(lines); li++ {
@@ -573,6 +583,12 @@ func (m DetailModel) MatchPosition() (pos, total int) {
 }
 
 func noDiffNotice(d *git.CommitDetail) string {
+	switch d.Kind {
+	case git.EntryStaged:
+		return binaryNoticeStyle.Render("No staged changes.")
+	case git.EntryWorktree:
+		return binaryNoticeStyle.Render("No uncommitted changes.")
+	}
 	if d.IsMerge() {
 		return binaryNoticeStyle.Render("Merge commit: diff not shown (viewing merge diffs isn't supported yet).")
 	}
@@ -613,6 +629,10 @@ func (m DetailModel) renderStickyHeader() string {
 	case sectionKindFile:
 		return renderFileHeader(m.detail.Files[s.fileIndex], m.width)
 	default:
-		return renderClipped(fileHeaderStyle, "Commit", m.width)
+		title := "Commit"
+		if m.detail.IsPseudo() {
+			title = entrySectionTitle(m.detail.Kind)
+		}
+		return renderClipped(fileHeaderStyle, title, m.width)
 	}
 }

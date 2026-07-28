@@ -663,3 +663,78 @@ func TestDetailModelEmptyCommitShowsNoChangesNotice(t *testing.T) {
 		t.Errorf("View() = %q, want it to say there are no changes", m.View())
 	}
 }
+
+// fixturePseudoDetail builds a CommitDetail for a synthetic working-tree/
+// staged entry the way git.EntryDetail does: Kind set, Commit/Body left
+// zero, only Files populated.
+func fixturePseudoDetail(kind git.EntryKind, files []git.File) *git.CommitDetail {
+	return &git.CommitDetail{Kind: kind, Files: files}
+}
+
+// TestDetailModelPseudoEntryHeaderHasNoCommitMetadata pins down that a
+// pseudo entry's header shows only its title and description — no
+// Commit:/Author:/Date: lines, since there is no commit metadata to show —
+// and that its sticky header (scrolled to the top) shows the entry title
+// instead of the literal "Commit".
+func TestDetailModelPseudoEntryHeaderHasNoCommitMetadata(t *testing.T) {
+	m := NewDetailModel(fixturePseudoDetail(git.EntryWorktree, []git.File{
+		{Path: "a.txt", Status: git.StatusModified, Additions: 1},
+	}))
+	m.SetSize(80, 24)
+
+	view := m.View()
+	if !strings.Contains(view, "Working tree") {
+		t.Fatalf("View() = %q, want it to contain the entry title \"Working tree\"", view)
+	}
+	for _, unwanted := range []string{"Commit:", "Author:", "Date:"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("View() = %q, must not contain %q for a pseudo entry", view, unwanted)
+		}
+	}
+}
+
+// TestDetailModelPseudoEntryNoDiffNoticeIsKindSpecific pins down that an
+// empty pseudo entry (nothing staged / nothing uncommitted) shows a message
+// specific to its kind, distinct from a real commit's "No changes" notice.
+func TestDetailModelPseudoEntryNoDiffNoticeIsKindSpecific(t *testing.T) {
+	staged := NewDetailModel(fixturePseudoDetail(git.EntryStaged, nil))
+	staged.SetSize(80, 24)
+	if !strings.Contains(staged.View(), "No staged changes") {
+		t.Errorf("View() = %q, want \"No staged changes\"", staged.View())
+	}
+
+	worktree := NewDetailModel(fixturePseudoDetail(git.EntryWorktree, nil))
+	worktree.SetSize(80, 24)
+	if !strings.Contains(worktree.View(), "No uncommitted changes") {
+		t.Errorf("View() = %q, want \"No uncommitted changes\"", worktree.View())
+	}
+}
+
+// TestDetailModelPseudoEntryMessageSearchFindsNothingButDiffSearchWorks pins
+// down FindMessageMatches' authorLine=-1 guard (a pseudo entry has no
+// author/message region to search) alongside diff search, which still works
+// normally since it only depends on Files.
+func TestDetailModelPseudoEntryMessageSearchFindsNothingButDiffSearchWorks(t *testing.T) {
+	m := NewDetailModel(fixturePseudoDetail(git.EntryStaged, []git.File{
+		{
+			Path:   "a.txt",
+			Status: git.StatusModified,
+			Hunks: []git.Hunk{{
+				Header: "@@ -1 +1 @@",
+				Lines:  []git.DiffLine{{Op: git.OpAdd, Text: "needle here"}},
+			}},
+		},
+	}))
+	m.SetSize(80, 24)
+
+	// A term appearing in the title ("Staged changes" contains "Staged")
+	// must not be found via message search, since a pseudo entry's title
+	// isn't a searchable message region.
+	if total := m.RunSearch("Staged"); total != 0 {
+		t.Fatalf(`RunSearch("Staged") = %d, want 0 (the title isn't a searchable message region)`, total)
+	}
+
+	if total := m.RunSearch("needle"); total != 1 {
+		t.Fatalf(`RunSearch("needle") = %d, want 1 (diff search still works)`, total)
+	}
+}
