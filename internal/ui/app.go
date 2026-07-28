@@ -28,11 +28,12 @@ type Model struct {
 	width, height int
 	quitting      bool
 
-	repo   *git.Repo
-	active view
-	list   ListModel
-	detail DetailModel
-	err    error
+	repo    *git.Repo
+	active  view
+	list    ListModel
+	detail  DetailModel
+	err     error
+	entries []git.WorktreeEntry // canonical copy, mirrored into list.leading as it and the list each become available
 
 	searchPromptOpen bool
 	searchInput      textinput.Model
@@ -67,11 +68,19 @@ func NewModel() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return loadInitialCommits
+	return openRepoCmd()
+}
+
+// repoOpenedMsg reports the outcome of opening the repo and checking
+// whether it has any commits — the one thing every startup path needs
+// before it can dispatch its own next commands (see Update's handling of
+// it).
+type repoOpenedMsg struct {
+	repo       *git.Repo
+	hasCommits bool
 }
 
 type commitsLoadedMsg struct {
-	repo       *git.Repo
 	commits    []git.Commit
 	totalCount int
 }
@@ -84,30 +93,55 @@ type commitDetailLoadedMsg struct {
 	detail *git.CommitDetail
 }
 
+// worktreeEntriesLoadedMsg carries the synthetic working-tree/staged rows.
+// It can arrive before or after commitsLoadedMsg (they're independent
+// concurrent fetches), so it's never applied only to whatever ListModel
+// exists at the moment it arrives — see Update's handling of both messages,
+// which each re-mirror Model.entries into the list.
+type worktreeEntriesLoadedMsg struct {
+	entries []git.WorktreeEntry
+}
+
 type errMsg struct{ err error }
 
-func loadInitialCommits() tea.Msg {
-	ctx := context.Background()
-	repo, err := git.OpenRepo(ctx, ".")
-	if err != nil {
-		return errMsg{err}
+func openRepoCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		repo, err := git.OpenRepo(ctx, ".")
+		if err != nil {
+			return errMsg{err}
+		}
+		hasCommits, err := repo.HasCommits(ctx)
+		if err != nil {
+			return errMsg{err}
+		}
+		return repoOpenedMsg{repo: repo, hasCommits: hasCommits}
 	}
-	hasCommits, err := repo.HasCommits(ctx)
-	if err != nil {
-		return errMsg{err}
+}
+
+func loadListCmd(repo *git.Repo) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		commits, err := repo.FetchLogBatch(ctx, 0, batchSize)
+		if err != nil {
+			return errMsg{err}
+		}
+		total, err := repo.CommitCount(ctx)
+		if err != nil {
+			return errMsg{err}
+		}
+		return commitsLoadedMsg{commits: commits, totalCount: total}
 	}
-	if !hasCommits {
-		return errMsg{errors.New("this repository has no commits yet")}
+}
+
+func loadWorktreeEntriesCmd(repo *git.Repo) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := repo.FetchWorktreeEntries(context.Background())
+		if err != nil {
+			return errMsg{err}
+		}
+		return worktreeEntriesLoadedMsg{entries: entries}
 	}
-	commits, err := repo.FetchLogBatch(ctx, 0, batchSize)
-	if err != nil {
-		return errMsg{err}
-	}
-	total, err := repo.CommitCount(ctx)
-	if err != nil {
-		return errMsg{err}
-	}
-	return commitsLoadedMsg{repo: repo, commits: commits, totalCount: total}
 }
 
 func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
@@ -118,6 +152,22 @@ func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 		}
 		return moreCommitsLoadedMsg{commits: commits}
 	}
+}
+
+// openDetail installs detail as the active view, mirroring the shared
+// search state into it so an already-active search keeps working across
+// commits/entries (a freshly constructed DetailModel otherwise defaults to
+// searchDismissed=false, which would make an already-dismissed search
+// suddenly reappear just because a new commit/entry was opened).
+func (m Model) openDetail(detail *git.CommitDetail) Model {
+	m.detail = NewDetailModel(detail)
+	m.detail.SetSize(m.width, m.contentHeight())
+	m.active = viewDetail
+	if m.searchTerm != "" {
+		m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
+		m.detail.RunSearch(m.searchTerm)
+	}
+	return m
 }
 
 func fetchDetailCmd(repo *git.Repo, hash string) tea.Cmd {
@@ -171,28 +221,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchInput.Width = m.width - 2
 		}
 		return m, nil
-	case commitsLoadedMsg:
+	case repoOpenedMsg:
 		m.repo = msg.repo
+		if !msg.hasCommits {
+			m.err = errors.New("this repository has no commits yet")
+			return m, nil
+		}
+		return m, tea.Batch(loadListCmd(msg.repo), loadWorktreeEntriesCmd(msg.repo))
+	case commitsLoadedMsg:
 		m.list = NewListModel(msg.commits)
 		m.list.SetTotalCount(msg.totalCount)
 		m.list.SetSize(m.width, m.contentHeight())
+		m.list.SetLeadingEntries(m.entries)
 		return m, nil
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
 		return m, nil
-	case commitDetailLoadedMsg:
-		m.detail = NewDetailModel(msg.detail)
-		m.detail.SetSize(m.width, m.contentHeight())
-		m.active = viewDetail
-		if m.searchTerm != "" {
-			// A freshly constructed DetailModel defaults to
-			// searchDismissed=false; mirror the real shared state before
-			// searching so an already-dismissed search doesn't suddenly
-			// reappear just because a new commit was opened.
-			m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
-			m.detail.RunSearch(m.searchTerm)
-		}
+	case worktreeEntriesLoadedMsg:
+		m.entries = msg.entries
+		m.list.SetLeadingEntries(m.entries)
 		return m, nil
+	case commitDetailLoadedMsg:
+		return m.openDetail(msg.detail), nil
 	case searchHashesLoadedMsg:
 		if m.pendingSearch != nil && m.pendingSearch.term == msg.term {
 			m.pendingSearch.matchSet = msg.hashes
@@ -299,14 +349,20 @@ func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleListViewKey routes a key press while the list view is active: Back
 // quits (there's nowhere "back" to go from the list), Enter opens the
-// selected commit, everything else goes to the list's own cursor/scroll
-// handling.
+// selected commit or synthetic entry, everything else goes to the list's
+// own cursor/scroll handling.
 func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, DefaultKeyMap.Back) {
 		m.quitting = true
 		return m, tea.Quit
 	}
 	if key.Matches(msg, DefaultKeyMap.Enter) {
+		// A synthetic entry's files are already loaded (from startup), so
+		// opening one needs no fetch — unlike a real commit, which is only
+		// ever loaded on demand.
+		if entry, ok := m.list.SelectedEntry(); ok {
+			return m.openDetail(git.EntryDetail(entry)), nil
+		}
 		if commit, ok := m.list.Selected(); ok {
 			return m, fetchDetailCmd(m.repo, commit.Hash)
 		}
