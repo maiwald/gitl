@@ -22,6 +22,9 @@ Module path: `github.com/maiwald/gitl`. Requires Go 1.25+ and `git` on
 ```
 main.go                    entry point: builds and runs the root tea.Program,
                            parses -n / --staged / a positional revision arg
+internal/concurrent/       RunConcurrently: generic "run these fns in parallel,
+                           return the first error in call order" helper, with no
+                           git- or TUI-specific logic, shared by both packages below
 internal/git/              data access layer, no TUI dependencies
   repo.go                  Repo, OpenRepo, HasCommits
   exec.go                  runGit: shells out, wraps stderr into errors
@@ -53,7 +56,12 @@ internal/ui/               Bubble Tea models, no direct git shelling out
 
 `internal/git` and `internal/ui` are cleanly separated: the UI layer only
 ever calls exported `git` package functions and never shells out directly,
-and `internal/git` has no knowledge of Bubble Tea.
+and `internal/git` has no knowledge of Bubble Tea. `internal/concurrent`
+exists so a fully generic helper isn't homed in one of those two packages
+just because it happened to be needed there first — if it has no git- or
+TUI-specific logic, it belongs there rather than in `internal/git` or
+`internal/ui`, and rather than a general-purpose `util`-style package that
+would invite unrelated helpers to accumulate in it over time.
 
 ## Development workflow
 

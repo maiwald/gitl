@@ -1,6 +1,10 @@
 package git
 
-import "context"
+import (
+	"context"
+
+	"github.com/maiwald/gitl/internal/concurrent"
+)
 
 // SearchCommitHashes returns the set of commit hashes reachable from HEAD
 // whose author name or full commit message (subject and body) contains
@@ -17,7 +21,7 @@ func (r *Repo) SearchCommitHashes(ctx context.Context, term string) (map[string]
 	}
 
 	var authorHashes, messageHashes []string
-	err := runConcurrently(
+	err := concurrent.RunConcurrently(
 		func() (err error) { authorHashes, err = r.logHashes(ctx, "--author="+term); return },
 		func() (err error) { messageHashes, err = r.logHashes(ctx, "--grep="+term); return },
 	)

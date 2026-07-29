@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/maiwald/gitl/internal/concurrent"
 )
 
 // EntryKind distinguishes a real commit from the two synthetic entries gitl
@@ -55,7 +57,7 @@ func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind) ([]File, 
 // they run concurrently rather than one after another.
 func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error) {
 	var worktreeFiles, stagedFiles []File
-	err := runConcurrently(
+	err := concurrent.RunConcurrently(
 		func() (err error) { worktreeFiles, err = r.worktreeDiff(ctx); return },
 		func() (err error) { stagedFiles, err = r.stagedDiff(ctx); return },
 	)
@@ -94,7 +96,7 @@ func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
 // independent git invocations, so they run concurrently.
 func (r *Repo) worktreeDiff(ctx context.Context) ([]File, error) {
 	var files, untracked []File
-	err := runConcurrently(
+	err := concurrent.RunConcurrently(
 		func() (err error) { files, err = r.diffFiles(ctx); return },
 		func() (err error) { untracked, err = r.untrackedFiles(ctx); return },
 	)
