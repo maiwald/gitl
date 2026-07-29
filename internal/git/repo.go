@@ -2,9 +2,7 @@ package git
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os/exec"
 )
 
 // Repo represents a git working tree we can query.
@@ -30,8 +28,7 @@ func OpenRepo(ctx context.Context, path string) (*Repo, error) {
 func (r *Repo) HasCommits(ctx context.Context) (bool, error) {
 	_, err := runGit(ctx, r.Path, "rev-parse", "--verify", "--quiet", "HEAD")
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		if isExitCode(err, 1) {
 			return false, nil
 		}
 		return false, err

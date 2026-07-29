@@ -42,11 +42,20 @@ func runGitDiffExit(ctx context.Context, dir string, args ...string) (out []byte
 	if err == nil {
 		return out, false, nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+	if isExitCode(err, 1) {
 		return out, true, nil
 	}
 	return nil, false, err
+}
+
+// isExitCode reports whether err is (or wraps) a git process exiting with
+// exactly code — the "exit status is itself the answer" pattern several
+// commands in this package rely on: `git rev-parse --verify --quiet` (1 =
+// no such ref), `git diff --quiet` (1 = differences found), `git diff
+// --no-index` (same, but stdout still carries content).
+func isExitCode(err error, code int) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == code
 }
 
 // runGitTrimmed runs git like runGit, but trims the trailing whitespace
