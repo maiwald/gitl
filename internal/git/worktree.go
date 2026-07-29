@@ -73,31 +73,6 @@ func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error
 	return entries, nil
 }
 
-// runConcurrently runs each fn in its own goroutine and waits for all of
-// them to finish, returning the first non-nil error in call order (not
-// completion order). Used to overlap independent git subprocess calls
-// (e.g. the worktree diff and the staged diff, or the tracked diff and the
-// untracked-file scan) instead of running them one after another — each is
-// its own subprocess, so there's nothing to serialize them for.
-func runConcurrently(fns ...func() error) error {
-	errs := make([]error, len(fns))
-	var wg sync.WaitGroup
-	wg.Add(len(fns))
-	for i, fn := range fns {
-		go func(i int, fn func() error) {
-			defer wg.Done()
-			errs[i] = fn()
-		}(i, fn)
-	}
-	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // EntryDetail wraps a synthetic entry's files as a CommitDetail so the
 // detail view renders it with exactly the same machinery a real commit
 // uses; the commit metadata fields are deliberately left zero.

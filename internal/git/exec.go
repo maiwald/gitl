@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // runGit runs git with the given arguments in dir and returns stdout. On
@@ -46,6 +47,32 @@ func runGitDiffExit(ctx context.Context, dir string, args ...string) (out []byte
 		return out, true, nil
 	}
 	return nil, false, err
+}
+
+// runConcurrently runs each fn in its own goroutine and waits for all of
+// them to finish, returning the first non-nil error in call order (not
+// completion order). Used to overlap independent git subprocess calls —
+// the worktree diff and the staged diff, the tracked diff and the
+// untracked-file scan, or the author and message search queries — instead
+// of running them one after another, since each is its own subprocess with
+// nothing to serialize it against the others.
+func runConcurrently(fns ...func() error) error {
+	errs := make([]error, len(fns))
+	var wg sync.WaitGroup
+	wg.Add(len(fns))
+	for i, fn := range fns {
+		go func(i int, fn func() error) {
+			defer wg.Done()
+			errs[i] = fn()
+		}(i, fn)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // isExitCode reports whether err is (or wraps) a git process exiting with

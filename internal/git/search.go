@@ -8,23 +8,41 @@ import "context"
 // Author and message are queried separately and unioned (OR semantics):
 // git log's own --author combined with --grep in one invocation applies
 // AND semantics, which isn't what we want here. Returns an empty, non-nil
-// set without invoking git when term is empty.
+// set without invoking git when term is empty. The two queries are
+// independent subprocesses, so they run concurrently rather than one
+// after another.
 func (r *Repo) SearchCommitHashes(ctx context.Context, term string) (map[string]bool, error) {
 	if term == "" {
 		return map[string]bool{}, nil
 	}
 
-	hashes := map[string]bool{}
-	for _, matchArg := range []string{"--author=" + term, "--grep=" + term} {
-		out, err := runGit(ctx, r.Path, "log", matchArg, "-F", "-i", "--format=%H")
-		if err != nil {
-			return nil, err
-		}
-		for _, h := range splitLines(out) {
-			hashes[h] = true
-		}
+	var authorHashes, messageHashes []string
+	err := runConcurrently(
+		func() (err error) { authorHashes, err = r.logHashes(ctx, "--author="+term); return },
+		func() (err error) { messageHashes, err = r.logHashes(ctx, "--grep="+term); return },
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	hashes := make(map[string]bool, len(authorHashes)+len(messageHashes))
+	for _, h := range authorHashes {
+		hashes[h] = true
+	}
+	for _, h := range messageHashes {
+		hashes[h] = true
 	}
 	return hashes, nil
+}
+
+// logHashes runs `git log <matchArg> -F -i --format=%H`, returning the
+// hashes of every matching commit.
+func (r *Repo) logHashes(ctx context.Context, matchArg string) ([]string, error) {
+	out, err := runGit(ctx, r.Path, "log", matchArg, "-F", "-i", "--format=%H")
+	if err != nil {
+		return nil, err
+	}
+	return splitLines(out), nil
 }
 
 // AllCommitHashes returns every commit hash reachable from HEAD, in the
