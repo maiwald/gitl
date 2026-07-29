@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -172,15 +173,36 @@ func openRepoCmd() tea.Cmd {
 	}, func(m repoOpenedMsg) tea.Msg { return m })
 }
 
+// loadListCmd fetches the first batch of commits and the total reachable
+// count. The two are independent reads on an already-open repo, so they
+// run concurrently rather than one after another; this is a small inline
+// two-goroutine dispatch rather than a call into internal/git's
+// runConcurrently, since exporting that purely for this one UI-side call
+// site isn't worth the added public API. Error precedence (commits before
+// count) mirrors runConcurrently's "first non-nil error in call order", so
+// which error wins stays deterministic.
 func loadListCmd(repo *git.Repo) tea.Cmd {
 	return runCmd(func(ctx context.Context) (commitsLoadedMsg, error) {
-		commits, err := repo.FetchLogBatch(ctx, 0, batchSize)
-		if err != nil {
-			return commitsLoadedMsg{}, err
+		var commits []git.Commit
+		var total int
+		var commitsErr, countErr error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			commits, commitsErr = repo.FetchLogBatch(ctx, 0, batchSize)
+		}()
+		go func() {
+			defer wg.Done()
+			total, countErr = repo.CommitCount(ctx)
+		}()
+		wg.Wait()
+
+		if commitsErr != nil {
+			return commitsLoadedMsg{}, commitsErr
 		}
-		total, err := repo.CommitCount(ctx)
-		if err != nil {
-			return commitsLoadedMsg{}, err
+		if countErr != nil {
+			return commitsLoadedMsg{}, countErr
 		}
 		return commitsLoadedMsg{commits: commits, totalCount: total}, nil
 	}, func(m commitsLoadedMsg) tea.Msg { return m })
