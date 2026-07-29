@@ -1,7 +1,6 @@
 package git
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -56,7 +55,7 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetai
 		if len(detail.Parents) == 1 {
 			from = detail.Parents[0]
 		}
-		files, err := r.fetchDiff(ctx, from, detail.Hash)
+		files, err := r.diffFiles(ctx, from, detail.Hash)
 		if err != nil {
 			return nil, err
 		}
@@ -64,14 +63,6 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetai
 	}
 
 	return detail, nil
-}
-
-func (r *Repo) fetchDiff(ctx context.Context, from, to string) ([]File, error) {
-	out, err := runGit(ctx, r.Path, "diff", "--no-color", "-U3", from, to)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUnifiedDiff(bytes.NewReader(out))
 }
 
 func parseCommitDetail(out []byte) (*CommitDetail, error) {

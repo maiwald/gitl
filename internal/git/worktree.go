@@ -109,11 +109,7 @@ func EntryDetail(e WorktreeEntry) *CommitDetail {
 // yet) git already treats this as a diff against the empty tree, so no
 // explicit fallback is needed.
 func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
-	out, err := runGit(ctx, r.Path, "diff", "--cached", "--no-color", "-U3")
-	if err != nil {
-		return nil, err
-	}
-	return ParseUnifiedDiff(bytes.NewReader(out))
+	return r.diffFiles(ctx, "--cached")
 }
 
 // worktreeDiff diffs tracked files against the index, then appends one
@@ -124,14 +120,7 @@ func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
 func (r *Repo) worktreeDiff(ctx context.Context) ([]File, error) {
 	var files, untracked []File
 	err := runConcurrently(
-		func() error {
-			out, err := runGit(ctx, r.Path, "diff", "--no-color", "-U3")
-			if err != nil {
-				return err
-			}
-			files, err = ParseUnifiedDiff(bytes.NewReader(out))
-			return err
-		},
+		func() (err error) { files, err = r.diffFiles(ctx); return },
 		func() (err error) { untracked, err = r.untrackedFiles(ctx); return },
 	)
 	if err != nil {
