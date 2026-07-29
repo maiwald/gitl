@@ -9,6 +9,11 @@ import "github.com/charmbracelet/lipgloss"
 // those fields on every other row.
 const cursorRowBg = lipgloss.Color("238")
 
+// errFg is the foreground used for error text, shared by errStyle (the
+// full-screen fatal error) and statusBarErrStyle (a non-fatal error shown
+// in the status bar), so both read as the same kind of message.
+const errFg = lipgloss.Color("196")
+
 var (
 	normalRowStyle = lipgloss.NewStyle()
 
@@ -34,7 +39,7 @@ var (
 			Bold(true)
 
 	errStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
+			Foreground(errFg)
 
 	fileHeaderStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -61,6 +66,15 @@ var (
 			Background(lipgloss.Color("235")).
 			Foreground(lipgloss.Color("252")).
 			Padding(0, 1)
+
+	// statusBarErrStyle is a whole-bar style swap (background plus errFg),
+	// used for a non-fatal error, rather than nesting errStyle inside the
+	// bar's normal content: a nested Render ends with its own ANSI reset,
+	// which would cancel the bar's background for everything rendered
+	// after it — the same reset hazard rowFieldStyle's doc comment
+	// describes for row fields, resolved the same way (swap the whole
+	// base style rather than layering).
+	statusBarErrStyle = statusBarStyle.Foreground(errFg)
 
 	// entryTitleStyle is the "Staged changes"/"Working tree" title in a
 	// synthetic leading row (worktreerow.go), bold so it stands out the way

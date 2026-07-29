@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -46,12 +47,21 @@ type Model struct {
 	// from the list — leaves this false, since nothing else ever writes it.
 	quitOnBack bool
 
-	repo    *git.Repo
-	active  view
-	list    ListModel
-	detail  DetailModel
-	err     error
-	entries []git.WorktreeEntry // canonical copy, mirrored into list.leading as it and the list each become available
+	repo   *git.Repo
+	active view
+	list   ListModel
+	detail DetailModel
+	// err is a fatal startup failure: there is nothing left to show, so
+	// View() replaces the whole screen with it. Never cleared.
+	err error
+	// lastError is the most recent non-fatal fetch failure — a pagination
+	// batch, the worktree entries, a search query, or a commit detail
+	// opened from the list. Whatever is on screen stays on screen; the
+	// failure shows in the status bar (renderStatusBar's lowest-priority
+	// branch) until the next successful fetch of any kind clears it, since
+	// any success means git is answering again.
+	lastError error
+	entries   []git.WorktreeEntry // canonical copy, mirrored into list.leading as it and the list each become available
 
 	// pendingJump is a CLI-requested list position (`gitl <rev>`) not yet
 	// applied, either because the list doesn't exist yet or because
@@ -139,28 +149,44 @@ type revPositionMsg struct {
 	found bool
 }
 
-type errMsg struct{ err error }
+// errSeverity says how much of the UI a failed fetch invalidates.
+type errSeverity int
+
+const (
+	// nonFatal: whatever is already on screen is still valid and stays;
+	// the failure is reported in the status bar until the next successful
+	// fetch retires it.
+	nonFatal errSeverity = iota
+	// fatal: there is nothing left to show, so the error replaces the
+	// whole screen. Reserved for startup failures.
+	fatal
+)
+
+type errMsg struct {
+	err      error
+	severity errSeverity
+}
 
 // runCmd wraps fetch as a tea.Cmd: on success, toMsg(v) becomes the
-// resulting message; on failure, errMsg{err} does — the shape behind
-// nearly every fetch below. fetchMoreCmd and resolveRevPositionCmd are
-// the two exceptions: fetchMoreCmd needs to identify its own failures
+// resulting message; on failure, errMsg{err, severity} does — the shape
+// behind nearly every fetch below. fetchMoreCmd and resolveRevPositionCmd
+// are the two exceptions: fetchMoreCmd needs to identify its own failures
 // separately from any other errMsg (so a pagination failure can safely
 // clear ListModel.loadingMore without an unrelated error doing the same
 // and risking a duplicate fetch), and resolveRevPositionCmd never
 // produces errMsg at all (see its own doc comment).
-func runCmd[T any](fetch func(context.Context) (T, error), toMsg func(T) tea.Msg) tea.Cmd {
+func runCmd[T any](severity errSeverity, fetch func(context.Context) (T, error), toMsg func(T) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		v, err := fetch(context.Background())
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, severity: severity}
 		}
 		return toMsg(v)
 	}
 }
 
 func openRepoCmd() tea.Cmd {
-	return runCmd(func(ctx context.Context) (repoOpenedMsg, error) {
+	return runCmd(fatal, func(ctx context.Context) (repoOpenedMsg, error) {
 		repo, err := git.OpenRepo(ctx, ".")
 		if err != nil {
 			return repoOpenedMsg{}, err
@@ -180,9 +206,12 @@ func openRepoCmd() tea.Cmd {
 // runConcurrently, since exporting that purely for this one UI-side call
 // site isn't worth the added public API. Error precedence (commits before
 // count) mirrors runConcurrently's "first non-nil error in call order", so
-// which error wins stays deterministic.
-func loadListCmd(repo *git.Repo) tea.Cmd {
-	return runCmd(func(ctx context.Context) (commitsLoadedMsg, error) {
+// which error wins stays deterministic. severity is fatal on the plain
+// startup path (no list, nothing to show) and nonFatal on the `<rev>`-jump
+// path (the detail view is that path's primary payload and can succeed
+// independently of the list).
+func loadListCmd(repo *git.Repo, severity errSeverity) tea.Cmd {
+	return runCmd(severity, func(ctx context.Context) (commitsLoadedMsg, error) {
 		var commits []git.Commit
 		var total int
 		var commitsErr, countErr error
@@ -208,8 +237,11 @@ func loadListCmd(repo *git.Repo) tea.Cmd {
 	}, func(m commitsLoadedMsg) tea.Msg { return m })
 }
 
+// loadWorktreeEntriesCmd's failure is always nonFatal: the rows it
+// produces are always supplementary to the list/detail view, regardless of
+// whether it happens to arrive before or after the list itself.
 func loadWorktreeEntriesCmd(repo *git.Repo) tea.Cmd {
-	return runCmd(func(ctx context.Context) ([]git.WorktreeEntry, error) {
+	return runCmd(nonFatal, func(ctx context.Context) ([]git.WorktreeEntry, error) {
 		return repo.FetchWorktreeEntries(ctx)
 	}, func(entries []git.WorktreeEntry) tea.Msg {
 		return worktreeEntriesLoadedMsg{entries: entries}
@@ -238,13 +270,23 @@ func resolveRevPositionCmd(repo *git.Repo, rev string) tea.Cmd {
 	}
 }
 
-// fetchMoreCmd deliberately doesn't go through runCmd — see runCmd's doc
-// comment for why its failures need to identify themselves separately.
+// moreCommitsFailedMsg reports a failed pagination fetch. It bypasses
+// errMsg/runCmd on purpose: clearing ListModel.loadingMore has to be tied
+// to *this* fetch's own failure, not to any errMsg — an unrelated error
+// (e.g. a failed search) arriving while a pagination fetch is genuinely
+// still in flight must not un-latch it, since that would let a duplicate
+// fetch for the same range through and AppendCommits would append the same
+// commits twice, corrupting every index after that point.
+type moreCommitsFailedMsg struct{ err error }
+
+// fetchMoreCmd deliberately doesn't go through runCmd — see
+// moreCommitsFailedMsg for why its failures need to identify themselves
+// separately.
 func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 	return func() tea.Msg {
 		commits, err := repo.FetchLogBatch(context.Background(), req.skip, req.limit)
 		if err != nil {
-			return errMsg{err}
+			return moreCommitsFailedMsg{err: err}
 		}
 		return moreCommitsLoadedMsg{commits: commits}
 	}
@@ -266,8 +308,12 @@ func (m Model) openDetail(detail *git.CommitDetail) Model {
 	return m
 }
 
-func fetchDetailCmd(repo *git.Repo, hash string) tea.Cmd {
-	return runCmd(func(ctx context.Context) (*git.CommitDetail, error) {
+// fetchDetailCmd's severity depends on the caller: fatal from the `<rev>`-
+// jump startup dispatch (the detail view is that path's whole payload),
+// nonFatal from Enter on a real commit in the list (which stays up if this
+// one fetch fails).
+func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity) tea.Cmd {
+	return runCmd(severity, func(ctx context.Context) (*git.CommitDetail, error) {
 		return repo.FetchCommitDetail(ctx, hash)
 	}, func(d *git.CommitDetail) tea.Msg { return commitDetailLoadedMsg{detail: d} })
 }
@@ -275,9 +321,12 @@ func fetchDetailCmd(repo *git.Repo, hash string) tea.Cmd {
 // fetchEntryDetailCmd fetches a single synthetic entry's diff directly (for
 // a CLI `--staged` startup jump, which has no list to select the row from)
 // and opens it the same way any other detail view opens, via
-// commitDetailLoadedMsg.
+// commitDetailLoadedMsg. severity is hardcoded fatal because its only call
+// site today is that startup path, which has no list to fall back to — a
+// future second caller (e.g. an interactive open of a synthetic row that
+// needed a fetch) would need to revisit this.
 func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind) tea.Cmd {
-	return runCmd(func(ctx context.Context) ([]git.File, error) {
+	return runCmd(fatal, func(ctx context.Context) ([]git.File, error) {
 		return repo.FetchWorktreeEntry(ctx, kind)
 	}, func(files []git.File) tea.Msg {
 		return commitDetailLoadedMsg{detail: git.EntryDetail(git.WorktreeEntry{Kind: kind, Files: files})}
@@ -295,7 +344,7 @@ type allHashesLoadedMsg struct {
 }
 
 func searchHashesCmd(repo *git.Repo, term string) tea.Cmd {
-	return runCmd(func(ctx context.Context) (map[string]bool, error) {
+	return runCmd(nonFatal, func(ctx context.Context) (map[string]bool, error) {
 		return repo.SearchCommitHashes(ctx, term)
 	}, func(hashes map[string]bool) tea.Msg {
 		return searchHashesLoadedMsg{term: term, hashes: hashes}
@@ -303,7 +352,7 @@ func searchHashesCmd(repo *git.Repo, term string) tea.Cmd {
 }
 
 func allHashesCmd(repo *git.Repo, term string) tea.Cmd {
-	return runCmd(func(ctx context.Context) ([]string, error) {
+	return runCmd(nonFatal, func(ctx context.Context) ([]string, error) {
 		return repo.AllCommitHashes(ctx)
 	}, func(hashes []string) tea.Msg {
 		return allHashesLoadedMsg{term: term, hashes: hashes}
@@ -311,6 +360,16 @@ func allHashesCmd(repo *git.Repo, term string) tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Any successful fetch retires a previously-shown non-fatal error: git
+	// is answering again, whatever specifically failed before. Checked
+	// once here rather than repeated in each success case below, so a
+	// future new success case can't forget it.
+	switch msg.(type) {
+	case commitsLoadedMsg, moreCommitsLoadedMsg, commitDetailLoadedMsg,
+		worktreeEntriesLoadedMsg, searchHashesLoadedMsg, allHashesLoadedMsg:
+		m.lastError = nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -335,10 +394,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (which already accepts any git-resolvable revision), so the
 			// detail view paints as soon as that returns, concurrently with
 			// the list loading and positioning itself behind it via
-			// resolveRevPositionCmd/pumpPendingJump.
+			// resolveRevPositionCmd/pumpPendingJump. The detail fetch is
+			// fatal (it's this path's whole payload); the list load is not
+			// (the detail can succeed independently of it).
 			return m, tea.Batch(
-				fetchDetailCmd(msg.repo, m.start.Rev),
-				loadListCmd(msg.repo),
+				fetchDetailCmd(msg.repo, m.start.Rev, fatal),
+				loadListCmd(msg.repo, nonFatal),
 				loadWorktreeEntriesCmd(msg.repo),
 				resolveRevPositionCmd(msg.repo, m.start.Rev),
 			)
@@ -347,7 +408,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = errors.New("this repository has no commits yet")
 			return m, nil
 		}
-		return m, tea.Batch(loadListCmd(msg.repo), loadWorktreeEntriesCmd(msg.repo))
+		return m, tea.Batch(loadListCmd(msg.repo, fatal), loadWorktreeEntriesCmd(msg.repo))
 	case commitsLoadedMsg:
 		m.list = NewListModel(msg.commits)
 		m.list.SetTotalCount(msg.totalCount)
@@ -356,6 +417,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.pumpPendingJump()
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
+		return m, nil
+	case moreCommitsFailedMsg:
+		m.list.loadingMore = false
+		m.lastError = msg.err
 		return m, nil
 	case worktreeEntriesLoadedMsg:
 		m.entries = msg.entries
@@ -389,7 +454,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case errMsg:
-		m.err = msg.err
+		if msg.severity == fatal {
+			m.err = msg.err
+		} else {
+			m.lastError = msg.err
+		}
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -522,7 +591,7 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openDetail(git.EntryDetail(entry)), nil
 		}
 		if commit, ok := m.list.Selected(); ok {
-			return m, fetchDetailCmd(m.repo, commit.Hash)
+			return m, fetchDetailCmd(m.repo, commit.Hash, nonFatal)
 		}
 		return m, nil
 	}
@@ -671,9 +740,11 @@ func (m Model) contentHeight() int {
 
 // renderStatusBar renders the bottom status bar: the live query while the
 // search prompt is open, a loading indicator while the list's
-// position-finding queries are in flight, or the active view's search
-// term/position otherwise.
+// position-finding queries are in flight, the active view's search
+// term/position, or — lowest priority, since any of the above is more
+// specific and more current — the most recent non-fatal fetch failure.
 func (m Model) renderStatusBar() string {
+	style := statusBarStyle
 	var content string
 	switch {
 	case m.searchPromptOpen:
@@ -692,6 +763,22 @@ func (m Model) renderStatusBar() string {
 		} else {
 			content = fmt.Sprintf("/%s  [%d/%d]", m.searchTerm, pos, total)
 		}
+	case m.lastError != nil:
+		style = statusBarErrStyle
+		content = statusBarErrorText(m.lastError, m.width)
 	}
-	return statusBarStyle.Width(m.width).Render(content)
+	return style.Width(m.width).Render(content)
+}
+
+// statusBarErrorText renders err's message for the one-row status bar:
+// flattened to a single line (runGit folds raw, often multi-line stderr
+// into its error text, and an unflattened message would push the bar to
+// several rows and shove the layout off screen) and truncated to fit
+// width (statusBarStyle's own Padding(0, 1) accounts for the -2).
+func statusBarErrorText(err error, width int) string {
+	text := "error: " + strings.Join(strings.Fields(err.Error()), " ")
+	if width > 2 {
+		text = truncate(text, width-2)
+	}
+	return text
 }
