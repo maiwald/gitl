@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -64,6 +65,24 @@ type ListModel struct {
 
 	matches  []int // absolute commit positions, ascending
 	matchPos int   // index into matches; -1 when there are none
+
+	// renderedRows caches one rendered row per position in the flattened
+	// row space (leading rows first, then commits — see rowIndex). A pure
+	// cursor move changes exactly two rows' styling (the one the cursor
+	// left and the one it arrived at), while a full render() re-runs
+	// fmt.Sprintf, several lipgloss Render calls, and highlightSpans for
+	// every loaded commit — of which there can be the entire history (a G
+	// jump or a search jump loads all of it). setCursor/renderCursorMoved
+	// patch just the two affected rows instead of paying that cost on
+	// every keystroke.
+	//
+	// Every writer of leading/commits/matches/matchPos/displayTerm/
+	// searchDismissed/vp.Width must end in a full render() (which rebuilds
+	// this wholly); pure cursor moves go through setCursor instead. Direct
+	// assignment to cursor outside setCursor (only tests do this) leaves
+	// two rows stale until the next full render — never wrong once one
+	// happens, only briefly stale.
+	renderedRows []string
 }
 
 // NewListModel constructs a list model over the given commits.
@@ -92,7 +111,13 @@ func (m *ListModel) SetTotalCount(n int) {
 
 // AppendCommits adds a freshly fetched batch to the loaded set, completing
 // a pending jump (see pendingCursor) once its target position is in view.
+// Only the newly-appended rows need rendering from scratch; the rest of
+// renderedRows is untouched, then the old and new cursor rows are patched
+// (harmless if that's the same row twice, or if the new cursor row was
+// just rendered by the append loop already — see renderRow).
 func (m *ListModel) AppendCommits(commits []git.Commit) {
+	from := m.cursor
+	prevCount := len(m.commits)
 	m.commits = append(m.commits, commits...)
 	m.loadingMore = false
 	if m.pendingCursor >= 0 && m.pendingCursor < len(m.commits) {
@@ -100,7 +125,18 @@ func (m *ListModel) AppendCommits(commits []git.Commit) {
 		m.pendingCursor = -1
 		m.ensureVisible()
 	}
-	m.render()
+
+	if len(m.renderedRows) != len(m.leading)+prevCount {
+		m.render()
+		return
+	}
+	ctx := m.rowContext()
+	for pos := prevCount; pos < len(m.commits); pos++ {
+		m.renderedRows = append(m.renderedRows, m.renderRow(pos, ctx))
+	}
+	m.patchRow(from, ctx)
+	m.patchRow(m.cursor, ctx)
+	m.setContent()
 }
 
 // Selected returns the commit currently under the cursor, if any — false
@@ -170,9 +206,7 @@ func (m *ListModel) Update(msg tea.KeyMsg) (fetchRequest, bool) {
 	case key.Matches(msg, DefaultKeyMap.HalfPageDown):
 		m.moveCursor(m.halfPageSize())
 	case key.Matches(msg, DefaultKeyMap.Top):
-		m.cursor = m.topIndex()
-		m.ensureVisible()
-		m.render()
+		m.setCursor(m.topIndex())
 	case key.Matches(msg, DefaultKeyMap.Bottom):
 		return m.jumpToBottom()
 	}
@@ -188,9 +222,7 @@ func (m *ListModel) halfPageSize() int {
 }
 
 func (m *ListModel) moveCursor(delta int) {
-	m.cursor = clampBetween(m.cursor+delta, m.topIndex(), len(m.commits)-1)
-	m.ensureVisible()
-	m.render()
+	m.setCursor(clampBetween(m.cursor+delta, m.topIndex(), len(m.commits)-1))
 }
 
 // clampIndex constrains next to the valid index range [0, max], as used by
@@ -226,9 +258,7 @@ func matchPosition(pos, total int) (int, int) {
 // jump until they arrive.
 func (m *ListModel) jumpToBottom() (fetchRequest, bool) {
 	if len(m.commits) >= m.totalCount {
-		m.cursor = len(m.commits) - 1
-		m.ensureVisible()
-		m.render()
+		m.setCursor(len(m.commits) - 1)
 		return fetchRequest{}, false
 	}
 	m.pendingCursor = m.totalCount - 1
@@ -336,10 +366,17 @@ func (m *ListModel) stepMatch(delta int) (needsLoad bool, target int) {
 
 // applyCurrentMatch moves the cursor to the current match if it's already
 // loaded, or marks a jump as pending (resolved by AppendCommits) and
-// reports needsLoad so the caller dispatches a targeted fetch.
+// reports needsLoad so the caller dispatches a targeted fetch. Always ends
+// in a full render(), even when deferred: matches/matchPos just changed,
+// which can affect dimming/highlighting across arbitrary rows, not just
+// the cursor's — and rendering immediately (rather than waiting for
+// AppendCommits, as before this cache existed) is what keeps renderedRows
+// from going stale in the meantime.
 func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
 	target = m.matches[m.matchPos]
-	return m.jumpOrDefer(target), target
+	needsLoad = m.jumpOrDefer(target)
+	m.render()
+	return needsLoad, target
 }
 
 // JumpTo positions the cursor at absolute commit position target, or, if
@@ -348,11 +385,18 @@ func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
 // so the caller dispatches a fetch via RequestLoadUpTo. Used for a
 // CLI-requested jump to a specific commit's position in history.
 func (m *ListModel) JumpTo(target int) (needsLoad bool) {
-	return m.jumpOrDefer(target)
+	from := m.cursor
+	needsLoad = m.jumpOrDefer(target)
+	if !needsLoad {
+		m.renderCursorMoved(from)
+	}
+	return needsLoad
 }
 
 // jumpOrDefer is the shared "move the cursor there now, or defer until it's
-// loaded" logic behind applyCurrentMatch and JumpTo.
+// loaded" logic behind applyCurrentMatch and JumpTo. It renders nothing
+// itself — callers differ in what else changed, so they decide between a
+// full render() and a renderCursorMoved patch.
 func (m *ListModel) jumpOrDefer(target int) (needsLoad bool) {
 	if target >= len(m.commits) {
 		m.pendingCursor = target
@@ -360,7 +404,6 @@ func (m *ListModel) jumpOrDefer(target int) (needsLoad bool) {
 	}
 	m.cursor = target
 	m.ensureVisible()
-	m.render()
 	return false
 }
 
@@ -389,7 +432,16 @@ func (m ListModel) MatchPosition() (pos, total int) {
 	return matchPosition(m.matchPos, len(m.matches))
 }
 
-func (m *ListModel) render() {
+// rowContext captures the two styling inputs every row in one render
+// shares (the effective search term, blanked when dismissed, and which
+// commit position is the active n/N match) — hoisted so the full rebuild
+// and a single-row patch derive them identically and can't drift apart.
+type rowContext struct {
+	term        string
+	activeMatch int
+}
+
+func (m ListModel) rowContext() rowContext {
 	term := m.displayTerm
 	activeMatch := -1
 	if m.searchDismissed {
@@ -397,24 +449,97 @@ func (m *ListModel) render() {
 	} else if m.matchPos >= 0 && m.matchPos < len(m.matches) {
 		activeMatch = m.matches[m.matchPos]
 	}
-	lines := make([]string, m.rowCount())
-	for i, e := range m.leading {
-		selected := i-len(m.leading) == m.cursor
-		// A synthetic row can never be a search match (matches come from
-		// git log queries over real commits only), so it's dimmed whenever
-		// a search is active — the correct behavior, not a compromise.
-		lines[i] = renderWorktreeRow(e, m.vp.Width, selected, term != "")
+	return rowContext{term: term, activeMatch: activeMatch}
+}
+
+// isMatch reports whether commit position pos is one of the list's actual
+// search matches (m.matches, ascending). A binary search rather than the
+// linear merge-walk render() used before this cache existed: that walk
+// only worked when visiting rows in order, and a single-row patch needs to
+// query one arbitrary position without rescanning from the start.
+func (m ListModel) isMatch(pos int) bool {
+	_, found := slices.BinarySearch(m.matches, pos)
+	return found
+}
+
+// renderRow renders the row at cursor-space position pos (negative for a
+// leading row) using ctx's shared styling inputs. This is the single
+// definition of what a row looks like — both the full rebuild (render)
+// and a single-row patch (patchRow) call it, so they cannot drift apart.
+func (m ListModel) renderRow(pos int, ctx rowContext) string {
+	if pos < 0 {
+		e := m.leading[m.rowIndex(pos)]
+		return renderWorktreeRow(e, m.vp.Width, pos == m.cursor, ctx.term != "")
 	}
-	mi := 0 // walks m.matches (ascending) alongside i, since both are sorted
-	for i, c := range m.commits {
-		for mi < len(m.matches) && m.matches[mi] < i {
-			mi++
-		}
-		isMatch := mi < len(m.matches) && m.matches[mi] == i
-		dimmed := term != "" && !isMatch
-		lines[m.rowIndex(i)] = renderCommitRow(c, m.vp.Width, i == m.cursor, dimmed, term, i == activeMatch)
+	c := m.commits[pos]
+	// A synthetic row can never be a search match (matches come from git
+	// log queries over real commits only), so it's dimmed whenever a
+	// search is active — the correct behavior, not a compromise.
+	dimmed := ctx.term != "" && !m.isMatch(pos)
+	return renderCommitRow(c, m.vp.Width, pos == m.cursor, dimmed, ctx.term, pos == ctx.activeMatch)
+}
+
+// setContent joins the cached rendered rows into the viewport's content.
+// The join itself is still O(total content length), forced by
+// viewport.SetContent's API (which re-splits it internally) — what the
+// cache eliminates is the styling work upstream of the join (fmt.Sprintf,
+// several lipgloss Render calls, highlightSpans), which is the expensive
+// part.
+func (m *ListModel) setContent() {
+	m.vp.SetContent(strings.Join(m.renderedRows, "\n"))
+}
+
+// patchRow re-renders a single row in place. A no-op if pos maps outside
+// the cache's current bounds, which lets callers pass an out-of-range "old
+// cursor" (e.g. before any rows were ever rendered) without special-casing.
+func (m *ListModel) patchRow(pos int, ctx rowContext) {
+	row := m.rowIndex(pos)
+	if row < 0 || row >= len(m.renderedRows) {
+		return
 	}
-	m.vp.SetContent(strings.Join(lines, "\n"))
+	m.renderedRows[row] = m.renderRow(pos, ctx)
+}
+
+// renderCursorMoved patches only the row the cursor left (from) and the
+// row it arrived at (m.cursor), instead of re-rendering every loaded row —
+// the fix for a pure cursor move being an O(rows loaded) operation
+// regardless of how much actually changed. Falls back to a full render()
+// if the cache isn't the size render() would produce, which can only
+// happen if some other writer of leading/commits forgot to end in one.
+func (m *ListModel) renderCursorMoved(from int) {
+	if len(m.renderedRows) != m.rowCount() {
+		m.render()
+		return
+	}
+	ctx := m.rowContext()
+	m.patchRow(from, ctx)
+	m.patchRow(m.cursor, ctx)
+	m.setContent()
+}
+
+// setCursor moves the cursor to pos and repaints just the two rows that
+// changed. This is the one place the "old cursor" is captured, before it's
+// overwritten — every pure cursor-movement path routes through it.
+func (m *ListModel) setCursor(pos int) {
+	from := m.cursor
+	m.cursor = pos
+	m.ensureVisible()
+	m.renderCursorMoved(from)
+}
+
+// render fully rebuilds renderedRows and the viewport content. This is the
+// only path that can grow/shrink the row space or repaint arbitrarily many
+// rows at once (a width change, new leading rows, or a change to which
+// rows are dimmed/highlighted by search) — pure cursor movement instead
+// goes through setCursor/renderCursorMoved, which patch only the two rows
+// that changed.
+func (m *ListModel) render() {
+	ctx := m.rowContext()
+	m.renderedRows = make([]string, m.rowCount())
+	for pos := m.topIndex(); pos < len(m.commits); pos++ {
+		m.renderedRows[m.rowIndex(pos)] = m.renderRow(pos, ctx)
+	}
+	m.setContent()
 }
 
 func (m ListModel) View() string {
