@@ -37,13 +37,9 @@ const (
 // determined by the actual git query, not by whether this row's visible
 // text happens to contain the term — see ListModel.render) — this is what
 // makes a body-only match (nothing highlighted in the row itself) visually
-// distinguishable from an outright non-match. It replaces each field's own
-// color with dimStyle rather than wrapping the whole rendered row in an
-// outer faint style: every field below is already independently
-// Render()'d, and each Render() call ends with its own ANSI reset, which
-// would cancel an outer style applied around the concatenated result (see
-// the same concern in formatRefs below) — so faintness has to be baked
-// into each field's own style instead.
+// distinguishable from an outright non-match. Each field's base style is
+// resolved via rowFieldStyle, which explains why dimming/selection are
+// baked into each field rather than one outer style around the row.
 func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm string, isActiveMatch bool) string {
 	sha := fmt.Sprintf("%-*s", shaColumnWidth, shaPrefix(c.Hash))
 	localDate := c.AuthorDate.Local()
@@ -52,24 +48,10 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 	author := fmt.Sprintf("%-*s", authorColumnWidth, truncate(c.AuthorName, authorColumnWidth))
 	subject := c.Subject
 
-	shaBase, dateBase, authorBase, subjectBase := shaStyle, dateStyle, authorStyle, lipgloss.NewStyle()
-	if dimmed {
-		shaBase, dateBase, authorBase, subjectBase = dimStyle, dimStyle, dimStyle, dimStyle
-	}
-	gapStyle := normalRowStyle
-	if selected {
-		// Merged into each field's own base style (and the literal
-		// separators via gapStyle) rather than applied as one flat style
-		// wrapped around the finished row: every field below ends its own
-		// Render() call with an ANSI reset, which would cancel a
-		// single outer background the moment the first one fires (see the
-		// same reset hazard called out in formatRefs).
-		shaBase = shaBase.Background(cursorRowBg)
-		dateBase = dateBase.Background(cursorRowBg)
-		authorBase = authorBase.Background(cursorRowBg)
-		subjectBase = subjectBase.Background(cursorRowBg)
-		gapStyle = gapStyle.Background(cursorRowBg)
-	}
+	shaBase := rowFieldStyle(shaStyle, dimmed, selected)
+	dateBase := rowFieldStyle(dateStyle, dimmed, selected)
+	authorBase := rowFieldStyle(authorStyle, dimmed, selected)
+	subjectBase := rowFieldStyle(normalRowStyle, dimmed, selected)
 
 	// sha/date/clock are never search targets (SearchCommitHashes only
 	// matches author name and commit message), so they're just rendered in
@@ -89,7 +71,7 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 		subject = subjectBase.Render(subject)
 	}
 	refs := formatRefs(c.Refs, selected, dimmed)
-	gap := func(s string) string { return gapStyle.Render(s) }
+	gap := rowGap(selected)
 
 	var row string
 	if refs != "" {
@@ -98,11 +80,44 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 		row = sha + gap("  ") + date + gap(" ") + clock + gap("  ") + author + gap("  ") + subject
 	}
 
-	style := normalRowStyle
-	if selected {
-		style = selectedRowStyle
+	return padRow(row, width, rowFillStyle(selected))
+}
+
+// rowFieldStyle resolves a row field's base style against the row's
+// dimmed/selected state: dimmed swaps in dimStyle wholesale (rather than
+// darkening base), then selected merges in cursorRowBg on top — merged
+// into each field's own style (and the literal separators via rowGap)
+// rather than applied as one flat style wrapped around the finished row,
+// since every field is independently Render()'d and each Render() call
+// ends with its own ANSI reset, which would cancel a single outer
+// background the moment the first one fires. Shared by renderCommitRow,
+// formatRefs, and renderWorktreeRow.
+func rowFieldStyle(base lipgloss.Style, dimmed, selected bool) lipgloss.Style {
+	if dimmed {
+		base = dimStyle
 	}
-	return padRow(row, width, style)
+	if selected {
+		base = base.Background(cursorRowBg)
+	}
+	return base
+}
+
+// rowFillStyle is the style used both for a row's literal gap/separator
+// text and as padRow's fill style — normalRowStyle normally, or
+// selectedRowStyle (the cursor background) for a selected row.
+func rowFillStyle(selected bool) lipgloss.Style {
+	if selected {
+		return selectedRowStyle
+	}
+	return normalRowStyle
+}
+
+// rowGap returns a closure rendering a literal separator (spaces between
+// fields) in rowFillStyle, so a selected row's cursor highlight has no gaps
+// between fields.
+func rowGap(selected bool) func(string) string {
+	style := rowFillStyle(selected)
+	return func(s string) string { return style.Render(s) }
 }
 
 // padRow truncates row to width and pads any remainder with trailing
@@ -152,26 +167,17 @@ func highlightSpans(text, term string, base, match lipgloss.Style) string {
 	return b.String()
 }
 
-// formatRefs renders branch/tag/HEAD decorations as bracketed badges.
-// dimmed swaps in the same dimStyle used for the rest of a non-matching
-// row, rather than leaving refs at their normal bold/colored style, so a
-// badge doesn't stand out against an otherwise faded row. selected merges
-// in cursorRowBg (see renderCommitRow) rather than leaving badges
-// unstyled, since every badge here is independently Render()'d and each
-// Render() call ends with its own ANSI reset — the join separator below
-// carries the same background for the same reason, so multiple badges
-// on one row don't leave a gap in the cursor highlight between them.
+// formatRefs renders branch/tag/HEAD decorations as bracketed badges,
+// resolved via rowFieldStyle so a badge fades with the rest of a dimmed
+// row and carries the cursor background when selected. The join separator
+// below carries the same style for the same reset-hazard reason
+// (rowFieldStyle's doc comment), so multiple badges on one row don't leave
+// a gap in the cursor highlight between them.
 func formatRefs(refs []string, selected, dimmed bool) string {
 	if len(refs) == 0 {
 		return ""
 	}
-	style := refStyle
-	if dimmed {
-		style = dimStyle
-	}
-	if selected {
-		style = style.Background(cursorRowBg)
-	}
+	style := rowFieldStyle(refStyle, dimmed, selected)
 	parts := make([]string, len(refs))
 	for i, r := range refs {
 		parts[i] = style.Render("[" + r + "]")

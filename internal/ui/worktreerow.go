@@ -27,16 +27,9 @@ func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) st
 	nFiles := fmt.Sprintf("%d %s", len(e.Files), pluralize(len(e.Files), "file", "files"))
 	additions, deletions := diffTotals(e.Files)
 
-	titleStyle, countStyle := entryTitleStyle, normalRowStyle
-	if dimmed {
-		titleStyle, countStyle = dimStyle, dimStyle
-	}
-	gapStyle := normalRowStyle
-	if selected {
-		titleStyle = titleStyle.Background(cursorRowBg)
-		countStyle = countStyle.Background(cursorRowBg)
-		gapStyle = gapStyle.Background(cursorRowBg)
-	}
+	titleStyle := rowFieldStyle(entryTitleStyle, dimmed, selected)
+	countStyle := rowFieldStyle(normalRowStyle, dimmed, selected)
+	gap := rowGap(selected)
 
 	addStyle, delStyle := diffAddStyle, diffDeleteStyle
 	if dimmed || selected {
@@ -44,21 +37,16 @@ func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) st
 		// wholesale by countStyle (which already carries the cursor
 		// background when selected), the same way every other field on a
 		// selected/dimmed row swaps its whole base style rather than
-		// layering onto its normal one — see renderCommitRow.
+		// layering onto its normal one — see rowFieldStyle.
 		addStyle, delStyle = countStyle, countStyle
 	}
 	_, counts := formatCountsStyled(additions, deletions, addStyle, delStyle)
 
-	gap := func(s string) string { return gapStyle.Render(s) }
 	row := gap(strings.Repeat(" ", shaColumnWidth)) + gap("  ") +
 		gap(strings.Repeat(" ", dateColumnWidth)) + gap(" ") +
 		gap(strings.Repeat(" ", clockColumnWidth)) + gap("  ") +
 		titleStyle.Render(title) + gap("  ") +
 		countStyle.Render(nFiles) + gap("  ") + counts
 
-	style := normalRowStyle
-	if selected {
-		style = selectedRowStyle
-	}
-	return padRow(row, width, style)
+	return padRow(row, width, rowFillStyle(selected))
 }
