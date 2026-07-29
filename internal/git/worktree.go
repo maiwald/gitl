@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 )
 
 // EntryKind distinguishes a real commit from the two synthetic entries gitl
@@ -50,27 +51,51 @@ func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind) ([]File, 
 // FetchWorktreeEntries returns every synthetic entry that currently has
 // something to show, working tree first (furthest from HEAD) then staged.
 // Entries with no changes are omitted entirely, mirroring how `git status`
-// omits empty sections.
+// omits empty sections. The two diffs are independent git invocations, so
+// they run concurrently rather than one after another.
 func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error) {
-	var entries []WorktreeEntry
-
-	worktreeFiles, err := r.worktreeDiff(ctx)
+	var worktreeFiles, stagedFiles []File
+	err := runConcurrently(
+		func() (err error) { worktreeFiles, err = r.worktreeDiff(ctx); return },
+		func() (err error) { stagedFiles, err = r.stagedDiff(ctx); return },
+	)
 	if err != nil {
 		return nil, err
 	}
+
+	var entries []WorktreeEntry
 	if len(worktreeFiles) > 0 {
 		entries = append(entries, WorktreeEntry{Kind: EntryWorktree, Files: worktreeFiles})
-	}
-
-	stagedFiles, err := r.stagedDiff(ctx)
-	if err != nil {
-		return nil, err
 	}
 	if len(stagedFiles) > 0 {
 		entries = append(entries, WorktreeEntry{Kind: EntryStaged, Files: stagedFiles})
 	}
-
 	return entries, nil
+}
+
+// runConcurrently runs each fn in its own goroutine and waits for all of
+// them to finish, returning the first non-nil error in call order (not
+// completion order). Used to overlap independent git subprocess calls
+// (e.g. the worktree diff and the staged diff, or the tracked diff and the
+// untracked-file scan) instead of running them one after another — each is
+// its own subprocess, so there's nothing to serialize them for.
+func runConcurrently(fns ...func() error) error {
+	errs := make([]error, len(fns))
+	var wg sync.WaitGroup
+	wg.Add(len(fns))
+	for i, fn := range fns {
+		go func(i int, fn func() error) {
+			defer wg.Done()
+			errs[i] = fn()
+		}(i, fn)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EntryDetail wraps a synthetic entry's files as a CommitDetail so the
@@ -94,18 +119,21 @@ func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
 // worktreeDiff diffs tracked files against the index, then appends one
 // synthesized added-file entry per untracked file, so the working-tree view
 // covers everything `git status` would flag as new (not just what plain
-// `git diff` shows).
+// `git diff` shows). The tracked diff and the untracked-file scan are
+// independent git invocations, so they run concurrently.
 func (r *Repo) worktreeDiff(ctx context.Context) ([]File, error) {
-	out, err := runGit(ctx, r.Path, "diff", "--no-color", "-U3")
-	if err != nil {
-		return nil, err
-	}
-	files, err := ParseUnifiedDiff(bytes.NewReader(out))
-	if err != nil {
-		return nil, err
-	}
-
-	untracked, err := r.untrackedFiles(ctx)
+	var files, untracked []File
+	err := runConcurrently(
+		func() error {
+			out, err := runGit(ctx, r.Path, "diff", "--no-color", "-U3")
+			if err != nil {
+				return err
+			}
+			files, err = ParseUnifiedDiff(bytes.NewReader(out))
+			return err
+		},
+		func() (err error) { untracked, err = r.untrackedFiles(ctx); return },
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +146,17 @@ func (r *Repo) worktreeDiff(ctx context.Context) ([]File, error) {
 // build directory can't spawn hundreds of git invocations.
 const maxUntrackedDiffs = 200
 
+// untrackedDiffConcurrency bounds how many of those subprocess calls run at
+// once. Per-process spawn overhead varies a lot by machine (antivirus/
+// sandboxing can make it far slower than on a typical dev box), and running
+// them one at a time lets that overhead add up linearly across every
+// untracked file — which is what made the working-tree view visibly slower
+// to appear than the commit list in a repo with more than a few untracked
+// files. Unbounded fan-out isn't the fix either: it would spawn as many
+// concurrent git processes as there are untracked files (up to
+// maxUntrackedDiffs), which could thrash on a constrained system.
+const untrackedDiffConcurrency = 16
+
 // untrackedFiles returns one synthesized File per untracked path, rendered
 // as an added-file diff against /dev/null — the same approach lazygit/tig
 // use for showing untracked files alongside a real diff.
@@ -127,14 +166,23 @@ func (r *Repo) untrackedFiles(ctx context.Context) ([]File, error) {
 		return nil, err
 	}
 
-	files := make([]File, 0, len(paths))
+	files := make([]File, len(paths))
+	sem := make(chan struct{}, untrackedDiffConcurrency)
+	var wg sync.WaitGroup
 	for i, path := range paths {
 		if i >= maxUntrackedDiffs {
-			files = append(files, File{Path: path, Status: StatusAdded})
+			files[i] = File{Path: path, Status: StatusAdded}
 			continue
 		}
-		files = append(files, r.untrackedDiff(ctx, path))
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			files[i] = r.untrackedDiff(ctx, path)
+		}(i, path)
 	}
+	wg.Wait()
 	return files, nil
 }
 
