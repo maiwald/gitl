@@ -19,10 +19,12 @@ A terminal UI for browsing git history, with vim-style navigation.
 - **Search** — `/` to search, `n`/`N` to cycle matches (wrapping at both
   ends), with all matches highlighted and the current one visually
   distinct. In the commit list, search covers author name and the full
-  commit message; in the commit detail view, it covers the diff content.
-  Commits that don't match a search are dimmed in the list, so a match
-  whose only hit is in the message body (nothing visible to highlight in
-  the row) still stands out by contrast with the surrounding non-matches.
+  commit message; in the commit detail view, it covers the commit
+  message (author line and body) and the diff content, message matches
+  first. Commits that don't match a search are dimmed in the list, so a
+  match whose only hit is in the message body (nothing visible to
+  highlight in the row) still stands out by contrast with the
+  surrounding non-matches.
 - Handles large repositories: commits are fetched in lazily-loaded batches
   rather than all at once, so startup and memory use don't scale with the
   size of the history. Searching the list only loads as much history as a
@@ -78,7 +80,7 @@ gitl --staged      # open the staged-changes (index vs HEAD) detail view
 | `g` / `G`               | Jump to top / bottom                    |
 | `Enter`                 | Open commit detail                      |
 | `[` / `]`               | Jump to previous/next file's diff (detail view) |
-| `/`                     | Search (author + message, or diff content) |
+| `/`                     | Search (list: author + message; detail: message + diff) |
 | `n` / `N`               | Next / previous search match (wraps)    |
 | `Esc` / `q`             | Back (detail view) / quit (list view)   |
 | `ctrl-c`                | Quit                                     |
@@ -94,7 +96,6 @@ gitl --staged      # open the staged-changes (index vs HEAD) detail view
   message body (not the one-line subject shown in the row) counts toward
   the match total but has nothing visible to highlight in that row —
   distinguishable from a true non-match only by not being dimmed.
-- Detail-view search covers diff content only, not the commit message.
 - The working-tree/staged rows are a snapshot taken at startup, like the
   rest of the app's data — there's no key to refresh them if you edit files
   in another terminal while gitl is running.
