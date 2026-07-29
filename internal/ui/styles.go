@@ -11,8 +11,11 @@ const cursorRowBg = lipgloss.Color("238")
 
 // errFg is the foreground used for error text, shared by errStyle (the
 // full-screen fatal error) and statusBarErrStyle (a non-fatal error shown
-// in the status bar), so both read as the same kind of message.
-const errFg = lipgloss.Color("196")
+// in the status bar), so both read as the same kind of message. Uses the
+// basic ANSI red (see the dateStyle/shaStyle/authorStyle comment below)
+// rather than a 256-color value, so it renders as the terminal's own
+// themed red instead of a fixed hue.
+const errFg = lipgloss.Color("1")
 
 var (
 	normalRowStyle = lipgloss.NewStyle()
@@ -20,11 +23,11 @@ var (
 	selectedRowStyle = lipgloss.NewStyle().
 				Background(cursorRowBg)
 
-	// dateStyle, shaStyle, authorStyle, diffAddStyle, and hunkHeaderStyle
-	// use basic ANSI color codes (0-15) rather than 256-color/hex values:
-	// termenv passes ANSI codes through unconverted regardless of color
-	// profile, so these render via the terminal's own palette (e.g.
-	// Solarized) instead of a fixed hue.
+	// dateStyle, shaStyle, authorStyle, refStyle, diffAddStyle, and
+	// hunkHeaderStyle use basic ANSI color codes (0-15) rather than
+	// 256-color/hex values: termenv passes ANSI codes through unconverted
+	// regardless of color profile, so these render via the terminal's own
+	// palette (e.g. Solarized) instead of a fixed hue.
 	dateStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("2"))
 
@@ -34,8 +37,13 @@ var (
 	authorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("4"))
 
+	// refStyle reuses the same ANSI red as errFg, distinguished by weight
+	// (bold) rather than a different hue — the same way a bold vs. plain
+	// red both being "red" reads fine in a 16-color palette (mirroring how
+	// git tools like git log --decorate get by with a handful of basic
+	// colors, none unique to just one kind of decoration).
 	refStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("203")).
+			Foreground(lipgloss.Color("1")).
 			Bold(true)
 
 	errStyle = lipgloss.NewStyle().
