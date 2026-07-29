@@ -140,44 +140,58 @@ type revPositionMsg struct {
 
 type errMsg struct{ err error }
 
-func openRepoCmd() tea.Cmd {
+// runCmd wraps fetch as a tea.Cmd: on success, toMsg(v) becomes the
+// resulting message; on failure, errMsg{err} does — the shape behind
+// nearly every fetch below. fetchMoreCmd and resolveRevPositionCmd are
+// the two exceptions: fetchMoreCmd needs to identify its own failures
+// separately from any other errMsg (so a pagination failure can safely
+// clear ListModel.loadingMore without an unrelated error doing the same
+// and risking a duplicate fetch), and resolveRevPositionCmd never
+// produces errMsg at all (see its own doc comment).
+func runCmd[T any](fetch func(context.Context) (T, error), toMsg func(T) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		repo, err := git.OpenRepo(ctx, ".")
+		v, err := fetch(context.Background())
 		if err != nil {
 			return errMsg{err}
+		}
+		return toMsg(v)
+	}
+}
+
+func openRepoCmd() tea.Cmd {
+	return runCmd(func(ctx context.Context) (repoOpenedMsg, error) {
+		repo, err := git.OpenRepo(ctx, ".")
+		if err != nil {
+			return repoOpenedMsg{}, err
 		}
 		hasCommits, err := repo.HasCommits(ctx)
 		if err != nil {
-			return errMsg{err}
+			return repoOpenedMsg{}, err
 		}
-		return repoOpenedMsg{repo: repo, hasCommits: hasCommits}
-	}
+		return repoOpenedMsg{repo: repo, hasCommits: hasCommits}, nil
+	}, func(m repoOpenedMsg) tea.Msg { return m })
 }
 
 func loadListCmd(repo *git.Repo) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
+	return runCmd(func(ctx context.Context) (commitsLoadedMsg, error) {
 		commits, err := repo.FetchLogBatch(ctx, 0, batchSize)
 		if err != nil {
-			return errMsg{err}
+			return commitsLoadedMsg{}, err
 		}
 		total, err := repo.CommitCount(ctx)
 		if err != nil {
-			return errMsg{err}
+			return commitsLoadedMsg{}, err
 		}
-		return commitsLoadedMsg{commits: commits, totalCount: total}
-	}
+		return commitsLoadedMsg{commits: commits, totalCount: total}, nil
+	}, func(m commitsLoadedMsg) tea.Msg { return m })
 }
 
 func loadWorktreeEntriesCmd(repo *git.Repo) tea.Cmd {
-	return func() tea.Msg {
-		entries, err := repo.FetchWorktreeEntries(context.Background())
-		if err != nil {
-			return errMsg{err}
-		}
+	return runCmd(func(ctx context.Context) ([]git.WorktreeEntry, error) {
+		return repo.FetchWorktreeEntries(ctx)
+	}, func(entries []git.WorktreeEntry) tea.Msg {
 		return worktreeEntriesLoadedMsg{entries: entries}
-	}
+	})
 }
 
 // resolveRevPositionCmd resolves rev to a commit position within HEAD's
@@ -202,6 +216,8 @@ func resolveRevPositionCmd(repo *git.Repo, rev string) tea.Cmd {
 	}
 }
 
+// fetchMoreCmd deliberately doesn't go through runCmd — see runCmd's doc
+// comment for why its failures need to identify themselves separately.
 func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 	return func() tea.Msg {
 		commits, err := repo.FetchLogBatch(context.Background(), req.skip, req.limit)
@@ -229,13 +245,9 @@ func (m Model) openDetail(detail *git.CommitDetail) Model {
 }
 
 func fetchDetailCmd(repo *git.Repo, hash string) tea.Cmd {
-	return func() tea.Msg {
-		detail, err := repo.FetchCommitDetail(context.Background(), hash)
-		if err != nil {
-			return errMsg{err}
-		}
-		return commitDetailLoadedMsg{detail: detail}
-	}
+	return runCmd(func(ctx context.Context) (*git.CommitDetail, error) {
+		return repo.FetchCommitDetail(ctx, hash)
+	}, func(d *git.CommitDetail) tea.Msg { return commitDetailLoadedMsg{detail: d} })
 }
 
 // fetchEntryDetailCmd fetches a single synthetic entry's diff directly (for
@@ -243,13 +255,11 @@ func fetchDetailCmd(repo *git.Repo, hash string) tea.Cmd {
 // and opens it the same way any other detail view opens, via
 // commitDetailLoadedMsg.
 func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind) tea.Cmd {
-	return func() tea.Msg {
-		files, err := repo.FetchWorktreeEntry(context.Background(), kind)
-		if err != nil {
-			return errMsg{err}
-		}
+	return runCmd(func(ctx context.Context) ([]git.File, error) {
+		return repo.FetchWorktreeEntry(ctx, kind)
+	}, func(files []git.File) tea.Msg {
 		return commitDetailLoadedMsg{detail: git.EntryDetail(git.WorktreeEntry{Kind: kind, Files: files})}
-	}
+	})
 }
 
 type searchHashesLoadedMsg struct {
@@ -263,23 +273,19 @@ type allHashesLoadedMsg struct {
 }
 
 func searchHashesCmd(repo *git.Repo, term string) tea.Cmd {
-	return func() tea.Msg {
-		hashes, err := repo.SearchCommitHashes(context.Background(), term)
-		if err != nil {
-			return errMsg{err}
-		}
+	return runCmd(func(ctx context.Context) (map[string]bool, error) {
+		return repo.SearchCommitHashes(ctx, term)
+	}, func(hashes map[string]bool) tea.Msg {
 		return searchHashesLoadedMsg{term: term, hashes: hashes}
-	}
+	})
 }
 
 func allHashesCmd(repo *git.Repo, term string) tea.Cmd {
-	return func() tea.Msg {
-		hashes, err := repo.AllCommitHashes(context.Background())
-		if err != nil {
-			return errMsg{err}
-		}
+	return runCmd(func(ctx context.Context) ([]string, error) {
+		return repo.AllCommitHashes(ctx)
+	}, func(hashes []string) tea.Msg {
 		return allHashesLoadedMsg{term: term, hashes: hashes}
-	}
+	})
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
