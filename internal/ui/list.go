@@ -119,13 +119,28 @@ func (m ListModel) SelectedEntry() (git.WorktreeEntry, bool) {
 	if m.cursor >= 0 {
 		return git.WorktreeEntry{}, false
 	}
-	return m.leading[m.cursor+len(m.leading)], true
+	return m.leading[m.rowIndex(m.cursor)], true
 }
 
 // topIndex is the cursor position of the topmost row, whether that's a
 // synthetic leading row or (with none loaded) commits[0].
 func (m ListModel) topIndex() int {
 	return -len(m.leading)
+}
+
+// rowIndex maps a cursor-space position (negative for a leading row — see
+// the cursor field's doc comment) to its index in the flattened rendered
+// row space (leading rows first, then commits), consolidating a transform
+// that used to be computed inline and separately in SelectedEntry,
+// ensureVisible, and render().
+func (m ListModel) rowIndex(pos int) int {
+	return pos + len(m.leading)
+}
+
+// rowCount is the total number of rendered rows: leading rows plus loaded
+// commits.
+func (m ListModel) rowCount() int {
+	return len(m.leading) + len(m.commits)
 }
 
 // SetLeadingEntries installs the synthetic rows shown above the commit
@@ -262,15 +277,14 @@ func (m *ListModel) maybeLoadMore() (fetchRequest, bool) {
 }
 
 // ensureVisible scrolls the viewport so the cursor row stays on screen. The
-// comparison is against the cursor's actual rendered row (row, offset by
-// len(leading)), not m.cursor directly, since the cursor itself stays in
-// commit-index space and can be negative (see the cursor field's doc
-// comment).
+// comparison is against the cursor's actual rendered row (rowIndex), not
+// m.cursor directly, since the cursor itself stays in commit-index space
+// and can be negative (see the cursor field's doc comment).
 func (m *ListModel) ensureVisible() {
 	if m.vp.Height <= 0 {
 		return
 	}
-	row := m.cursor + len(m.leading)
+	row := m.rowIndex(m.cursor)
 	if row < m.vp.YOffset {
 		m.vp.YOffset = row
 	} else if row >= m.vp.YOffset+m.vp.Height {
@@ -383,7 +397,7 @@ func (m *ListModel) render() {
 	} else if m.matchPos >= 0 && m.matchPos < len(m.matches) {
 		activeMatch = m.matches[m.matchPos]
 	}
-	lines := make([]string, len(m.leading)+len(m.commits))
+	lines := make([]string, m.rowCount())
 	for i, e := range m.leading {
 		selected := i-len(m.leading) == m.cursor
 		// A synthetic row can never be a search match (matches come from
@@ -398,7 +412,7 @@ func (m *ListModel) render() {
 		}
 		isMatch := mi < len(m.matches) && m.matches[mi] == i
 		dimmed := term != "" && !isMatch
-		lines[len(m.leading)+i] = renderCommitRow(c, m.vp.Width, i == m.cursor, dimmed, term, i == activeMatch)
+		lines[m.rowIndex(i)] = renderCommitRow(c, m.vp.Width, i == m.cursor, dimmed, term, i == activeMatch)
 	}
 	m.vp.SetContent(strings.Join(lines, "\n"))
 }
