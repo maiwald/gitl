@@ -60,7 +60,7 @@ func fixtureCommitForRow() git.Commit {
 }
 
 func TestRenderCommitRowHighlightsAuthorMatch(t *testing.T) {
-	row := renderCommitRow(fixtureCommitForRow(), 80, false, false, "alice", false)
+	row := renderCommitRow(fixtureCommitForRow(), 120, false, false, "alice", false)
 	want := searchMatchStyle.Render("Alice")
 	if !strings.Contains(row, want) {
 		t.Errorf("row = %q, want it to contain the highlighted author %q", row, want)
@@ -68,7 +68,7 @@ func TestRenderCommitRowHighlightsAuthorMatch(t *testing.T) {
 }
 
 func TestRenderCommitRowHighlightsSubjectMatch(t *testing.T) {
-	row := renderCommitRow(fixtureCommitForRow(), 80, false, false, "searchable", false)
+	row := renderCommitRow(fixtureCommitForRow(), 120, false, false, "searchable", false)
 	want := searchMatchStyle.Render("searchable")
 	if !strings.Contains(row, want) {
 		t.Errorf("row = %q, want it to contain the highlighted subject match %q", row, want)
@@ -83,12 +83,12 @@ func TestRenderCommitRowHighlightsSubjectMatch(t *testing.T) {
 func TestRenderCommitRowNeverHighlightsShaOrDate(t *testing.T) {
 	c := fixtureCommitForRow()
 
-	shaRow := renderCommitRow(c, 80, false, false, "abc", false)
+	shaRow := renderCommitRow(c, 120, false, false, "abc", false)
 	if strings.Contains(shaRow, searchMatchStyle.Render("abc")) {
 		t.Errorf("row = %q, sha should never be search-highlighted", shaRow)
 	}
 
-	dateRow := renderCommitRow(c, 80, false, false, "2024", false)
+	dateRow := renderCommitRow(c, 120, false, false, "2024", false)
 	if strings.Contains(dateRow, searchMatchStyle.Render("2024")) {
 		t.Errorf("row = %q, date should never be search-highlighted", dateRow)
 	}
@@ -96,8 +96,8 @@ func TestRenderCommitRowNeverHighlightsShaOrDate(t *testing.T) {
 
 func TestRenderCommitRowActiveMatchUsesDistinctStyleFromOrdinaryMatch(t *testing.T) {
 	c := fixtureCommitForRow()
-	ordinary := renderCommitRow(c, 80, false, false, "alice", false)
-	active := renderCommitRow(c, 80, false, false, "alice", true)
+	ordinary := renderCommitRow(c, 120, false, false, "alice", false)
+	active := renderCommitRow(c, 120, false, false, "alice", true)
 
 	if strings.Contains(ordinary, searchActiveMatchStyle.Render("Alice")) {
 		t.Error("ordinary match row unexpectedly used the active-match style")
@@ -111,7 +111,7 @@ func TestRenderCommitRowActiveMatchUsesDistinctStyleFromOrdinaryMatch(t *testing
 }
 
 func TestRenderCommitRowSkipsHighlightingWhenSelected(t *testing.T) {
-	row := renderCommitRow(fixtureCommitForRow(), 80, true, false, "alice", true)
+	row := renderCommitRow(fixtureCommitForRow(), 120, true, false, "alice", true)
 	if strings.Contains(row, searchMatchStyle.Render("Alice")) || strings.Contains(row, searchActiveMatchStyle.Render("Alice")) {
 		t.Errorf("selected row = %q, should not apply search highlight styles (selection style stays authoritative)", row)
 	}
@@ -123,8 +123,8 @@ func TestRenderCommitRowSkipsHighlightingWhenSelected(t *testing.T) {
 // row) still read as "a match" by contrast with true non-matches.
 func TestRenderCommitRowDimsNonMatch(t *testing.T) {
 	c := fixtureCommitForRow()
-	normal := renderCommitRow(c, 80, false, false, "", false)
-	dimmed := renderCommitRow(c, 80, false, true, "", false)
+	normal := renderCommitRow(c, 120, false, false, "", false)
+	dimmed := renderCommitRow(c, 120, false, true, "", false)
 
 	if normal == dimmed {
 		t.Fatal("dimmed row should render differently from a normal row")
@@ -139,7 +139,7 @@ func TestRenderCommitRowDimsNonMatch(t *testing.T) {
 }
 
 func TestRenderCommitRowSkipsDimmingWhenSelected(t *testing.T) {
-	row := renderCommitRow(fixtureCommitForRow(), 80, true, true, "", false)
+	row := renderCommitRow(fixtureCommitForRow(), 120, true, true, "", false)
 	paddedAuthor := fmt.Sprintf("%-*s", authorColumnWidth, "Alice")
 	if strings.Contains(row, dimStyle.Render(paddedAuthor)) {
 		t.Errorf("selected row = %q, should not apply dimming (selection style stays authoritative)", row)
@@ -148,13 +148,130 @@ func TestRenderCommitRowSkipsDimmingWhenSelected(t *testing.T) {
 
 func TestRenderCommitListJoinsPlainRows(t *testing.T) {
 	commits := []git.Commit{fixtureCommitForRow(), fixtureCommitForRow()}
-	got := RenderCommitList(commits, 80)
+	got := RenderCommitList(commits, 120)
 
 	want := strings.Join([]string{
-		renderCommitRow(commits[0], 80, false, false, "", false),
-		renderCommitRow(commits[1], 80, false, false, "", false),
+		renderCommitRow(commits[0], 120, false, false, "", false),
+		renderCommitRow(commits[1], 120, false, false, "", false),
 	}, "\n")
 	if got != want {
 		t.Errorf("RenderCommitList = %q, want %q", got, want)
+	}
+}
+
+// TestRenderCommitRowShortensShaTo7Chars pins down that the sha column
+// always shows a 7-char abbreviation (git's own default abbreviated-hash
+// length) regardless of how long the full hash is, at both narrow and wide
+// pane widths — this change is unconditional, unlike the date/author ones.
+func TestRenderCommitRowShortensShaTo7Chars(t *testing.T) {
+	c := fixtureCommitForRow()
+	c.Hash = "1234567890abcdef1234567890abcdef12345678"
+	wantSha := shaStyle.Render("1234567")
+
+	for _, width := range []int{80, 120} {
+		row := renderCommitRow(c, width, false, false, "", false)
+		if !strings.Contains(row, wantSha) {
+			t.Errorf("width %d: row = %q, want the 7-char short sha %q", width, row, wantSha)
+		}
+		if strings.Contains(row, c.Hash) {
+			t.Errorf("width %d: row = %q, should never contain the full 40-char hash", width, row)
+		}
+	}
+}
+
+// TestRenderCommitRowWideLayoutUsesSingleSpaceGaps pins down the exact
+// wide-width row layout: single-space gaps around the date/clock block
+// (down from the former two spaces) and around the author field, while the
+// author->subject gap stays two spaces. Reconstructed field-by-field with
+// the same helpers renderCommitRow itself uses, then compared through
+// padRow so padding/truncation matches exactly.
+func TestRenderCommitRowWideLayoutUsesSingleSpaceGaps(t *testing.T) {
+	c := fixtureCommitForRow()
+	width := 120
+	row := renderCommitRow(c, width, false, false, "", false)
+
+	localDate := c.AuthorDate.Local()
+	sha := shaStyle.Render(fmt.Sprintf("%-*s", shaColumnWidth, shaPrefix(c.Hash)))
+	date := dateStyle.Render(localDate.Format("2006-01-02"))
+	clock := dateStyle.Render(localDate.Format("15:04"))
+	author := authorStyle.Render(fmt.Sprintf("%-*s", authorColumnWidth, truncate(c.AuthorName, authorColumnWidth)))
+	subject := normalRowStyle.Render(c.Subject)
+
+	want := padRow(sha+" "+date+" "+clock+" "+author+"  "+subject, width, rowFillStyle(false))
+	if row != want {
+		t.Errorf("row  = %q\nwant = %q", row, want)
+	}
+}
+
+// TestRenderCommitRowNarrowCollapsesDateAndTime pins down the narrow-width
+// (<100 cols) date/clock collapse: today's commits show only the time,
+// everything else shows only the date, padded to dateColumnWidth alone
+// (not the wider two-field width) — that shrink is the actual point of
+// collapsing the columns, so the subject gets the space back.
+func TestRenderCommitRowNarrowCollapsesDateAndTime(t *testing.T) {
+	width := 80
+
+	t.Run("today shows time only", func(t *testing.T) {
+		c := fixtureCommitForRow()
+		c.AuthorDate = time.Now()
+		row := renderCommitRow(c, width, false, false, "", false)
+
+		localDate := c.AuthorDate.Local()
+		sha := shaStyle.Render(fmt.Sprintf("%-*s", shaColumnWidth, shaPrefix(c.Hash)))
+		when := dateStyle.Render(fmt.Sprintf("%-*s", dateColumnWidth, localDate.Format("15:04")))
+		author := authorStyle.Render(fmt.Sprintf("%-*s", narrowAuthorColumnWidth, truncate(abbreviateName(c.AuthorName), narrowAuthorColumnWidth)))
+		subject := normalRowStyle.Render(c.Subject)
+
+		want := padRow(sha+" "+when+" "+author+"  "+subject, width, rowFillStyle(false))
+		if row != want {
+			t.Errorf("row  = %q\nwant = %q", row, want)
+		}
+		if strings.Contains(row, localDate.Format("2006-01-02")) {
+			t.Errorf("row = %q, should not show the date for today's commit in narrow layout", row)
+		}
+	})
+
+	t.Run("older commit shows date only", func(t *testing.T) {
+		c := fixtureCommitForRow() // AuthorDate is 2024-01-02, never "today"
+		row := renderCommitRow(c, width, false, false, "", false)
+
+		localDate := c.AuthorDate.Local()
+		sha := shaStyle.Render(fmt.Sprintf("%-*s", shaColumnWidth, shaPrefix(c.Hash)))
+		when := dateStyle.Render(fmt.Sprintf("%-*s", dateColumnWidth, localDate.Format("2006-01-02")))
+		author := authorStyle.Render(fmt.Sprintf("%-*s", narrowAuthorColumnWidth, truncate(abbreviateName(c.AuthorName), narrowAuthorColumnWidth)))
+		subject := normalRowStyle.Render(c.Subject)
+
+		want := padRow(sha+" "+when+" "+author+"  "+subject, width, rowFillStyle(false))
+		if row != want {
+			t.Errorf("row  = %q\nwant = %q", row, want)
+		}
+		if strings.Contains(row, localDate.Format("15:04")) {
+			t.Errorf("row = %q, should not show the time for a non-today commit in narrow layout", row)
+		}
+	})
+}
+
+// TestRenderCommitRowAuthorAbbreviationIsWidthGated pins down that the
+// per-word 3-char author abbreviation (and narrower author column) only
+// kicks in below the narrow breakpoint — at wide widths the full name is
+// shown at the normal column width.
+func TestRenderCommitRowAuthorAbbreviationIsWidthGated(t *testing.T) {
+	c := fixtureCommitForRow()
+	c.AuthorName = "Ada Lovelace"
+
+	narrowRow := renderCommitRow(c, 80, false, false, "", false)
+	wideRow := renderCommitRow(c, 120, false, false, "", false)
+
+	wantNarrowAuthor := authorStyle.Render(fmt.Sprintf("%-*s", narrowAuthorColumnWidth, "Ada Lov"))
+	wantWideAuthor := authorStyle.Render(fmt.Sprintf("%-*s", authorColumnWidth, "Ada Lovelace"))
+
+	if !strings.Contains(narrowRow, wantNarrowAuthor) {
+		t.Errorf("narrow row = %q, want abbreviated author %q", narrowRow, wantNarrowAuthor)
+	}
+	if strings.Contains(narrowRow, "Lovelace") {
+		t.Errorf("narrow row = %q, should not show the full author name", narrowRow)
+	}
+	if !strings.Contains(wideRow, wantWideAuthor) {
+		t.Errorf("wide row = %q, want the full author name %q", wideRow, wantWideAuthor)
 	}
 }

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/maiwald/gitl/internal/git"
@@ -10,15 +11,26 @@ import (
 
 const (
 	authorColumnWidth = 18
-	// shaColumnWidth is deliberately longer than git's default abbreviated
-	// hash (7 chars) to make same-prefix commits easier to tell apart at a
-	// glance.
-	shaColumnWidth = 10
+	// narrowAuthorColumnWidth is used instead of authorColumnWidth once the
+	// author name has been abbreviateName-shortened for a narrow pane (see
+	// renderCommitRow) — sized to comfortably fit a 3-word abbreviated name
+	// (e.g. "Jan St. Cla" is 11 chars), with truncate's own ellipsis as the
+	// safety net for longer ones.
+	narrowAuthorColumnWidth = 12
+	// shaColumnWidth matches git's own default abbreviated-hash length (the
+	// same length `%h`/`git rev-parse --short` use), prioritizing space for
+	// the subject over a wider margin against same-prefix collisions.
+	shaColumnWidth = 7
 	// dateColumnWidth and clockColumnWidth match the "2006-01-02"/"15:04"
 	// formats renderCommitRow uses. Named here (rather than left implicit)
 	// so renderWorktreeRow's blank columns can't drift from these.
 	dateColumnWidth  = 10
 	clockColumnWidth = 5
+	// narrowListWidth is the pane-width breakpoint below which
+	// renderCommitRow/renderWorktreeRow collapse the date+clock columns
+	// into one and abbreviate the author name, trading detail for space
+	// back to the subject/message.
+	narrowListWidth = 100
 )
 
 // renderCommitRow renders a single commit list row: abbreviated sha, date,
@@ -41,24 +53,50 @@ const (
 // resolved via rowFieldStyle, which explains why dimming/selection are
 // baked into each field rather than one outer style around the row.
 func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm string, isActiveMatch bool) string {
+	narrow := width < narrowListWidth
+
 	sha := fmt.Sprintf("%-*s", shaColumnWidth, shaPrefix(c.Hash))
 	localDate := c.AuthorDate.Local()
-	date := localDate.Format("2006-01-02")
-	clock := localDate.Format("15:04")
-	author := fmt.Sprintf("%-*s", authorColumnWidth, truncate(c.AuthorName, authorColumnWidth))
+
+	authorName := c.AuthorName
+	authorWidth := authorColumnWidth
+	if narrow {
+		authorName = abbreviateName(authorName)
+		authorWidth = narrowAuthorColumnWidth
+	}
+	author := fmt.Sprintf("%-*s", authorWidth, truncate(authorName, authorWidth))
 	subject := c.Subject
 
 	shaBase := rowFieldStyle(shaStyle, dimmed, selected)
 	dateBase := rowFieldStyle(dateStyle, dimmed, selected)
 	authorBase := rowFieldStyle(authorStyle, dimmed, selected)
 	subjectBase := rowFieldStyle(normalRowStyle, dimmed, selected)
+	gap := rowGap(selected)
 
 	// sha/date/clock are never search targets (SearchCommitHashes only
 	// matches author name and commit message), so they're just rendered in
 	// their base style — only author and subject go through highlightSpans.
 	sha = shaBase.Render(sha)
-	date = dateBase.Render(date)
-	clock = dateBase.Render(clock)
+
+	// when collapses date+clock into whichever single value is most useful
+	// for this row once the pane is narrow (see narrowListWidth): today's
+	// commits show the time, since the date is implied; anything else
+	// shows the date, since the time of day rarely matters at a glance.
+	// Padded to dateColumnWidth alone (not the full date+gap+clock width)
+	// since shrinking this column is the actual point of collapsing it.
+	var when string
+	if narrow {
+		text := localDate.Format("2006-01-02")
+		if isToday(localDate) {
+			text = localDate.Format("15:04")
+		}
+		when = dateBase.Render(fmt.Sprintf("%-*s", dateColumnWidth, text))
+	} else {
+		date := dateBase.Render(localDate.Format("2006-01-02"))
+		clock := dateBase.Render(localDate.Format("15:04"))
+		when = date + gap(" ") + clock
+	}
+
 	if !selected {
 		matchStyle := searchMatchStyle
 		if isActiveMatch {
@@ -71,13 +109,12 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 		subject = subjectBase.Render(subject)
 	}
 	refs := formatRefs(c.Refs, selected, dimmed)
-	gap := rowGap(selected)
 
 	var row string
 	if refs != "" {
-		row = sha + gap("  ") + date + gap(" ") + clock + gap("  ") + author + gap("  ") + refs + gap(" ") + subject
+		row = sha + gap(" ") + when + gap(" ") + author + gap("  ") + refs + gap(" ") + subject
 	} else {
-		row = sha + gap("  ") + date + gap(" ") + clock + gap("  ") + author + gap("  ") + subject
+		row = sha + gap(" ") + when + gap(" ") + author + gap("  ") + subject
 	}
 
 	return padRow(row, width, rowFillStyle(selected))
@@ -205,4 +242,29 @@ func truncate(s string, n int) string {
 		return string(r[:n])
 	}
 	return string(r[:n-1]) + "…"
+}
+
+// isToday reports whether t falls on the same calendar day as now, in t's
+// own location (renderCommitRow always calls this with an already-
+// .Local()-converted time, so both sides compare in local time).
+func isToday(t time.Time) bool {
+	y1, m1, d1 := t.Date()
+	y2, m2, d2 := time.Now().Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
+}
+
+// abbreviateName shortens a name for the narrow list layout by cutting each
+// whitespace-delimited part down to its first 3 runes (e.g. "Ada Lovelace"
+// -> "Ada Lov") rather than truncating the whole string, so every part of
+// the name stays recognizable instead of just the first — deliberately not
+// truncate, which cuts only the tail and adds an ellipsis.
+func abbreviateName(name string) string {
+	fields := strings.Fields(name)
+	for i, f := range fields {
+		r := []rune(f)
+		if len(r) > 3 {
+			fields[i] = string(r[:3])
+		}
+	}
+	return strings.Join(fields, " ")
 }

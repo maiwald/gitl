@@ -125,7 +125,7 @@ func TestListModelClearSearchResetsStatus(t *testing.T) {
 func TestListModelRenderDimsRowsOutsideMatchSet(t *testing.T) {
 	m := NewListModel(fixtureCommits(4))
 	m.SetTotalCount(4)
-	m.SetSize(80, 6)
+	m.SetSize(120, 6)
 	m.SetSearchDisplay("zzz", false)
 	m.Search([]int{1})
 	m.cursor = 3 // keep the selected row away from both rows under test
@@ -154,7 +154,7 @@ func TestListModelRenderDimsRowsOutsideMatchSet(t *testing.T) {
 func TestListModelRenderSkipsDimmingWithoutActiveSearch(t *testing.T) {
 	m := NewListModel(fixtureCommits(2))
 	m.SetTotalCount(2)
-	m.SetSize(80, 3)
+	m.SetSize(120, 3)
 	m.render()
 
 	paddedAuthor := fmt.Sprintf("%-*s", authorColumnWidth, "Author")

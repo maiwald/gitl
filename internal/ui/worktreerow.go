@@ -23,6 +23,8 @@ const entryTitleWidth = 16
 // passed whenever a search is active, rather than computed from the row's
 // own text.
 func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) string {
+	narrow := width < narrowListWidth
+
 	title := fmt.Sprintf("%-*s", entryTitleWidth, entryTitle(e.Kind))
 	nFiles := fmt.Sprintf("%d %s", len(e.Files), pluralize(len(e.Files), "file", "files"))
 	additions, deletions := diffTotals(e.Files)
@@ -41,10 +43,18 @@ func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) st
 	delStyle := rowFieldStyle(diffDeleteStyle, dimmed, selected)
 	_, counts := formatCountsStyled(additions, deletions, addStyle, delStyle, countStyle)
 
-	row := gap(strings.Repeat(" ", shaColumnWidth)) + gap("  ") +
-		gap(strings.Repeat(" ", dateColumnWidth)) + gap(" ") +
-		gap(strings.Repeat(" ", clockColumnWidth)) + gap("  ") +
-		titleStyle.Render(title) + gap("  ") +
+	// leading mirrors renderCommitRow's sha/when blank columns exactly, at
+	// whichever width is active, so the title/counts that follow keep
+	// landing where a real row's author/subject would.
+	leading := gap(strings.Repeat(" ", shaColumnWidth)) + gap(" ")
+	if narrow {
+		leading += gap(strings.Repeat(" ", dateColumnWidth)) + gap(" ")
+	} else {
+		leading += gap(strings.Repeat(" ", dateColumnWidth)) + gap(" ") +
+			gap(strings.Repeat(" ", clockColumnWidth)) + gap(" ")
+	}
+
+	row := leading + titleStyle.Render(title) + gap("  ") +
 		countStyle.Render(nFiles) + gap("  ") + counts
 
 	return padRow(row, width, rowFillStyle(selected))
