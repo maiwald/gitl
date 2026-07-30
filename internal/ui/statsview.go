@@ -33,7 +33,11 @@ const statsSectionTitle = "Files changed"
 // rather than git's own prose "X insertions(+), Y deletions(-)" — so the
 // totals' own +/- counts land in the exact same columns as every file
 // above them instead of floating at whatever column a sentence happens to
-// put them.
+// put them. A blank line separates the per-file rows from the totals row
+// (the same blank-line convention detail.go's reflow uses between the
+// header/stats/diff blocks), so the totals row reads as a summary set
+// apart from the files rather than one more row among them, while still
+// sharing their column layout.
 func statLinesFor(files []git.File, width int) []string {
 	if len(files) == 0 {
 		return nil
@@ -75,11 +79,12 @@ func statLinesFor(files []git.File, width int) []string {
 		nameWidth = n
 	}
 
-	lines := make([]string, 0, len(files)+2)
+	lines := make([]string, 0, len(files)+3)
 	lines = append(lines, renderClipped(fileHeaderStyle, statsSectionTitle, width))
 	for i, f := range files {
 		lines = append(lines, renderStatLine(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], width))
 	}
+	lines = append(lines, "")
 	lines = append(lines, renderStatLine(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, width))
 	return lines
 }

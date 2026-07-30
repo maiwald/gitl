@@ -62,7 +62,9 @@ func TestStatLinesForTotalsPluralizationAndOmission(t *testing.T) {
 // the totals row runs through the exact same renderStatLine column layout
 // (shared nameWidth/addWidth/delWidth) as every file row above it, so its
 // own +N/-M lands in the identical columns rather than floating wherever a
-// prose sentence happens to put it.
+// prose sentence happens to put it. The blank separator line between the
+// files and the totals row is deliberately excluded from this comparison —
+// it's a spacer, not a column-bearing row.
 func TestStatLinesForTotalsRowAlignsWithFiles(t *testing.T) {
 	files := []git.File{
 		{Path: "a.txt", Status: git.StatusModified, Additions: 3, Deletions: 1},
@@ -71,7 +73,11 @@ func TestStatLinesForTotalsRowAlignsWithFiles(t *testing.T) {
 	lines := statLinesFor(files, 0)
 
 	want := lipgloss.Width(lines[1])
+	last := len(lines) - 1
 	for i := 1; i < len(lines); i++ {
+		if i == last-1 {
+			continue // blank separator line before the totals row
+		}
 		if got := lipgloss.Width(lines[i]); got != want {
 			t.Errorf("lines[%d] width = %d, want %d (every row, including totals, shares one column layout)", i, got, want)
 		}
@@ -80,15 +86,18 @@ func TestStatLinesForTotalsRowAlignsWithFiles(t *testing.T) {
 
 // TestStatLinesForStructure pins down the block's shape: a "Files changed"
 // header bar (matching the diff's per-file header bar style), one line per
-// file, then the totals line last.
+// file, a blank separator, then the totals line last.
 func TestStatLinesForStructure(t *testing.T) {
 	files := []git.File{
 		{Path: "a.txt", Status: git.StatusModified, Additions: 3, Deletions: 1},
 		{Path: "b.txt", Status: git.StatusAdded, Additions: 10},
 	}
 	lines := statLinesFor(files, 80)
-	if len(lines) != len(files)+2 {
-		t.Fatalf("got %d lines, want %d (header bar + one per file + totals)", len(lines), len(files)+2)
+	if len(lines) != len(files)+3 {
+		t.Fatalf("got %d lines, want %d (header bar + one per file + blank separator + totals)", len(lines), len(files)+3)
+	}
+	if sep := lines[len(lines)-2]; sep != "" {
+		t.Errorf("separator line = %q, want blank line between files and totals", sep)
 	}
 
 	if !strings.Contains(lines[0], "Files changed") {
