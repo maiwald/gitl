@@ -275,3 +275,38 @@ func TestRenderCommitRowAuthorAbbreviationIsWidthGated(t *testing.T) {
 		t.Errorf("wide row = %q, want the full author name %q", wideRow, wantWideAuthor)
 	}
 }
+
+// TestAbbreviateNameCapsAtTwoGroups pins down that abbreviateName keeps at
+// most two 3-letter groups, marking a dropped remainder with a trailing
+// "…" — this is what lets narrowAuthorColumnWidth shrink to 8 rather than
+// needing to fit an arbitrary number of abbreviated words.
+func TestAbbreviateNameCapsAtTwoGroups(t *testing.T) {
+	cases := []struct{ name, want string }{
+		{"Ada", "Ada"},
+		{"Ada Lovelace", "Ada Lov"},
+		{"Grace Brewster Murray Hopper", "Gra Bre…"},
+	}
+	for _, c := range cases {
+		if got := abbreviateName(c.name); got != c.want {
+			t.Errorf("abbreviateName(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestRenderCommitRowNarrowAuthorEllipsizesThreeOrMoreWords pins down that
+// a name with more than two whitespace-delimited parts renders with the
+// "…" marker (not just silently dropping the extra words) in the narrow
+// list layout.
+func TestRenderCommitRowNarrowAuthorEllipsizesThreeOrMoreWords(t *testing.T) {
+	c := fixtureCommitForRow()
+	c.AuthorName = "Grace Brewster Murray Hopper"
+
+	row := renderCommitRow(c, 80, false, false, "", false)
+	wantAuthor := authorStyle.Render(fmt.Sprintf("%-*s", narrowAuthorColumnWidth, "Gra Bre…"))
+	if !strings.Contains(row, wantAuthor) {
+		t.Errorf("row = %q, want the ellipsized abbreviated author %q", row, wantAuthor)
+	}
+	if strings.Contains(row, "Murray") || strings.Contains(row, "Hopper") {
+		t.Errorf("row = %q, should not show the third/fourth name parts", row)
+	}
+}

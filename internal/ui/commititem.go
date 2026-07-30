@@ -13,10 +13,11 @@ const (
 	authorColumnWidth = 18
 	// narrowAuthorColumnWidth is used instead of authorColumnWidth once the
 	// author name has been abbreviateName-shortened for a narrow pane (see
-	// renderCommitRow) — sized to comfortably fit a 3-word abbreviated name
-	// (e.g. "Jan St. Cla" is 11 chars), with truncate's own ellipsis as the
-	// safety net for longer ones.
-	narrowAuthorColumnWidth = 12
+	// renderCommitRow) — abbreviateName caps its output at two 3-letter
+	// groups plus an optional "…" (e.g. "Ada Lov", or "Gra Bre…" for a
+	// name with more parts), so 8 chars ("Xxx Yyy…") is the true max width,
+	// with truncate's own ellipsis kept as a defensive no-op fallback.
+	narrowAuthorColumnWidth = 8
 	// shaColumnWidth matches git's own default abbreviated-hash length (the
 	// same length `%h`/`git rev-parse --short` use), prioritizing space for
 	// the subject over a wider margin against same-prefix collisions.
@@ -257,14 +258,25 @@ func isToday(t time.Time) bool {
 // whitespace-delimited part down to its first 3 runes (e.g. "Ada Lovelace"
 // -> "Ada Lov") rather than truncating the whole string, so every part of
 // the name stays recognizable instead of just the first — deliberately not
-// truncate, which cuts only the tail and adds an ellipsis.
+// truncate, which cuts only the tail and adds an ellipsis. At most two
+// abbreviated groups are kept (further shrinking the narrow author column);
+// a name with more parts than that gets a trailing "…" to signal the drop
+// (e.g. "Grace Brewster Murray Hopper" -> "Gra Bre…").
 func abbreviateName(name string) string {
 	fields := strings.Fields(name)
-	for i, f := range fields {
-		r := []rune(f)
+	kept := len(fields)
+	if kept > 2 {
+		kept = 2
+	}
+	for i := 0; i < kept; i++ {
+		r := []rune(fields[i])
 		if len(r) > 3 {
 			fields[i] = string(r[:3])
 		}
 	}
-	return strings.Join(fields, " ")
+	abbreviated := strings.Join(fields[:kept], " ")
+	if len(fields) > kept {
+		abbreviated += "…"
+	}
+	return abbreviated
 }
