@@ -150,15 +150,19 @@ func padLeft(s string, width int) string {
 // worktree row's summary); statLinesFor's own table instead keeps additions
 // and deletions apart via formatCountParts, so each gets its own column.
 func formatCounts(additions, deletions int) (plain, styled string) {
-	return formatCountsStyled(additions, deletions, diffAddStyle, diffDeleteStyle)
+	return formatCountsStyled(additions, deletions, diffAddStyle, diffDeleteStyle, lipgloss.NewStyle())
 }
 
 // formatCountsStyled is formatCounts generalized over the add/delete
 // styles used for the styled half, so a selected/dimmed row elsewhere (e.g.
 // renderWorktreeRow) can swap in its own per-state styles the same way
 // every other per-field style on such a row does, rather than always using
-// the plain diffAddStyle/diffDeleteStyle colors.
-func formatCountsStyled(additions, deletions int, addStyle, delStyle lipgloss.Style) (plain, styled string) {
+// the plain diffAddStyle/diffDeleteStyle colors. sep styles the literal
+// space joining the two halves — needed because addStyle/delStyle's
+// Render calls each end with their own ANSI reset, so a bare " " between
+// them would fall back to the terminal's default background instead of
+// carrying a selected row's cursor highlight across the gap.
+func formatCountsStyled(additions, deletions int, addStyle, delStyle, sep lipgloss.Style) (plain, styled string) {
 	var plainParts, styledParts []string
 	if additions > 0 {
 		plainParts = append(plainParts, fmt.Sprintf("+%d", additions))
@@ -171,7 +175,7 @@ func formatCountsStyled(additions, deletions int, addStyle, delStyle lipgloss.St
 	if len(plainParts) == 0 {
 		return "0", "0"
 	}
-	return strings.Join(plainParts, " "), strings.Join(styledParts, " ")
+	return strings.Join(plainParts, " "), strings.Join(styledParts, sep.Render(" "))
 }
 
 // diffTotals sums additions/deletions across files — used by

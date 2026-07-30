@@ -31,16 +31,15 @@ func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) st
 	countStyle := rowFieldStyle(normalRowStyle, dimmed, selected)
 	gap := rowGap(selected)
 
-	addStyle, delStyle := diffAddStyle, diffDeleteStyle
-	if dimmed || selected {
-		// Once dimmed or selected, the counts' own coloring is replaced
-		// wholesale by countStyle (which already carries the cursor
-		// background when selected), the same way every other field on a
-		// selected/dimmed row swaps its whole base style rather than
-		// layering onto its normal one — see rowFieldStyle.
-		addStyle, delStyle = countStyle, countStyle
-	}
-	_, counts := formatCountsStyled(additions, deletions, addStyle, delStyle)
+	// rowFieldStyle keeps diffAddStyle/diffDeleteStyle's own foreground
+	// when selected (merging in just the cursor background), and only
+	// swaps them out wholesale for dimStyle when dimmed — the same
+	// treatment every other field on the row gets. A plain `dimmed ||
+	// selected` swap here would flatten the +/- coloring to countStyle
+	// the moment the row is selected, even without a search active.
+	addStyle := rowFieldStyle(diffAddStyle, dimmed, selected)
+	delStyle := rowFieldStyle(diffDeleteStyle, dimmed, selected)
+	_, counts := formatCountsStyled(additions, deletions, addStyle, delStyle, countStyle)
 
 	row := gap(strings.Repeat(" ", shaColumnWidth)) + gap("  ") +
 		gap(strings.Repeat(" ", dateColumnWidth)) + gap(" ") +
