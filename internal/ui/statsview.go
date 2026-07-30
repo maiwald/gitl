@@ -21,53 +21,129 @@ const statsSectionTitle = "Files changed"
 // per-file column is a proportionally-scaled visual anyway, not exact
 // counts. Returns nil when files is empty (merge commits / no diff), so
 // callers can skip the block entirely.
+//
+// Additions and deletions get their own right-aligned column each (rather
+// than right-aligning the combined "+N -M" string as one block), so a
+// file's "+" lines up with every other file's "+" regardless of how many
+// digits its neighbors' counts have — e.g. "+3" above "+120" stay aligned
+// on their own column instead of drifting because "+120" is longer. The
+// totals line is rendered through the same renderStatLine column layout
+// (its "N files changed" label standing in for a file's name, and the
+// summed counts running through the same formatCountParts/padding logic),
+// rather than git's own prose "X insertions(+), Y deletions(-)" — so the
+// totals' own +/- counts land in the exact same columns as every file
+// above them instead of floating at whatever column a sentence happens to
+// put them.
 func statLinesFor(files []git.File, width int) []string {
 	if len(files) == 0 {
 		return nil
 	}
 
 	nameWidth := 0
-	countWidth := 0
-	plainCounts := make([]string, len(files))
-	styledCounts := make([]string, len(files))
+	addWidth := 0
+	delWidth := 0
+	addCounts := make([]string, len(files))
+	delCounts := make([]string, len(files))
 	var totalAdd, totalDel int
 	for i, f := range files {
 		if n := len(filePathLabel(f)); n > nameWidth {
 			nameWidth = n
 		}
-		if f.Binary {
-			plainCounts[i], styledCounts[i] = "Bin", binaryNoticeStyle.Render("Bin")
-		} else {
-			plainCounts[i], styledCounts[i] = formatCounts(f.Additions, f.Deletions)
-		}
-		if n := len(plainCounts[i]); n > countWidth {
-			countWidth = n
+		if !f.Binary {
+			addCounts[i], delCounts[i] = formatCountParts(f.Additions, f.Deletions)
+			if n := len(addCounts[i]); n > addWidth {
+				addWidth = n
+			}
+			if n := len(delCounts[i]); n > delWidth {
+				delWidth = n
+			}
 		}
 		totalAdd += f.Additions
 		totalDel += f.Deletions
 	}
 
+	totalAddCount, totalDelCount := formatCountParts(totalAdd, totalDel)
+	if n := len(totalAddCount); n > addWidth {
+		addWidth = n
+	}
+	if n := len(totalDelCount); n > delWidth {
+		delWidth = n
+	}
+
+	summaryLabel := fmt.Sprintf("%d %s changed", len(files), pluralize(len(files), "file", "files"))
+	if n := len(summaryLabel); n > nameWidth {
+		nameWidth = n
+	}
+
 	lines := make([]string, 0, len(files)+2)
 	lines = append(lines, renderClipped(fileHeaderStyle, statsSectionTitle, width))
 	for i, f := range files {
-		lines = append(lines, renderStatLine(f, nameWidth, countWidth, plainCounts[i], styledCounts[i], width))
+		lines = append(lines, renderStatLine(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], width))
 	}
-	lines = append(lines, renderClipped(lipgloss.NewStyle(), statTotalsLine(len(files), totalAdd, totalDel), width))
+	lines = append(lines, renderStatLine(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, width))
 	return lines
 }
 
-func renderStatLine(f git.File, nameWidth, countWidth int, plainCounts, styledCounts string, width int) string {
-	pad := strings.Repeat(" ", countWidth-len(plainCounts))
-	content := fmt.Sprintf(" %-*s  %s%s", nameWidth, filePathLabel(f), pad, styledCounts)
-	return renderClipped(lipgloss.NewStyle(), content, width)
+// formatCountParts renders a file's or totals row's addition/deletion
+// counts as separate "+N"/"-M" strings (empty when that count is zero), so
+// statLinesFor can right-align additions and deletions in their own
+// columns rather than as one combined string. Compare formatCounts, which
+// joins the same two pieces into a single value for callers (e.g. a
+// worktree row's summary) that just need one combined "+N -M" string.
+func formatCountParts(additions, deletions int) (add, del string) {
+	if additions > 0 {
+		add = fmt.Sprintf("+%d", additions)
+	}
+	if deletions > 0 {
+		del = fmt.Sprintf("-%d", deletions)
+	}
+	return add, del
+}
+
+// renderStatLine renders one row of the stats table: a left-justified label
+// (a file's path, or the totals line's "N files changed") followed by its
+// additions/deletions right-aligned into the shared addWidth/delWidth
+// columns computed across every row by statLinesFor, so every row's counts
+// land in the same columns regardless of how many digits they or their
+// neighbors have. binary and the case where both counts are empty (a
+// mode-only change with no diff content, or an all-binary/all-zero totals
+// row) each collapse to a single marker ("Bin" / "0") right-aligned across
+// the combined width of both columns, since there's nothing to split
+// between them.
+func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int) string {
+	name := fmt.Sprintf(" %-*s  ", nameWidth, label)
+	combinedWidth := addWidth + 1 + delWidth
+
+	switch {
+	case binary:
+		return renderClipped(lipgloss.NewStyle(), name+padLeft("Bin", combinedWidth), width)
+	case addCount == "" && delCount == "":
+		return renderClipped(lipgloss.NewStyle(), name+padLeft("0", combinedWidth), width)
+	default:
+		addPad := strings.Repeat(" ", addWidth-len(addCount))
+		delPad := strings.Repeat(" ", delWidth-len(delCount))
+		content := fmt.Sprintf("%s%s%s %s%s", name, addPad, diffAddStyle.Render(addCount), delPad, diffDeleteStyle.Render(delCount))
+		return renderClipped(lipgloss.NewStyle(), content, width)
+	}
+}
+
+// padLeft right-aligns s within width, left-padding with spaces. It's a
+// no-op (never truncates) when s is already at or beyond width.
+func padLeft(s string, width int) string {
+	if n := width - len(s); n > 0 {
+		return strings.Repeat(" ", n) + s
+	}
+	return s
 }
 
 // formatCounts renders "+N -M" both plain (for width measurement, since
 // callers need to right-align counts across files without an ANSI-aware
 // width directive) and styled (coloring each half like the corresponding
 // diff line op, diffAddStyle/diffDeleteStyle), omitting either half when
-// its count is zero, mirroring how statTotalsLine drops a zero-valued
-// clause. The two are computed together so they can't drift out of sync.
+// its count is zero. The two are computed together so they can't drift out
+// of sync. Used where only a single joined value is needed (e.g. a
+// worktree row's summary); statLinesFor's own table instead keeps additions
+// and deletions apart via formatCountParts, so each gets its own column.
 func formatCounts(additions, deletions int) (plain, styled string) {
 	return formatCountsStyled(additions, deletions, diffAddStyle, diffDeleteStyle)
 }
@@ -103,20 +179,6 @@ func diffTotals(files []git.File) (additions, deletions int) {
 		deletions += f.Deletions
 	}
 	return additions, deletions
-}
-
-// statTotalsLine mirrors git's own "N files changed, X insertions(+), Y
-// deletions(-)" summary, including its pluralization and its omission of
-// an insertions/deletions clause when that count is zero.
-func statTotalsLine(nFiles, additions, deletions int) string {
-	segs := []string{fmt.Sprintf("%d %s changed", nFiles, pluralize(nFiles, "file", "files"))}
-	if additions > 0 {
-		segs = append(segs, fmt.Sprintf("%d %s(+)", additions, pluralize(additions, "insertion", "insertions")))
-	}
-	if deletions > 0 {
-		segs = append(segs, fmt.Sprintf("%d %s(-)", deletions, pluralize(deletions, "deletion", "deletions")))
-	}
-	return " " + strings.Join(segs, ", ")
 }
 
 func pluralize(n int, singular, plural string) string {

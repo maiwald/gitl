@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -15,24 +15,66 @@ func TestStatLinesForEmptyFilesReturnsNil(t *testing.T) {
 	}
 }
 
-func TestStatTotalsLinePluralizationAndOmission(t *testing.T) {
+// TestStatLinesForTotalsPluralizationAndOmission pins down the totals row's
+// "N file(s) changed" label and its +N/-M clauses (each omitted when that
+// side's sum is zero), the same way an individual file's own counts omit a
+// zero side.
+func TestStatLinesForTotalsPluralizationAndOmission(t *testing.T) {
 	tests := []struct {
-		name             string
-		nFiles, add, del int
-		want             string
+		name      string
+		files     []git.File
+		wantLabel string
+		wantAdd   string // "" means the styled +N clause must be absent
+		wantDel   string // "" means the styled -M clause must be absent
 	}{
-		{"single file no changes", 1, 0, 0, " 1 file changed"},
-		{"single insertion", 1, 1, 0, " 1 file changed, 1 insertion(+)"},
-		{"single deletion", 1, 0, 1, " 1 file changed, 1 deletion(-)"},
-		{"many files both", 3, 42, 7, " 3 files changed, 42 insertions(+), 7 deletions(-)"},
-		{"insertions only, many", 2, 5, 0, " 2 files changed, 5 insertions(+)"},
+		{"single file no changes", []git.File{{Path: "a.txt"}}, "1 file changed", "", ""},
+		{"single insertion", []git.File{{Path: "a.txt", Additions: 1}}, "1 file changed", "+1", ""},
+		{"single deletion", []git.File{{Path: "a.txt", Deletions: 1}}, "1 file changed", "", "-1"},
+		{
+			"many files both",
+			[]git.File{{Path: "a.txt", Additions: 40, Deletions: 7}, {Path: "b.txt", Additions: 2}},
+			"2 files changed", "+42", "-7",
+		},
+		{
+			"insertions only, many",
+			[]git.File{{Path: "a.txt", Additions: 3}, {Path: "b.txt", Additions: 2}},
+			"2 files changed", "+5", "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := statTotalsLine(tt.nFiles, tt.add, tt.del); got != tt.want {
-				t.Errorf("statTotalsLine(%d, %d, %d) = %q, want %q", tt.nFiles, tt.add, tt.del, got, tt.want)
+			total := statLinesFor(tt.files, 80)
+			last := total[len(total)-1]
+			if !strings.Contains(last, tt.wantLabel) {
+				t.Errorf("totals line = %q, want it to contain %q", last, tt.wantLabel)
+			}
+			if tt.wantAdd != "" && !strings.Contains(last, diffAddStyle.Render(tt.wantAdd)) {
+				t.Errorf("totals line = %q, want it to contain %s styled with diffAddStyle", last, tt.wantAdd)
+			}
+			if tt.wantDel != "" && !strings.Contains(last, diffDeleteStyle.Render(tt.wantDel)) {
+				t.Errorf("totals line = %q, want it to contain %s styled with diffDeleteStyle", last, tt.wantDel)
 			}
 		})
+	}
+}
+
+// TestStatLinesForTotalsRowAlignsWithFiles pins down the "bonus" alignment:
+// the totals row runs through the exact same renderStatLine column layout
+// (shared nameWidth/addWidth/delWidth) as every file row above it, so its
+// own +N/-M lands in the identical columns rather than floating wherever a
+// prose sentence happens to put it.
+func TestStatLinesForTotalsRowAlignsWithFiles(t *testing.T) {
+	files := []git.File{
+		{Path: "a.txt", Status: git.StatusModified, Additions: 3, Deletions: 1},
+		{Path: "b.txt", Status: git.StatusModified, Additions: 120, Deletions: 30},
+	}
+	lines := statLinesFor(files, 0)
+
+	want := lipgloss.Width(lines[1])
+	for i := 1; i < len(lines); i++ {
+		if got := lipgloss.Width(lines[i]); got != want {
+			t.Errorf("lines[%d] width = %d, want %d (every row, including totals, shares one column layout)", i, got, want)
+		}
 	}
 }
 
@@ -56,9 +98,12 @@ func TestStatLinesForStructure(t *testing.T) {
 		t.Errorf("lines[0] = %q, want it styled with fileHeaderStyle (same as a diff file's header bar)", lines[0])
 	}
 
-	want := statTotalsLine(2, 13, 1)
-	if !strings.Contains(lines[len(lines)-1], strings.TrimSpace(want)) {
-		t.Errorf("last line = %q, want it to contain %q", lines[len(lines)-1], want)
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, "2 files changed") {
+		t.Errorf("last line = %q, want it to contain the file count", last)
+	}
+	if !strings.Contains(last, diffAddStyle.Render("+13")) || !strings.Contains(last, diffDeleteStyle.Render("-1")) {
+		t.Errorf("last line = %q, want it to contain the summed +13/-1 counts", last)
 	}
 }
 
@@ -125,8 +170,11 @@ func TestStatLinesForClipsToWidth(t *testing.T) {
 func TestStatLinesForZeroChangeFileShowsZero(t *testing.T) {
 	files := []git.File{{Path: "mode-only.txt", Status: git.StatusModified}}
 	lines := statLinesFor(files, 80)
-	if !strings.Contains(lines[1], fmt.Sprintf("%s  0", "mode-only.txt")) {
-		t.Errorf("zero-change line = %q, want it to contain %q", lines[1], "mode-only.txt  0")
+	// The name column's width can grow to fit the totals row's own "N
+	// files changed" label, so the gap before "0" isn't a fixed two
+	// spaces — just check the name is followed by whitespace then "0".
+	if !regexp.MustCompile(`mode-only\.txt\s+0`).MatchString(lines[1]) {
+		t.Errorf("zero-change line = %q, want it to contain %q followed by whitespace and 0", lines[1], "mode-only.txt")
 	}
 }
 
