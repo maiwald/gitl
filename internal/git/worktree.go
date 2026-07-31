@@ -21,16 +21,14 @@ const (
 )
 
 // WorktreeEntry is one synthetic list entry (working tree or staged
-// changes) together with the diff behind it. It carries no commit metadata
-// because there is none.
+// changes) together with the diff behind it.
 type WorktreeEntry struct {
 	Kind  EntryKind
 	Files []File
 }
 
 // HasStagedChanges reports whether the index differs from HEAD, via `git
-// diff --cached --quiet`'s exit code. Note the polarity is the opposite of
-// HasCommits' rev-parse check: here exit 1 means "yes, there are changes".
+// diff --cached --quiet`'s exit code.
 func (r *Repo) HasStagedChanges(ctx context.Context) (bool, error) {
 	_, differs, err := runGitDiffExit(ctx, r.Path, "diff", "--cached", "--quiet")
 	return differs, err

@@ -18,14 +18,9 @@ func diffArgs(extra ...string) []string {
 	return append([]string{"diff", "--no-color", "-U3"}, extra...)
 }
 
-// diffFiles runs `git diff --no-color -U3 <args...>` and parses the result
-// — the one bridge from a git diff invocation to parsed Files, shared by
-// every caller that just needs "diff, then parse" with different trailing
-// arguments (a revision range, --cached, no arguments at all for the plain
-// worktree-vs-index diff). untrackedDiff (worktree.go) is the deliberate
-// exception: --no-index has different error semantics (a real difference
-// is reported via exit code 1, handled by runGitDiffExit), so it doesn't
-// go through this helper.
+// diffFiles runs `git diff --no-color -U3 <args...>` and parses the result.
+// untrackedDiff (worktree.go) doesn't use this helper: `--no-index` reports
+// a real difference via exit code 1, handled by runGitDiffExit instead.
 func (r *Repo) diffFiles(ctx context.Context, args ...string) ([]File, error) {
 	out, err := runGit(ctx, r.Path, diffArgs(args...)...)
 	if err != nil {
