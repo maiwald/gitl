@@ -338,7 +338,7 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 		}
 		content := line
 		if len(spans[li]) > 0 || len(lineMatches) > 0 {
-			content = renderLineWithBaseSpans(line, spans[li], lineMatches)
+			content = renderLineWithBaseSpans(line, spans[li], lineMatches, lipgloss.NewStyle())
 		}
 		if width <= 0 {
 			wrapped = append(wrapped, content)
@@ -353,10 +353,15 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 // search-match spans (matches) into one already-styled string: walks the
 // boundary points from both span lists, and for each resulting piece
 // renders with whichever match style covers it, else whichever baseSpan
-// covers it, else colorless — a match always wins over a base span on
-// overlap (e.g. a search hit inside the author's name still shows the
-// search highlight, not the name's blue).
-func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch) string {
+// covers it, else base — a match always wins over a base span on overlap
+// (e.g. a search hit inside the author's name still shows the search
+// highlight, not the name's blue). base is the fallback for text outside
+// every span and match: colorless for header/message lines (spans already
+// cover every colored substring there), or a diff line's op color
+// (diffAddStyle/diffDeleteStyle/diffContextStyle) when called from
+// renderDiffLine with no spans at all — this function is the general case
+// of what used to be two near-identical helpers, one per caller.
+func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style) string {
 	bounds := map[int]bool{0: true, len(text): true}
 	for _, s := range spans {
 		bounds[s.start] = true
@@ -383,7 +388,7 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch)
 				return s.style
 			}
 		}
-		return lipgloss.NewStyle()
+		return base
 	}
 
 	var b strings.Builder

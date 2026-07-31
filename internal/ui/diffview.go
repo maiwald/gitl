@@ -179,7 +179,11 @@ func renderDiffLine(l git.DiffLine, width int, matches []lineMatch) []string {
 	if len(matches) == 0 {
 		content = style.Render(text)
 	} else {
-		content = renderLineWithMatches(text, len(prefix), style, matches)
+		shifted := make([]lineMatch, len(matches))
+		for i, m := range matches {
+			shifted[i] = lineMatch{start: len(prefix) + m.start, end: len(prefix) + m.end, active: m.active}
+		}
+		content = renderLineWithBaseSpans(text, nil, shifted, style)
 	}
 
 	if width <= 0 {
@@ -202,26 +206,4 @@ func diffLineStyle(op git.LineOp) (lipgloss.Style, string) {
 	default:
 		return diffContextStyle, " "
 	}
-}
-
-// renderLineWithMatches splits text into pre/match/post spans at each
-// match's byte offsets (into text, hence prefixLen to shift DiffMatch's
-// DiffLine.Text-relative columns), styling unmatched spans with base and
-// matched spans with searchMatchStyle/searchActiveMatchStyle, then
-// concatenating the already-rendered pieces.
-func renderLineWithMatches(text string, prefixLen int, base lipgloss.Style, matches []lineMatch) string {
-	var b strings.Builder
-	pos := 0
-	for _, m := range matches {
-		start, end := prefixLen+m.start, prefixLen+m.end
-		b.WriteString(base.Render(text[pos:start]))
-		style := searchMatchStyle
-		if m.active {
-			style = searchActiveMatchStyle
-		}
-		b.WriteString(style.Render(text[start:end]))
-		pos = end
-	}
-	b.WriteString(base.Render(text[pos:]))
-	return b.String()
 }
