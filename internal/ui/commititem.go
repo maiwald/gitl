@@ -36,23 +36,18 @@ const (
 
 // renderCommitRow renders a single commit list row: abbreviated sha, date,
 // local time, author, ref decorations, and the commit subject,
-// truncated/padded to width. searchTerm highlights matching substrings
-// (case insensitive) in the author and subject fields only, since those
-// are the only visible fields SearchCommitHashes actually searches (author
-// name and commit message — sha/date/refs are never match targets, so
-// they're never highlighted even if their text happens to contain the
-// term). isActiveMatch picks a visually distinct style for whichever match
-// n/N currently points at. A commit can be a search match via its full
-// message body, which isn't shown in the row at all — in that case
-// there's simply nothing here to highlight, which is expected.
+// truncated/padded to width. searchTerm highlights matches in the author
+// and subject fields only — the only fields SearchCommitHashes actually
+// searches, so a body-only match has nothing here to highlight, which is
+// expected. isActiveMatch picks a distinct style for whichever match n/N
+// currently points at.
 //
-// dimmed fades a row that isn't among the search's real matches (as
-// determined by the actual git query, not by whether this row's visible
-// text happens to contain the term — see ListModel.render) — this is what
-// makes a body-only match (nothing highlighted in the row itself) visually
-// distinguishable from an outright non-match. Each field's base style is
-// resolved via rowFieldStyle, which explains why dimming/selection are
-// baked into each field rather than one outer style around the row.
+// dimmed fades a row outside the search's real match set (from the actual
+// git query, not from re-scanning this row's own text — see
+// ListModel.render), making a body-only match (nothing to highlight)
+// distinguishable from a true non-match. Each field's base style comes
+// from rowFieldStyle, which is why dimming/selection are baked into each
+// field rather than applied as one outer style around the row.
 func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm string, isActiveMatch bool) string {
 	narrow := width < narrowListWidth
 
@@ -118,15 +113,13 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 	return padRow(row, width, rowFillStyle(selected))
 }
 
-// rowFieldStyle resolves a row field's base style against the row's
-// dimmed/selected state: dimmed swaps in dimStyle wholesale (rather than
-// darkening base), then selected merges in cursorRowBg on top — merged
-// into each field's own style (and the literal separators via rowGap)
-// rather than applied as one flat style wrapped around the finished row,
-// since every field is independently Render()'d and each Render() call
-// ends with its own ANSI reset, which would cancel a single outer
-// background the moment the first one fires. Shared by renderCommitRow,
-// formatRefs, and renderWorktreeRow.
+// rowFieldStyle resolves a row field's base style against dimmed/selected
+// state: dimmed swaps in dimStyle wholesale (not a darkened base), then
+// selected merges in cursorRowBg. Applied per-field (and to literal
+// separators via rowGap) rather than as one style wrapped around the
+// finished row, since each field is independently Render()'d and its own
+// ANSI reset would cancel a single outer background the moment it fires.
+// Shared by renderCommitRow, formatRefs, and renderWorktreeRow.
 func rowFieldStyle(base lipgloss.Style, dimmed, selected bool) lipgloss.Style {
 	if dimmed {
 		base = dimStyle
@@ -157,12 +150,11 @@ func rowGap(selected bool) func(string) string {
 
 // padRow truncates row to width and pads any remainder with trailing
 // spaces in style. MaxWidth alone (no Width) truncates in place; combining
-// Width with MaxWidth here would run row — which already contains several
+// Width with MaxWidth would run row — which already contains several
 // independently-Rendered, reset-terminated spans — through lipgloss's
-// paragraph reflow, which miscounts cell positions across those resets and
-// can hard-wrap in the middle of a field (e.g. mid-date) regardless of the
-// requested width. Padding to width is done by hand instead, since Width()
-// no longer does it for us.
+// paragraph reflow, miscounting cell positions across those resets and
+// risking a hard-wrap mid-field, so padding to width is done by hand
+// instead.
 func padRow(row string, width int, style lipgloss.Style) string {
 	row = style.MaxWidth(width).Render(row)
 	if pad := width - lipgloss.Width(row); pad > 0 {
@@ -269,13 +261,10 @@ func isToday(t time.Time) bool {
 }
 
 // abbreviateName shortens a name for the narrow list layout by cutting each
-// whitespace-delimited part down to its first 3 runes (e.g. "Ada Lovelace"
-// -> "Ada Lov") rather than truncating the whole string, so every part of
-// the name stays recognizable instead of just the first — deliberately not
-// truncate, which cuts only the tail and adds an ellipsis. At most two
-// abbreviated groups are kept (further shrinking the narrow author column);
-// a name with more parts than that gets a trailing "…" to signal the drop
-// (e.g. "Grace Brewster Murray Hopper" -> "Gra Bre…").
+// whitespace-delimited part to its first 3 runes (e.g. "Ada Lovelace" ->
+// "Ada Lov"), unlike truncate, which would cut only the tail. At most two
+// parts are kept; a name with more gets a trailing "…" (e.g. "Grace
+// Brewster Murray Hopper" -> "Gra Bre…").
 func abbreviateName(name string) string {
 	fields := strings.Fields(name)
 	kept := len(fields)

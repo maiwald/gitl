@@ -17,11 +17,9 @@ const entryTitleWidth = 16
 // renderCommitRow uses are left blank — a synthetic entry has none of that
 // metadata — so the row's columns stay aligned with the real commit rows
 // below it, with the title and its file-count/+- totals sitting where the
-// subject column would be. There's no searchTerm/isActiveMatch parameter
-// here: a synthetic row can never be a search match (matches come from git
-// log queries over real commits only), which is exactly why dimmed is
-// passed whenever a search is active, rather than computed from the row's
-// own text.
+// subject column would be. There's no searchTerm/isActiveMatch parameter:
+// a synthetic row can never be a search match, so dimmed is always passed
+// directly rather than computed here (see renderCommitRow's doc comment).
 func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) string {
 	narrow := width < narrowListWidth
 

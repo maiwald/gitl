@@ -24,15 +24,10 @@ type fetchRequest struct {
 // lazily requesting more commits as the cursor approaches the loaded end.
 type ListModel struct {
 	commits []git.Commit
-	// cursor is a position in commits. Negative values address the
-	// synthetic leading rows instead: leading[i] corresponds to
-	// cursor == i-len(leading), so -1 is the row directly above commits[0].
-	// Keeping the cursor in commit-index space rather than a combined row
-	// space is what lets every other index computation in this file
-	// (matches, fetchRequest skip/limit, totalCount comparisons,
-	// maybeLoadMore's lookahead check) stay exactly as it was before
-	// synthetic rows existed — none of them are meant to know leading rows
-	// exist at all.
+	// cursor is a position in commits; negative values address the
+	// synthetic leading rows instead (leading[i] ⟺ cursor == i-len(leading)).
+	// See CLAUDE.md's Conventions section for why this stays commit-index
+	// space rather than a combined row space.
 	cursor int
 	vp     viewport.Model
 
@@ -67,21 +62,13 @@ type ListModel struct {
 	matchPos int   // index into matches; -1 when there are none
 
 	// renderedRows caches one rendered row per position in the flattened
-	// row space (leading rows first, then commits — see rowIndex). A pure
-	// cursor move changes exactly two rows' styling (the one the cursor
-	// left and the one it arrived at), while a full render() re-runs
-	// fmt.Sprintf, several lipgloss Render calls, and highlightSpans for
-	// every loaded commit — of which there can be the entire history (a G
-	// jump or a search jump loads all of it). setCursor/renderCursorMoved
-	// patch just the two affected rows instead of paying that cost on
-	// every keystroke.
-	//
-	// Every writer of leading/commits/matches/matchPos/displayTerm/
-	// searchDismissed/vp.Width must end in a full render() (which rebuilds
-	// this wholly); pure cursor moves go through setCursor instead. Direct
-	// assignment to cursor outside setCursor (only tests do this) leaves
-	// two rows stale until the next full render — never wrong once one
-	// happens, only briefly stale.
+	// row space (leading rows first, then commits — see rowIndex). Every
+	// writer of leading/commits/matches/matchPos/displayTerm/
+	// searchDismissed/vp.Width must end in a full render() (see its doc
+	// comment, and CLAUDE.md); pure cursor moves go through setCursor
+	// instead. Direct assignment to cursor outside setCursor (only tests
+	// do this) leaves two rows stale until the next full render — never
+	// wrong once one happens, only briefly stale.
 	renderedRows []string
 }
 
@@ -330,9 +317,8 @@ func (m *ListModel) ensureVisible() {
 // at or after the cursor, wrapping to the first match if none qualify. It
 // reports needsLoad=true when that position isn't loaded yet, in which
 // case the caller should dispatch a fetch via RequestLoadUpTo(target); the
-// jump completes automatically once AppendCommits delivers it. The search
-// term itself is set separately via SetSearchDisplay, since it's shared
-// with the detail view and owned by the root Model.
+// jump completes automatically once AppendCommits delivers it. See
+// SetSearchDisplay for how the search term itself gets here.
 func (m *ListModel) Search(matches []int) (needsLoad bool, target int) {
 	m.matches = matches
 	m.matchPos = -1
@@ -369,9 +355,7 @@ func (m *ListModel) stepMatch(delta int) (needsLoad bool, target int) {
 // reports needsLoad so the caller dispatches a targeted fetch. Always ends
 // in a full render(), even when deferred: matches/matchPos just changed,
 // which can affect dimming/highlighting across arbitrary rows, not just
-// the cursor's — and rendering immediately (rather than waiting for
-// AppendCommits, as before this cache existed) is what keeps renderedRows
-// from going stale in the meantime.
+// the cursor's.
 func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
 	target = m.matches[m.matchPos]
 	needsLoad = m.jumpOrDefer(target)
@@ -453,10 +437,9 @@ func (m ListModel) rowContext() rowContext {
 }
 
 // isMatch reports whether commit position pos is one of the list's actual
-// search matches (m.matches, ascending). A binary search rather than the
-// linear merge-walk render() used before this cache existed: that walk
-// only worked when visiting rows in order, and a single-row patch needs to
-// query one arbitrary position without rescanning from the start.
+// search matches (m.matches, ascending) — a binary search, since a
+// single-row patch needs to query one arbitrary position without
+// rescanning from the start.
 func (m ListModel) isMatch(pos int) bool {
 	_, found := slices.BinarySearch(m.matches, pos)
 	return found
