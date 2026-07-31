@@ -243,22 +243,19 @@ type baseSpan struct {
 	style      lipgloss.Style
 }
 
-// headerLinesFor builds the commit header's pre-wrap logical lines (one
-// entry per line; the message body is included verbatim, unwrapped —
-// wrapping happens later in renderHeaderLines so its matchLines bookkeeping
-// stays exact, the same convention RenderDiff/renderDiffLine use for diff
-// content). authorLine and bodyStart mark the two regions eligible for
-// search — the author line and the message body — matching exactly what
-// internal/git.SearchCommitHashes matches for list search (author name OR
-// message), deliberately excluding the hash/parent/date metadata lines.
-// spans (keyed by line index) marks the hash/name/date substrings that get
-// base coloring regardless of search state — computed here, where each
-// substring's byte offset is already known, rather than re-found later.
-// The body is indented 4 spaces, matching real `git show`'s own convention
-// of an indented subject/body under flush-left metadata; since both
-// FindMessageMatches and renderHeaderLines read these same stored strings,
-// the indentation is simply part of the line text from here on, with no
-// separate column-shifting logic needed elsewhere.
+// headerLinesFor builds the commit header's pre-wrap logical lines, one
+// entry per line (wrapping happens later, in renderHeaderLines, so its
+// matchLines bookkeeping stays exact — the same convention RenderDiff/
+// renderDiffLine use for diff content).
+//
+// authorLine and bodyStart mark the two regions eligible for search — the
+// author line and the message body — matching what
+// internal/git.SearchCommitHashes matches for list search, deliberately
+// excluding the hash/parent/date metadata lines. spans (keyed by line
+// index) marks the hash/name/date substrings that get base coloring
+// regardless of search state.
+//
+// The body is indented 4 spaces, matching `git show`'s own convention.
 func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int, spans map[int][]baseSpan) {
 	spans = make(map[int][]baseSpan)
 
@@ -359,8 +356,7 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 // every span and match: colorless for header/message lines (spans already
 // cover every colored substring there), or a diff line's op color
 // (diffAddStyle/diffDeleteStyle/diffContextStyle) when called from
-// renderDiffLine with no spans at all — this function is the general case
-// of what used to be two near-identical helpers, one per caller.
+// renderDiffLine with no spans at all.
 func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style) string {
 	bounds := map[int]bool{0: true, len(text): true}
 	for _, s := range spans {
@@ -502,9 +498,8 @@ func (m *DetailModel) syncHighlightFromScroll() {
 // content, message matches first in document order and diff matches after,
 // and jumps to the first one, returning the total match count. Unlike list
 // search this is fully synchronous: the whole commit is already in memory
-// once it's open, so there's no async loading to wait for. The term/
-// dismissed display state is set separately via SetSearchDisplay, since
-// it's shared with the list view and owned by the root Model.
+// once it's open, so there's no async loading to wait for. See
+// SetSearchDisplay for the term/dismissed display state.
 func (m *DetailModel) RunSearch(term string) int {
 	if term == "" {
 		m.messageMatches, m.diffMatches = nil, nil
@@ -611,18 +606,11 @@ func (m DetailModel) View() string {
 // metadata/message block), statsSectionTitle (matching the stats block's
 // own in-content heading, see statsview.go), or a diff file's header.
 //
-// Unlike currentSection (which points at whichever section contains the
-// topmost visible line, and drives [ / ] navigation), the title shown here
-// is looked up one line behind YOffset. A section's own header/heading row
-// is byte-for-byte identical to what's rendered here for it (see
-// renderFileHeader in diffview.go and statsSectionTitle in statsview.go),
-// so if that row is the topmost visible line, showing the same title in
-// the sticky row too would duplicate it. Querying one line earlier defers
-// the switch until the section's own header has scrolled out of view, at
-// which point the sticky row picks up the job of reminding the reader which
-// section they're in. jumpToSection's landing position (sectionContentStart)
-// already accounts for this, so a [ / ] jump shows the new title
-// immediately rather than lagging by a line.
+// Looked up one line behind YOffset, not currentSection: a section's own
+// header row renders byte-for-byte identical to its sticky title, so
+// showing it a line early would duplicate a title that's still on screen.
+// jumpToSection's landing position (sectionContentStart) already accounts
+// for this, so a [ / ] jump shows the new title immediately.
 func (m DetailModel) renderStickyHeader() string {
 	s := m.sections[sectionAt(m.sections, m.leftVP.YOffset-1)]
 	switch s.kind {

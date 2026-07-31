@@ -13,31 +13,19 @@ import (
 // in view, so the two stay identical without a second literal to drift.
 const statsSectionTitle = "Files changed"
 
-// statLinesFor renders a `git show --stat`-style summary: one line per file
-// with exact +N/-M counts, followed by a totals line. It's computed
-// entirely from the already-parsed diff data in CommitDetail.Files (see
-// git.File.Additions/Deletions in internal/git/diff.go) rather than
-// shelling out to `git show --stat` a second time — that command's own
-// per-file column is a proportionally-scaled visual anyway, not exact
-// counts. Returns nil when files is empty (merge commits / no diff), so
-// callers can skip the block entirely.
+// statLinesFor renders a `git show --stat`-style summary: one line per
+// file with exact +N/-M counts, then a totals line — computed from the
+// already-parsed CommitDetail.Files rather than re-shelling to `git show
+// --stat`, whose own per-file column is a proportional visual, not exact
+// counts. Returns nil when files is empty (merge commits / no diff).
 //
-// Additions and deletions get their own right-aligned column each (rather
-// than right-aligning the combined "+N -M" string as one block), so a
-// file's "+" lines up with every other file's "+" regardless of how many
-// digits its neighbors' counts have — e.g. "+3" above "+120" stay aligned
-// on their own column instead of drifting because "+120" is longer. The
-// totals line is rendered through the same renderStatLine column layout
-// (its "N files changed" label standing in for a file's name, and the
-// summed counts running through the same formatCountParts/padding logic),
-// rather than git's own prose "X insertions(+), Y deletions(-)" — so the
-// totals' own +/- counts land in the exact same columns as every file
-// above them instead of floating at whatever column a sentence happens to
-// put them. A blank line separates the per-file rows from the totals row
-// (the same blank-line convention detail.go's reflow uses between the
-// header/stats/diff blocks), so the totals row reads as a summary set
-// apart from the files rather than one more row among them, while still
-// sharing their column layout.
+// Additions and deletions each get their own right-aligned column (not one
+// combined "+N -M" block), so every file's "+" lines up regardless of
+// neighboring digit counts. The totals row reuses the same renderStatLine
+// column layout — its "N files changed" label standing in for a file's
+// name — instead of git's own prose summary, so its counts land in the
+// same columns. A blank line separates it from the per-file rows (the same
+// convention detail.go's reflow uses between blocks).
 func statLinesFor(files []git.File, width int) []string {
 	if len(files) == 0 {
 		return nil
@@ -103,20 +91,16 @@ func formatCountParts(additions, deletions int) (add, del string) {
 	return add, del
 }
 
-// renderStatLine renders one row of the stats table: a left-justified label
-// (a file's path, or the totals line's "N files changed") followed by its
-// additions/deletions right-aligned into the shared addWidth/delWidth
-// columns computed across every row by statLinesFor, so every row's counts
-// land in the same columns regardless of how many digits they or their
-// neighbors have. binary and the case where both counts are empty (a
-// mode-only change with no diff content, or an all-binary/all-zero totals
-// row) each collapse to a single marker ("Bin" / "0") right-aligned across
-// the combined width of both columns, since there's nothing to split
-// between them. The default case's content is built from two independently
-// -Render()'d spans (the styled add/delete counts), so it's clipped via
-// renderClippedStyled rather than renderClipped — see that helper's doc
-// comment (and padRow's) for why Width+MaxWidth can't safely run on a
-// string with embedded ANSI resets like this one.
+// renderStatLine renders one row of the stats table: a left-justified
+// label (a file's path, or the totals row's "N files changed") followed
+// by additions/deletions right-aligned into the shared addWidth/delWidth
+// columns statLinesFor computes across every row. binary and the
+// both-empty case (a mode-only change, or an all-binary/zero totals row)
+// each collapse to a single "Bin"/"0" marker, right-aligned across both
+// columns combined. The default case's content mixes independently-
+// Rendered spans (the styled counts), so it's clipped via
+// renderClippedStyled, not renderClipped — see that helper's doc comment
+// for why.
 func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int) string {
 	name := fmt.Sprintf(" %-*s  ", nameWidth, label)
 	combinedWidth := addWidth + 1 + delWidth
@@ -156,10 +140,8 @@ func padLeft(s string, width int) string {
 // diffAddStyle/diffDeleteStyle) so a selected/dimmed row elsewhere (e.g.
 // renderWorktreeRow) can swap in its own per-state styles the same way
 // every other per-field style on such a row does. sep styles the literal
-// space joining the two halves — needed because addStyle/delStyle's
-// Render calls each end with their own ANSI reset, so a bare " " between
-// them would fall back to the terminal's default background instead of
-// carrying a selected row's cursor highlight across the gap.
+// space joining the two halves, needed for the same ANSI-reset reason as
+// rowFieldStyle's separators.
 func formatCountsStyled(additions, deletions int, addStyle, delStyle, sep lipgloss.Style) (plain, styled string) {
 	var plainParts, styledParts []string
 	if additions > 0 {

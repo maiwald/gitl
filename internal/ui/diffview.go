@@ -21,17 +21,16 @@ type FileRange struct {
 // lines suitable for a single scrollable viewport, along with the line
 // range each file occupies within that flattened content. matches (from
 // FindDiffMatches, in the same file/hunk/line traversal order this function
-// uses) are highlighted inline unless dismissed is true, in which case no
-// match is styled at all — but matchLines is still computed from the full
-// matches list either way, since word-wrapping (which determines line
-// positions) doesn't depend on whether a span carries highlight color:
-// wrapping is ANSI-aware and ignores zero-width escape codes, so jumping to
-// a dismissed match still lands in the right place once n/N revives it.
-// activeMatch is an index into matches for the one that should stand out
-// with a distinct style (-1 for none; ignored when dismissed). The returned
-// matchLines is parallel to matches: the flattened line index of each
-// match's logical line (the start of the line, not the precise wrapped
-// sub-row/column — landing on the line is enough to bring it into view).
+// uses) are highlighted inline unless dismissed is true. activeMatch
+// indexes into matches for the one that should stand out with a distinct
+// style (-1 for none; ignored when dismissed).
+//
+// matchLines is always computed from the full matches list regardless of
+// dismissed, since word-wrapping (which determines line positions) is
+// ANSI-aware and doesn't depend on whether a span is styled — so a
+// dismissed match still lands correctly once n/N revives it. It's
+// parallel to matches: the flattened line index where each match's line
+// starts (enough to bring it into view).
 func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool) ([]string, []FileRange, []int) {
 	var lines []string
 	ranges := make([]FileRange, 0, len(files))
