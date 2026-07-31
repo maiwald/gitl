@@ -58,11 +58,9 @@ It also accepts a startup target, jumping straight to a detail view instead
 of the list:
 
 ```sh
-gitl <rev>        # open a specific commit's detail view (any git-resolvable
-                   # revision — a sha, branch, tag, HEAD~2, ...); the list
-                   # loads behind it, positioned on that commit, so q/Esc
-                   # returns to it exactly as if you'd navigated there
-                   # manually, and only quits from the list itself.
+gitl <rev>        # open a specific commit's detail view directly (any
+                   # git-resolvable revision — a sha, branch, tag, HEAD~2,
+                   # ...); q/Esc quits outright, like --staged below.
 
 gitl --staged      # open the staged-changes (index vs HEAD) detail view
                    # directly, no list involved — a drop-in replacement for

@@ -44,9 +44,8 @@ internal/ui/               Bubble Tea models, no direct git shelling out
   styles.go                lipgloss style definitions
   list.go, commititem.go   commit list: cursor, viewport, lazy pagination, search
   worktreerow.go           renderWorktreeRow: the two synthetic leading rows
-  entry.go                 entryTitle/entryDescription/entrySectionTitle: display
-                           strings shared by worktreerow.go and detail.go's pseudo-entry
-                           branch
+  entry.go                 entryTitle/entryDescription: display strings shared by
+                           worktreerow.go and detail.go's pseudo-entry branch
   detail.go                commit detail: header + sticky file header, scroll sync, search
   diffview.go              RenderDiff (flatten+style diff),
                            FindDiffMatches (diff content search)
@@ -119,8 +118,8 @@ commit red.
   width.
 - Search-match highlighting always styles plain-text spans *before* any
   `.Render()` call touches them, then concatenates the already-rendered
-  pieces (see `highlightSpans` in `commititem.go`, `renderLineWithMatches`
-  in `diffview.go`) — this codebase has no facility for splicing a style
+  pieces (see `highlightSpans` in `commititem.go`, `renderLineWithBaseSpans`
+  in `detail.go`) — this codebase has no facility for splicing a style
   into an already-ANSI'd string, and doesn't need one as long as styling
   decisions are made on the underlying plain text first.
 - List search loads only as much history as the relevant match needs
