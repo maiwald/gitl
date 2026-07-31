@@ -49,12 +49,16 @@ func TestEnterOnSyntheticRowOpensDetailSynchronously(t *testing.T) {
 }
 
 // TestNewModelSetsQuitOnBackFromStagedTarget pins down that quitOnBack is
-// wired purely from StartTarget.Staged at construction time — nothing else
-// ever writes it, so the interactively-opened staged row (Enter from the
-// list) is unaffected by construction rather than by a runtime check.
+// wired purely from StartTarget.Staged/Rev at construction time — nothing
+// else ever writes it, so the interactively-opened staged row or commit
+// (Enter from the list) is unaffected by construction rather than by a
+// runtime check.
 func TestNewModelSetsQuitOnBackFromStagedTarget(t *testing.T) {
 	if !NewModel(StartTarget{Staged: true}).quitOnBack {
 		t.Error("quitOnBack = false for StartTarget{Staged: true}, want true")
+	}
+	if !NewModel(StartTarget{Rev: "HEAD~2"}).quitOnBack {
+		t.Error("quitOnBack = false for StartTarget{Rev: \"HEAD~2\"}, want true")
 	}
 	if NewModel(StartTarget{}).quitOnBack {
 		t.Error("quitOnBack = true for StartTarget{}, want false")

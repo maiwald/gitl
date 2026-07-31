@@ -40,11 +40,12 @@ type Model struct {
 
 	start StartTarget
 	// quitOnBack makes Back/q from the detail view quit outright instead of
-	// returning to the list. Set once, in NewModel, from start.Staged: the
-	// whole point of `gitl --staged` is to replace `git diff --staged |
-	// less`, and there is no list behind that detail view to return to.
-	// Every other path — including opening the staged row interactively
-	// from the list — leaves this false, since nothing else ever writes it.
+	// returning to the list. Set once, in NewModel, from start.Staged or
+	// start.Rev: `gitl --staged` and `gitl <rev>` both open straight into
+	// the detail view to replace a one-shot `git show`/`git diff --staged |
+	// less`, so there is no list behind that detail view to return to.
+	// Every other path — including opening a commit interactively from the
+	// list — leaves this false, since nothing else ever writes it.
 	quitOnBack bool
 
 	repo   *git.Repo
@@ -99,7 +100,7 @@ type pendingSearch struct {
 
 // NewModel constructs the initial root model for the given startup target.
 func NewModel(target StartTarget) Model {
-	return Model{start: target, quitOnBack: target.Staged}
+	return Model{start: target, quitOnBack: target.Staged || target.Rev != ""}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -541,9 +542,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleDetailViewKey routes a key press while the detail view is active:
-// Back returns to the list (or quits outright, for a `gitl --staged`
-// startup jump — see quitOnBack), everything else goes to the diff
-// viewport.
+// Back returns to the list (or quits outright, for a `gitl --staged` or
+// `gitl <rev>` startup jump — see quitOnBack), everything else goes to the
+// diff viewport.
 func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, DefaultKeyMap.Back) {
 		if m.quitOnBack {
