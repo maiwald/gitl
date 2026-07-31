@@ -375,10 +375,7 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch)
 	styleAt := func(pos int) lipgloss.Style {
 		for _, m := range matches {
 			if pos >= m.start && pos < m.end {
-				if m.active {
-					return searchActiveMatchStyle
-				}
-				return searchMatchStyle
+				return matchStyle(m.active)
 			}
 		}
 		for _, s := range spans {

@@ -99,12 +99,9 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 	}
 
 	if !selected {
-		matchStyle := searchMatchStyle
-		if isActiveMatch {
-			matchStyle = searchActiveMatchStyle
-		}
-		author = highlightSpans(author, searchTerm, authorBase, matchStyle)
-		subject = highlightSpans(subject, searchTerm, subjectBase, matchStyle)
+		ms := matchStyle(isActiveMatch)
+		author = highlightSpans(author, searchTerm, authorBase, ms)
+		subject = highlightSpans(subject, searchTerm, subjectBase, ms)
 	} else {
 		author = authorBase.Render(author)
 		subject = subjectBase.Render(subject)

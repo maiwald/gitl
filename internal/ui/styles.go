@@ -106,3 +106,14 @@ var (
 				Foreground(lipgloss.Color("0")).
 				Bold(true)
 )
+
+// matchStyle picks searchActiveMatchStyle for the n/N-selected match, else
+// searchMatchStyle — the one place this choice is made, shared by every
+// search-highlighting call site instead of each repeating the same
+// two-branch pick.
+func matchStyle(active bool) lipgloss.Style {
+	if active {
+		return searchActiveMatchStyle
+	}
+	return searchMatchStyle
+}
