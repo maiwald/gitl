@@ -171,6 +171,23 @@ func padRow(row string, width int, style lipgloss.Style) string {
 	return row
 }
 
+// renderClippedStyled truncates content that may already contain
+// independently-Render()'d spans (ANSI resets embedded) to width without
+// lipgloss's Width+MaxWidth reflow, which miscounts cell positions across
+// those resets — see padRow's doc comment for the same hazard. Padding
+// uses plain spaces since (unlike padRow) this content is never part of
+// a selectable/highlighted row.
+func renderClippedStyled(content string, width int) string {
+	if width <= 0 {
+		return content
+	}
+	content = lipgloss.NewStyle().MaxWidth(width).Render(content)
+	if pad := width - lipgloss.Width(content); pad > 0 {
+		content += strings.Repeat(" ", pad)
+	}
+	return content
+}
+
 // RenderCommitList renders commits as plain list rows, one per line, with
 // no selection/dim/search styling — used by the -n non-interactive flag.
 func RenderCommitList(commits []git.Commit, width int) string {

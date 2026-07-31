@@ -176,6 +176,26 @@ func TestStatLinesForClipsToWidth(t *testing.T) {
 	}
 }
 
+// TestStatLinesForClipsToWidthWithoutEmbeddedNewline pins down that a
+// narrow width doesn't corrupt a stat line into multiple lines glued by a
+// literal "\n". renderStatLine's default branch builds its content from
+// several already-Render()'d spans (the styled add/delete counts), and
+// running that through lipgloss's combined Width+MaxWidth (rather than
+// MaxWidth alone, as renderClippedStyled/padRow do) miscounts cell
+// positions across the embedded ANSI resets and can reflow the content
+// into more than one line — which statLinesFor's callers can't tolerate,
+// since each returned string must stay exactly one visual row.
+func TestStatLinesForClipsToWidthWithoutEmbeddedNewline(t *testing.T) {
+	files := []git.File{{Path: strings.Repeat("x", 100), Status: git.StatusModified, Additions: 1234, Deletions: 5678}}
+	const width = 20
+	lines := statLinesFor(files, width)
+	for i, line := range lines {
+		if strings.Contains(line, "\n") {
+			t.Errorf("lines[%d] = %q, want no embedded newline", i, line)
+		}
+	}
+}
+
 func TestStatLinesForZeroChangeFileShowsZero(t *testing.T) {
 	files := []git.File{{Path: "mode-only.txt", Status: git.StatusModified}}
 	lines := statLinesFor(files, 80)

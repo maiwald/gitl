@@ -112,7 +112,11 @@ func formatCountParts(additions, deletions int) (add, del string) {
 // mode-only change with no diff content, or an all-binary/all-zero totals
 // row) each collapse to a single marker ("Bin" / "0") right-aligned across
 // the combined width of both columns, since there's nothing to split
-// between them.
+// between them. The default case's content is built from two independently
+// -Render()'d spans (the styled add/delete counts), so it's clipped via
+// renderClippedStyled rather than renderClipped — see that helper's doc
+// comment (and padRow's) for why Width+MaxWidth can't safely run on a
+// string with embedded ANSI resets like this one.
 func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int) string {
 	name := fmt.Sprintf(" %-*s  ", nameWidth, label)
 	combinedWidth := addWidth + 1 + delWidth
@@ -126,7 +130,7 @@ func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int
 		addPad := strings.Repeat(" ", addWidth-len(addCount))
 		delPad := strings.Repeat(" ", delWidth-len(delCount))
 		content := fmt.Sprintf("%s%s%s %s%s", name, addPad, diffAddStyle.Render(addCount), delPad, diffDeleteStyle.Render(delCount))
-		return renderClipped(lipgloss.NewStyle(), content, width)
+		return renderClippedStyled(content, width)
 	}
 }
 
