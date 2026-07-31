@@ -40,27 +40,21 @@ type Model struct {
 
 	start StartTarget
 	// quitOnBack makes Back/q from the detail view quit outright instead of
-	// returning to the list. Set once, in NewModel, from start.Staged or
-	// start.Rev: `gitl --staged` and `gitl <rev>` both open straight into
-	// the detail view to replace a one-shot `git show`/`git diff --staged |
-	// less`, so there is no list behind that detail view to return to.
-	// Every other path — including opening a commit interactively from the
-	// list — leaves this false, since nothing else ever writes it.
+	// returning to the list — set in NewModel for `gitl --staged`/`<rev>`
+	// startup jumps, which open straight into a detail view with no list
+	// to return to. Nothing else ever writes it.
 	quitOnBack bool
 
 	repo   *git.Repo
 	active view
 	list   ListModel
 	detail DetailModel
-	// err is a fatal startup failure: there is nothing left to show, so
-	// View() replaces the whole screen with it. Never cleared.
+	// err is a fatal startup failure: View() replaces the whole screen
+	// with it, and it's never cleared.
 	err error
-	// lastError is the most recent non-fatal fetch failure — a pagination
-	// batch, the worktree entries, a search query, or a commit detail
-	// opened from the list. Whatever is on screen stays on screen; the
-	// failure shows in the status bar (renderStatusBar's lowest-priority
-	// branch) until the next successful fetch of any kind clears it, since
-	// any success means git is answering again.
+	// lastError is the latest non-fatal fetch failure (pagination, worktree
+	// entries, search, or a list-opened commit detail), shown in the status
+	// bar until the next successful fetch of any kind clears it.
 	lastError error
 	entries   []git.WorktreeEntry // canonical copy, mirrored into list.leading as it and the list each become available
 
@@ -171,11 +165,7 @@ type errMsg struct {
 // runCmd wraps fetch as a tea.Cmd: on success, toMsg(v) becomes the
 // resulting message; on failure, errMsg{err, severity} does — the shape
 // behind nearly every fetch below. fetchMoreCmd and resolveRevPositionCmd
-// are the two exceptions: fetchMoreCmd needs to identify its own failures
-// separately from any other errMsg (so a pagination failure can safely
-// clear ListModel.loadingMore without an unrelated error doing the same
-// and risking a duplicate fetch), and resolveRevPositionCmd never
-// produces errMsg at all (see its own doc comment).
+// are exceptions — see their own doc comments.
 func runCmd[T any](severity errSeverity, fetch func(context.Context) (T, error), toMsg func(T) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		v, err := fetch(context.Background())
@@ -305,10 +295,8 @@ func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity) tea.Cmd {
 // fetchEntryDetailCmd fetches a single synthetic entry's diff directly (for
 // a CLI `--staged` startup jump, which has no list to select the row from)
 // and opens it the same way any other detail view opens, via
-// commitDetailLoadedMsg. severity is hardcoded fatal because its only call
-// site today is that startup path, which has no list to fall back to — a
-// future second caller (e.g. an interactive open of a synthetic row that
-// needed a fetch) would need to revisit this.
+// commitDetailLoadedMsg. severity is hardcoded fatal since that startup
+// path has no list to fall back to.
 func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind) tea.Cmd {
 	return runCmd(fatal, func(ctx context.Context) ([]git.File, error) {
 		return repo.FetchWorktreeEntry(ctx, kind)
@@ -378,9 +366,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (which already accepts any git-resolvable revision), so the
 			// detail view paints as soon as that returns, concurrently with
 			// the list loading and positioning itself behind it via
-			// resolveRevPositionCmd/pumpPendingJump. The detail fetch is
-			// fatal (it's this path's whole payload); the list load is not
-			// (the detail can succeed independently of it).
+			// resolveRevPositionCmd/pumpPendingJump. Severity split: see
+			// fetchDetailCmd's doc comment.
 			return m, tea.Batch(
 				fetchDetailCmd(msg.repo, m.start.Rev, fatal),
 				loadListCmd(msg.repo, nonFatal),

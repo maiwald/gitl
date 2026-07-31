@@ -37,11 +37,8 @@ var (
 	authorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("4"))
 
-	// refStyle reuses the same ANSI red as errFg, distinguished by weight
-	// (bold) rather than a different hue — the same way a bold vs. plain
-	// red both being "red" reads fine in a 16-color palette (mirroring how
-	// git tools like git log --decorate get by with a handful of basic
-	// colors, none unique to just one kind of decoration).
+	// refStyle reuses errFg's red, distinguished by weight (bold) rather
+	// than a new hue, to stay within the 16-color ANSI palette.
 	refStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("1")).
 			Bold(true)
@@ -75,20 +72,15 @@ var (
 			Foreground(lipgloss.Color("252")).
 			Padding(0, 1)
 
-	// statusBarErrStyle is a whole-bar style swap (background plus errFg),
-	// used for a non-fatal error, rather than nesting errStyle inside the
-	// bar's normal content: a nested Render ends with its own ANSI reset,
-	// which would cancel the bar's background for everything rendered
-	// after it — the same reset hazard rowFieldStyle's doc comment
-	// describes for row fields, resolved the same way (swap the whole
-	// base style rather than layering).
+	// statusBarErrStyle is a whole-bar style swap (background plus errFg)
+	// for a non-fatal error, rather than nesting errStyle inside the bar's
+	// normal content — same reset hazard as rowFieldStyle, resolved the
+	// same way (swap the whole base style rather than layering).
 	statusBarErrStyle = statusBarStyle.Foreground(errFg)
 
 	// entryTitleStyle is the "Staged changes"/"Working tree" title in a
-	// synthetic leading row (worktreerow.go), bold so it stands out the way
-	// a commit's subject doesn't need to (a real row already has color-coded
-	// sha/date/author fields drawing the eye; a synthetic row has none of
-	// those, so the title carries that job instead).
+	// synthetic leading row (worktreerow.go), bold so it draws the eye the
+	// way a real row's color-coded sha/date/author fields otherwise would.
 	entryTitleStyle = lipgloss.NewStyle().Bold(true)
 
 	// dimStyle uses the terminal-native Faint attribute rather than a fixed
