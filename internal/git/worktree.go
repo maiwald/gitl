@@ -46,7 +46,7 @@ func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind) ([]File, 
 	case EntryWorktree:
 		return r.worktreeDiff(ctx)
 	default:
-		return nil, fmt.Errorf("FetchWorktreeEntry: not a synthetic entry kind: %v", kind)
+		return nil, fmt.Errorf("not a synthetic entry kind: %v", kind)
 	}
 }
 
@@ -169,7 +169,7 @@ func (r *Repo) untrackedPaths(ctx context.Context) ([]string, error) {
 // produces no textual delta to parse — this degrades to a hunk-less
 // added-file entry rather than failing the whole worktree fetch.
 func (r *Repo) untrackedDiff(ctx context.Context, path string) File {
-	out, _, err := runGitDiffExit(ctx, r.Path, "diff", "--no-color", "-U3", "--no-index", "--", "/dev/null", path)
+	out, _, err := runGitDiffExit(ctx, r.Path, diffArgs("--no-index", "--", "/dev/null", path)...)
 	if err != nil {
 		return File{Path: path, Status: StatusAdded}
 	}

@@ -9,6 +9,15 @@ import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 )
 
+// diffArgs returns the shared base flags every `git diff` invocation in
+// this package uses, plus any trailing arguments. Returns a fresh slice
+// each call (not a shared package var) so concurrent callers — diffFiles
+// and untrackedDiff run concurrently via RunConcurrently — can never
+// observe or corrupt each other's args through a shared backing array.
+func diffArgs(extra ...string) []string {
+	return append([]string{"diff", "--no-color", "-U3"}, extra...)
+}
+
 // diffFiles runs `git diff --no-color -U3 <args...>` and parses the result
 // — the one bridge from a git diff invocation to parsed Files, shared by
 // every caller that just needs "diff, then parse" with different trailing
@@ -18,7 +27,7 @@ import (
 // is reported via exit code 1, handled by runGitDiffExit), so it doesn't
 // go through this helper.
 func (r *Repo) diffFiles(ctx context.Context, args ...string) ([]File, error) {
-	out, err := runGit(ctx, r.Path, append([]string{"diff", "--no-color", "-U3"}, args...)...)
+	out, err := runGit(ctx, r.Path, diffArgs(args...)...)
 	if err != nil {
 		return nil, err
 	}
