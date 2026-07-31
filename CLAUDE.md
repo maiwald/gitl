@@ -130,14 +130,10 @@ commit red.
 - List rows outside the active search's real match set (`ListModel.matches`,
   from the actual `git log --grep`/`--author` query — not from
   re-scanning a row's own visible text) are dimmed via `dimStyle`
-  (`commititem.go`). Dimming is applied per-field (sha/date/author/subject/
-  refs each swap in `dimStyle` as their base) rather than by wrapping the
-  whole rendered row in one outer faint style, because every field is
-  already independently `.Render()`'d and each `Render()` call ends with
-  its own ANSI reset — an outer style wrapped around the concatenation
-  would get cancelled by the first inner reset it hits (the same reset
-  hazard `formatRefs`'s own doc comment calls out for the selected-row
-  case).
+  (`commititem.go`), applied per-field rather than as one outer style
+  wrapped around the whole row — see `rowFieldStyle`'s doc comment
+  (`commititem.go`) for why: every field is independently `.Render()`'d,
+  and an outer style would get cancelled by the first inner ANSI reset.
 - `ListModel.cursor` stays an index into `commits` and goes **negative** to
   address the synthetic leading rows (`leading[i]` ⟺
   `cursor == i-len(leading)`, see the field's doc comment in `list.go`).
@@ -152,6 +148,18 @@ commit red.
   left zero-valued (`IsPseudo()`). `detail.go`'s diff/stats/sections/search
   machinery all operate on `[]git.File` and need no knowledge of this; only
   `headerLinesFor`, `noDiffNotice`, and `renderStickyHeader` branch on it.
+- `ListModel` caches its rendered rows (`renderedRows`, `list.go`) and
+  patches just the cursor's old/new row on a pure cursor move
+  (`setCursor`/`renderCursorMoved`) instead of re-rendering everything.
+  Any change to *what* a row shows, not just which row is the cursor (a
+  new field on `Commit`, a new dim/highlight condition, appended commits,
+  an updated `matches` set) must go through `render()`'s full rebuild —
+  otherwise the cache silently keeps showing stale content.
+- An async fetch's own in-flight guard (e.g. `ListModel.loadingMore`) is
+  cleared by that fetch's own message type (`moreCommitsFailedMsg` in
+  `app.go`), never by the generic `errMsg` — an unrelated later failure
+  must not unlatch a guard some other in-flight fetch still owns. Any new
+  async command with its own in-flight state should follow this pattern.
 
 ## Known limitations (intentional, not bugs)
 
