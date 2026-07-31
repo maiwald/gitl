@@ -92,9 +92,7 @@ func statLinesFor(files []git.File, width int) []string {
 // formatCountParts renders a file's or totals row's addition/deletion
 // counts as separate "+N"/"-M" strings (empty when that count is zero), so
 // statLinesFor can right-align additions and deletions in their own
-// columns rather than as one combined string. Compare formatCounts, which
-// joins the same two pieces into a single value for callers (e.g. a
-// worktree row's summary) that just need one combined "+N -M" string.
+// columns rather than as one combined string.
 func formatCountParts(additions, deletions int) (add, del string) {
 	if additions > 0 {
 		add = fmt.Sprintf("+%d", additions)
@@ -141,23 +139,19 @@ func padLeft(s string, width int) string {
 	return s
 }
 
-// formatCounts renders "+N -M" both plain (for width measurement, since
-// callers need to right-align counts across files without an ANSI-aware
-// width directive) and styled (coloring each half like the corresponding
-// diff line op, diffAddStyle/diffDeleteStyle), omitting either half when
-// its count is zero. The two are computed together so they can't drift out
-// of sync. Used where only a single joined value is needed (e.g. a
-// worktree row's summary); statLinesFor's own table instead keeps additions
-// and deletions apart via formatCountParts, so each gets its own column.
-func formatCounts(additions, deletions int) (plain, styled string) {
-	return formatCountsStyled(additions, deletions, diffAddStyle, diffDeleteStyle, lipgloss.NewStyle())
-}
-
-// formatCountsStyled is formatCounts generalized over the add/delete
-// styles used for the styled half, so a selected/dimmed row elsewhere (e.g.
+// formatCountsStyled renders "+N -M" both plain (for width measurement,
+// since callers need to right-align counts across files without an
+// ANSI-aware width directive) and styled (coloring each half via addStyle/
+// delStyle), omitting either half when its count is zero. The two are
+// computed together so they can't drift out of sync. Used where only a
+// single joined value is needed (e.g. a worktree row's summary);
+// statLinesFor's own table instead keeps additions and deletions apart via
+// formatCountParts, so each gets its own column.
+//
+// addStyle/delStyle are parameterized (rather than always the plain
+// diffAddStyle/diffDeleteStyle) so a selected/dimmed row elsewhere (e.g.
 // renderWorktreeRow) can swap in its own per-state styles the same way
-// every other per-field style on such a row does, rather than always using
-// the plain diffAddStyle/diffDeleteStyle colors. sep styles the literal
+// every other per-field style on such a row does. sep styles the literal
 // space joining the two halves — needed because addStyle/delStyle's
 // Render calls each end with their own ANSI reset, so a bare " " between
 // them would fall back to the terminal's default background instead of

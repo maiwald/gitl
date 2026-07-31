@@ -209,7 +209,7 @@ func TestStatLinesForRightAlignsCounts(t *testing.T) {
 	}
 }
 
-func TestFormatCountsPlainMatchesStyledContent(t *testing.T) {
+func TestFormatCountsStyledPlainMatchesStyledContent(t *testing.T) {
 	tests := []struct {
 		additions, deletions int
 		wantPlain            string
@@ -220,12 +220,12 @@ func TestFormatCountsPlainMatchesStyledContent(t *testing.T) {
 		{5, 3, "+5 -3"},
 	}
 	for _, tt := range tests {
-		plain, styled := formatCounts(tt.additions, tt.deletions)
+		plain, styled := formatCountsStyled(tt.additions, tt.deletions, diffAddStyle, diffDeleteStyle, lipgloss.NewStyle())
 		if plain != tt.wantPlain {
-			t.Errorf("formatCounts(%d, %d) plain = %q, want %q", tt.additions, tt.deletions, plain, tt.wantPlain)
+			t.Errorf("formatCountsStyled(%d, %d) plain = %q, want %q", tt.additions, tt.deletions, plain, tt.wantPlain)
 		}
 		if lipgloss.Width(styled) != len(plain) {
-			t.Errorf("formatCounts(%d, %d) styled visible width = %d, want %d (matching plain)", tt.additions, tt.deletions, lipgloss.Width(styled), len(plain))
+			t.Errorf("formatCountsStyled(%d, %d) styled visible width = %d, want %d (matching plain)", tt.additions, tt.deletions, lipgloss.Width(styled), len(plain))
 		}
 	}
 }

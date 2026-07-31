@@ -631,7 +631,7 @@ func (m DetailModel) renderStickyHeader() string {
 	default:
 		title := "Commit"
 		if m.detail.IsPseudo() {
-			title = entrySectionTitle(m.detail.Kind)
+			title = entryTitle(m.detail.Kind)
 		}
 		return renderClipped(fileHeaderStyle, title, m.width)
 	}

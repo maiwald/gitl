@@ -2,8 +2,10 @@ package ui
 
 import "github.com/maiwald/gitl/internal/git"
 
-// entryTitle is the pseudo-entry's title line in the detail view header and
-// its title in the list row (worktreerow.go).
+// entryTitle is the pseudo-entry's title line in the detail view header,
+// its title in the list row (worktreerow.go), and its sticky-header/
+// section title in place of the literal "Commit" a real commit uses (see
+// renderStickyHeader in detail.go).
 func entryTitle(k git.EntryKind) string {
 	switch k {
 	case git.EntryStaged:
@@ -26,11 +28,4 @@ func entryDescription(k git.EntryKind) string {
 	default:
 		return ""
 	}
-}
-
-// entrySectionTitle is the sticky-header/section title shown while a
-// pseudo entry's detail view is scrolled to its header block, in place of
-// the literal "Commit" a real commit uses.
-func entrySectionTitle(k git.EntryKind) string {
-	return entryTitle(k)
 }
