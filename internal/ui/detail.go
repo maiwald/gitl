@@ -192,8 +192,10 @@ func (m *DetailModel) renderDiffBlock(width int) (lines []string, fileRanges []F
 		return []string{noDiffNotice(m.detail)}, nil, nil
 	}
 	diffActive := -1
-	if !m.searchDismissed && m.matchPos >= len(m.messageMatches) {
-		diffActive = m.matchPos - len(m.messageMatches)
+	if !m.searchDismissed {
+		if inMessage, idx := m.matchSegment(); !inMessage {
+			diffActive = idx
+		}
 	}
 	return RenderDiff(m.detail.Files, width, m.diffMatches, diffActive, m.searchDismissed)
 }
@@ -204,8 +206,10 @@ func (m *DetailModel) renderDiffBlock(width int) (lines []string, fileRanges []F
 func (m *DetailModel) renderHeaderBlock(width int) (wrapped []string, matchLines []int) {
 	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
 	msgActive := -1
-	if !m.searchDismissed && m.matchPos >= 0 && m.matchPos < len(m.messageMatches) {
-		msgActive = m.matchPos
+	if !m.searchDismissed {
+		if inMessage, idx := m.matchSegment(); inMessage {
+			msgActive = idx
+		}
 	}
 	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, msgActive, m.searchDismissed)
 }
@@ -516,6 +520,19 @@ func (m *DetailModel) RunSearch(term string) int {
 
 func (m DetailModel) totalMatches() int { return len(m.messageMatches) + len(m.diffMatches) }
 
+// matchSegment reports which half of the combined message+diff match
+// sequence matchPos falls in (see messageMatches's doc comment), and idx's
+// position within that segment — the one place that boundary arithmetic
+// lives, instead of being reimplemented at each of its three call sites.
+// Only meaningful for matchPos >= 0; callers with a "no active match" case
+// (matchPos < 0) must still guard that separately before indexing with idx.
+func (m DetailModel) matchSegment() (inMessage bool, idx int) {
+	if m.matchPos < len(m.messageMatches) {
+		return true, m.matchPos
+	}
+	return false, m.matchPos - len(m.messageMatches)
+}
+
 // NextMatch and PrevMatch cycle to the following/preceding match (across
 // the combined message+diff sequence), wrapping at both ends, and report
 // the new 1-based position and total count.
@@ -540,15 +557,13 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 // and it's pure in-memory string work with no I/O.
 func (m *DetailModel) jumpToMatch() {
 	m.reflow()
-	switch {
-	case m.matchPos < 0:
+	if m.matchPos < 0 {
 		return
-	case m.matchPos < len(m.messageMatches):
-		m.leftVP.SetYOffset(m.messageMatchLines[m.matchPos])
-	default:
-		if di := m.matchPos - len(m.messageMatches); di < len(m.diffMatchLines) {
-			m.leftVP.SetYOffset(m.diffMatchLines[di])
-		}
+	}
+	if inMessage, idx := m.matchSegment(); inMessage {
+		m.leftVP.SetYOffset(m.messageMatchLines[idx])
+	} else if idx < len(m.diffMatchLines) {
+		m.leftVP.SetYOffset(m.diffMatchLines[idx])
 	}
 	m.syncHighlightFromScroll()
 }
