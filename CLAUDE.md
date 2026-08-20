@@ -21,7 +21,8 @@ Module path: `github.com/maiwald/gitl`. Requires Go 1.25+ and `git` on
 
 ```
 main.go                    entry point: builds and runs the root tea.Program,
-                           parses -n / --staged / a positional revision arg
+                           parses -n / --staged / --diff / --version / a
+                           positional revision arg
 internal/concurrent/       RunConcurrently: generic "run these fns in parallel,
                            return the first error in call order" helper, with no
                            git- or TUI-specific logic, shared by both packages below
@@ -35,11 +36,11 @@ internal/git/              data access layer, no TUI dependencies
   rev.go                   ResolveRevision, CommitPosition (CLI revision jump support)
   worktree.go              EntryKind/WorktreeEntry, FetchWorktreeEntries/FetchWorktreeEntry
                            (staged + working-tree diffs, untracked files as synthesized
-                           added-file diffs), HasStagedChanges, EntryDetail
+                           added-file diffs), HasStagedChanges/HasWorktreeChanges, EntryDetail
 internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
                            commands, search prompt overlay + status bar, StartTarget
-                           dispatch (plain / --staged / <rev>)
+                           dispatch (plain / --staged / --diff / <rev>)
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions
   list.go, commititem.go   commit list: cursor, viewport, lazy pagination, search
@@ -47,8 +48,9 @@ internal/ui/               Bubble Tea models, no direct git shelling out
   entry.go                 entryTitle/entryDescription: display strings shared by
                            worktreerow.go and detail.go's pseudo-entry branch
   detail.go                commit detail: header + sticky file header, scroll sync, search
-  diffview.go              RenderDiff (flatten+style diff),
-                           FindDiffMatches (diff content search)
+  diffview.go              RenderDiff (flatten+style diff), FindDiffMatches
+                           (diff content search), intralineSpans/intralineDiff
+                           (per-line word-diff highlighting within a hunk)
   statsview.go             statLinesFor: git-show---stat-style summary (per-file +N/-M,
                            totals line), spliced between message and diff in detail.go
 ```
@@ -77,8 +79,12 @@ Commit style used in this repo: one commit per coherent feature/stage
 layer, then list rendering, then navigation, then detail view, then diff
 parsing, then two-pane layout, then scroll sync, then polish). Prefer
 continuing that granularity for new work rather than large bundled
-commits. Run the full build/vet/test gate before every commit — don't
-commit red.
+commits. This applies to refactoring/cleanup passes too, not just new
+features: a pass that touches several unrelated spots (e.g. a dedup here,
+an efficiency fix there, an extracted helper elsewhere) should land as one
+commit per independent change, not one bundled commit — even though
+they're discovered and applied together. Run the full build/vet/test gate
+before every commit — don't commit red.
 
 ## Testing approach
 
@@ -123,7 +129,7 @@ commit red.
   into an already-ANSI'd string, and doesn't need one as long as styling
   decisions are made on the underlying plain text first.
 - List search loads only as much history as the relevant match needs
-  (`beginLoadingUpTo` in `list.go`), not the whole remaining log — matching
+  (`RequestLoadUpTo` in `list.go`), not the whole remaining log — matching
   which commits a search matches is cheap (`git log --grep`/`--author`,
   independent of what's loaded), but jumping to a match still has to load
   up to it, reusing the same lazy-pagination mechanism scrolling uses.
