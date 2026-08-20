@@ -164,20 +164,15 @@ func padRow(row string, width int, style lipgloss.Style) string {
 }
 
 // renderClippedStyled truncates content that may already contain
-// independently-Render()'d spans (ANSI resets embedded) to width without
-// lipgloss's Width+MaxWidth reflow, which miscounts cell positions across
-// those resets — see padRow's doc comment for the same hazard. Padding
-// uses plain spaces since (unlike padRow) this content is never part of
-// a selectable/highlighted row.
+// independently-Render()'d spans (ANSI resets embedded) to width via padRow
+// — see padRow's doc comment for why Width+MaxWidth reflow can't be used
+// here. content is never part of a selectable/highlighted row, so the
+// unstyled fill from a zero-value style pads it with plain spaces.
 func renderClippedStyled(content string, width int) string {
 	if width <= 0 {
 		return content
 	}
-	content = lipgloss.NewStyle().MaxWidth(width).Render(content)
-	if pad := width - lipgloss.Width(content); pad > 0 {
-		content += strings.Repeat(" ", pad)
-	}
-	return content
+	return padRow(content, width, lipgloss.NewStyle())
 }
 
 // RenderCommitList renders commits as plain list rows, one per line, with
