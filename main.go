@@ -19,6 +19,7 @@ import (
 const fallbackListWidth = 120
 
 func main() {
+	flag.Usage = printUsage
 	n := flag.Int("n", 0, "print the N most recent commits non-interactively and exit")
 	staged := flag.Bool("staged", false, "open the staged changes (index vs HEAD) directly; q exits")
 	flag.Parse()
@@ -67,6 +68,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// printUsage is installed as flag.Usage, so -h/--help (and flag-parse
+// errors) print gitl's own synopsis instead of just the flag list.
+func printUsage() {
+	fmt.Fprint(os.Stderr, `gitl - a terminal UI for browsing git history
+
+Usage:
+  gitl                open the commit list for the current repository
+  gitl <rev>          open a commit's detail view directly (sha, branch,
+                       tag, HEAD~2, ...); q/Esc quits outright
+  gitl --staged       open the staged changes (index vs HEAD) directly;
+                       q/Esc quits outright
+  gitl -n <count>     print the N most recent commits and exit
+
+Flags:
+`)
+	flag.PrintDefaults()
 }
 
 // checkHasStagedChanges is a pre-flight for --staged, so an empty index

@@ -69,6 +69,8 @@ gitl --staged      # open the staged-changes (index vs HEAD) detail view
 
 `--staged` and a revision argument are mutually exclusive.
 
+Run `gitl --help` (or `-h`) at any time for the full flag reference.
+
 ### Keybindings
 
 | Key(s)                | Action                                  |
