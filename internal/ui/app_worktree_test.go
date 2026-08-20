@@ -49,13 +49,16 @@ func TestEnterOnSyntheticRowOpensDetailSynchronously(t *testing.T) {
 }
 
 // TestNewModelSetsQuitOnBackFromStagedTarget pins down that quitOnBack is
-// wired purely from StartTarget.Staged/Rev at construction time — nothing
-// else ever writes it, so the interactively-opened staged row or commit
-// (Enter from the list) is unaffected by construction rather than by a
-// runtime check.
+// wired purely from StartTarget.Staged/Diff/Rev at construction time —
+// nothing else ever writes it, so the interactively-opened staged/worktree
+// row or commit (Enter from the list) is unaffected by construction rather
+// than by a runtime check.
 func TestNewModelSetsQuitOnBackFromStagedTarget(t *testing.T) {
 	if !NewModel(StartTarget{Staged: true}).quitOnBack {
 		t.Error("quitOnBack = false for StartTarget{Staged: true}, want true")
+	}
+	if !NewModel(StartTarget{Diff: true}).quitOnBack {
+		t.Error("quitOnBack = false for StartTarget{Diff: true}, want true")
 	}
 	if !NewModel(StartTarget{Rev: "HEAD~2"}).quitOnBack {
 		t.Error("quitOnBack = false for StartTarget{Rev: \"HEAD~2\"}, want true")
@@ -116,6 +119,22 @@ func TestRepoOpenedStagedPathSkipsNoCommitsError(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected a command to fetch the staged entry")
+	}
+}
+
+// TestRepoOpenedDiffPathSkipsNoCommitsError is TestRepoOpenedStagedPathSkipsNoCommitsError's
+// counterpart for --diff: a commit-less repo is fine there too, since
+// worktreeDiff's tracked-file half diffs against the empty tree the same
+// way stagedDiff does, and untracked files don't need a HEAD at all.
+func TestRepoOpenedDiffPathSkipsNoCommitsError(t *testing.T) {
+	m := Model{start: StartTarget{Diff: true}}
+	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
+	m = newModel.(Model)
+	if m.err != nil {
+		t.Errorf("err = %v, want nil (a commit-less repo is fine for --diff)", m.err)
+	}
+	if cmd == nil {
+		t.Fatal("expected a command to fetch the worktree entry")
 	}
 }
 

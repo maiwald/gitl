@@ -23,6 +23,7 @@ func main() {
 	flag.Usage = printUsage
 	n := flag.Int("n", 0, "print the N most recent commits non-interactively and exit")
 	staged := flag.Bool("staged", false, "open the staged changes (index vs HEAD) directly; q exits")
+	diff := flag.Bool("diff", false, "open the working tree changes (index vs working tree) directly; q exits")
 	version := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -41,12 +42,16 @@ func main() {
 		rev = args[0]
 	}
 
-	if *staged && rev != "" {
-		fmt.Fprintln(os.Stderr, "error: --staged and a revision argument are mutually exclusive")
+	if *staged && *diff {
+		fmt.Fprintln(os.Stderr, "error: --staged and --diff are mutually exclusive")
 		os.Exit(2)
 	}
-	if *n > 0 && (*staged || rev != "") {
-		fmt.Fprintln(os.Stderr, "error: -n cannot be combined with --staged or a revision argument")
+	if (*staged || *diff) && rev != "" {
+		fmt.Fprintln(os.Stderr, "error: --staged/--diff and a revision argument are mutually exclusive")
+		os.Exit(2)
+	}
+	if *n > 0 && (*staged || *diff || rev != "") {
+		fmt.Fprintln(os.Stderr, "error: -n cannot be combined with --staged, --diff, or a revision argument")
 		os.Exit(2)
 	}
 
@@ -69,8 +74,19 @@ func main() {
 			return
 		}
 	}
+	if *diff {
+		hasWorktreeChanges, err := checkHasWorktreeChanges()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		if !hasWorktreeChanges {
+			fmt.Fprintln(os.Stderr, "no working tree changes")
+			return
+		}
+	}
 
-	p := tea.NewProgram(ui.NewModel(ui.StartTarget{Rev: rev, Staged: *staged}), tea.WithAltScreen())
+	p := tea.NewProgram(ui.NewModel(ui.StartTarget{Rev: rev, Staged: *staged, Diff: *diff}), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -88,6 +104,8 @@ Usage:
                        tag, HEAD~2, ...); q/Esc quits outright
   gitl --staged       open the staged changes (index vs HEAD) directly;
                        q/Esc quits outright
+  gitl --diff         open the working tree changes (index vs working
+                       tree) directly; q/Esc quits outright
   gitl -n <count>     print the N most recent commits and exit
   gitl --version      print the version and exit
 
@@ -118,6 +136,16 @@ func checkHasStagedChanges() (bool, error) {
 		return false, err
 	}
 	return repo.HasStagedChanges(ctx)
+}
+
+// checkHasWorktreeChanges is --diff's equivalent of checkHasStagedChanges.
+func checkHasWorktreeChanges() (bool, error) {
+	ctx := context.Background()
+	repo, err := git.OpenRepo(ctx, ".")
+	if err != nil {
+		return false, err
+	}
+	return repo.HasWorktreeChanges(ctx)
 }
 
 func printCommits(n int) error {

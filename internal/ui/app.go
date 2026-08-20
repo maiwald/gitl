@@ -26,11 +26,12 @@ const (
 )
 
 // StartTarget describes what gitl was asked to open on startup: nothing
-// (the plain list), or the staged-changes entry. Built by main.go from the
-// command line.
+// (the plain list), the staged-changes entry, or the working-tree (unstaged)
+// entry. Built by main.go from the command line.
 type StartTarget struct {
 	Rev    string
 	Staged bool
+	Diff   bool
 }
 
 // Model is the root Bubble Tea model for the application.
@@ -40,9 +41,9 @@ type Model struct {
 
 	start StartTarget
 	// quitOnBack makes Back/q from the detail view quit outright instead of
-	// returning to the list — set in NewModel for `gitl --staged`/`<rev>`
-	// startup jumps, which open straight into a detail view with no list
-	// to return to. Nothing else ever writes it.
+	// returning to the list — set in NewModel for `gitl --staged`/`--diff`/
+	// `<rev>` startup jumps, which open straight into a detail view with no
+	// list to return to. Nothing else ever writes it.
 	quitOnBack bool
 
 	repo   *git.Repo
@@ -94,7 +95,7 @@ type pendingSearch struct {
 
 // NewModel constructs the initial root model for the given startup target.
 func NewModel(target StartTarget) Model {
-	return Model{start: target, quitOnBack: target.Staged || target.Rev != ""}
+	return Model{start: target, quitOnBack: target.Staged || target.Diff || target.Rev != ""}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -293,8 +294,8 @@ func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity) tea.Cmd {
 }
 
 // fetchEntryDetailCmd fetches a single synthetic entry's diff directly (for
-// a CLI `--staged` startup jump, which has no list to select the row from)
-// and opens it the same way any other detail view opens, via
+// a CLI `--staged`/`--diff` startup jump, which has no list to select the
+// row from) and opens it the same way any other detail view opens, via
 // commitDetailLoadedMsg. severity is hardcoded fatal since that startup
 // path has no list to fall back to.
 func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind) tea.Cmd {
@@ -360,6 +361,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// treats that as the empty tree, same as `git diff --cached`
 			// itself does.
 			return m, fetchEntryDetailCmd(msg.repo, git.EntryStaged)
+		}
+		if m.start.Diff {
+			return m, fetchEntryDetailCmd(msg.repo, git.EntryWorktree)
 		}
 		if m.start.Rev != "" {
 			// fetchDetailCmd passes the raw revision straight to `git log -1`
@@ -529,9 +533,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleDetailViewKey routes a key press while the detail view is active:
-// Back returns to the list (or quits outright, for a `gitl --staged` or
-// `gitl <rev>` startup jump — see quitOnBack), everything else goes to the
-// diff viewport.
+// Back returns to the list (or quits outright, for a `gitl --staged`,
+// `gitl --diff`, or `gitl <rev>` startup jump — see quitOnBack), everything
+// else goes to the diff viewport.
 func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, DefaultKeyMap.Back) {
 		if m.quitOnBack {

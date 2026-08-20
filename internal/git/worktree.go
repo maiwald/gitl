@@ -34,6 +34,24 @@ func (r *Repo) HasStagedChanges(ctx context.Context) (bool, error) {
 	return differs, err
 }
 
+// HasWorktreeChanges reports whether worktreeDiff would have anything to
+// show: tracked files differing from the index, or untracked files. Checked
+// separately (rather than just calling worktreeDiff and looking at the
+// result) so a CLI `--diff` pre-flight can answer without paying for a full
+// untracked-file diff synthesis just to find out the answer is "no".
+func (r *Repo) HasWorktreeChanges(ctx context.Context) (bool, error) {
+	var trackedDiffers bool
+	var untracked []string
+	err := concurrent.RunConcurrently(
+		func() (err error) { _, trackedDiffers, err = runGitDiffExit(ctx, r.Path, "diff", "--quiet"); return },
+		func() (err error) { untracked, err = r.untrackedPaths(ctx); return },
+	)
+	if err != nil {
+		return false, err
+	}
+	return trackedDiffers || len(untracked) > 0, nil
+}
+
 // FetchWorktreeEntry returns the diff behind a single synthetic entry kind
 // (EntryStaged or EntryWorktree). Returns nil files when there is nothing to
 // show.

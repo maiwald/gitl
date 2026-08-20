@@ -62,14 +62,19 @@ of the list:
 ```sh
 gitl <rev>        # open a specific commit's detail view directly (any
                    # git-resolvable revision — a sha, branch, tag, HEAD~2,
-                   # ...); q/Esc quits outright, like --staged below.
+                   # ...); q/Esc quits outright, like --staged/--diff below.
 
 gitl --staged      # open the staged-changes (index vs HEAD) detail view
                    # directly, no list involved — a drop-in replacement for
                    # `git diff --staged | less`: q/Esc quits outright.
+
+gitl --diff        # open the working-tree-changes (index vs working tree)
+                   # detail view directly, no list involved — a drop-in
+                   # replacement for `git diff | less`: q/Esc quits outright.
 ```
 
-`--staged` and a revision argument are mutually exclusive.
+`--staged` and `--diff` are mutually exclusive with each other and with a
+revision argument.
 
 Run `gitl --help` (or `-h`) at any time for the full flag reference.
 

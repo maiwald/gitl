@@ -60,6 +60,49 @@ func TestHasStagedChangesTrueAfterAdd(t *testing.T) {
 	}
 }
 
+func TestHasWorktreeChangesFalseWhenClean(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	has, err := repo.HasWorktreeChanges(context.Background())
+	if err != nil {
+		t.Fatalf("HasWorktreeChanges: %v", err)
+	}
+	if has {
+		t.Error("HasWorktreeChanges = true on a clean repo, want false")
+	}
+}
+
+func TestHasWorktreeChangesTrueAfterUnstagedEdit(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	dir := repo.Path
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("line one\nline two\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	has, err := repo.HasWorktreeChanges(context.Background())
+	if err != nil {
+		t.Fatalf("HasWorktreeChanges: %v", err)
+	}
+	if !has {
+		t.Error("HasWorktreeChanges = false after an unstaged edit, want true")
+	}
+}
+
+func TestHasWorktreeChangesTrueForUntrackedFileOnly(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	dir := repo.Path
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	has, err := repo.HasWorktreeChanges(context.Background())
+	if err != nil {
+		t.Fatalf("HasWorktreeChanges: %v", err)
+	}
+	if !has {
+		t.Error("HasWorktreeChanges = false with only an untracked file present, want true")
+	}
+}
+
 func TestFetchWorktreeEntryStaged(t *testing.T) {
 	repo := initFixtureRepoWithFile(t)
 	dir := repo.Path
