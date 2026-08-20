@@ -150,3 +150,45 @@ func TestFetchCommitDetailNormalCommitDiff(t *testing.T) {
 		t.Errorf("Additions=%d Deletions=%d, want 1/0", f.Additions, f.Deletions)
 	}
 }
+
+// TestFetchCommitDetailDetectsCopyFromUntouchedSource pins down that a
+// commit diff uses --find-copies-harder specifically (not plain
+// --find-copies): source.txt isn't touched by the commit being diffed, so
+// only "-harder" scans it as a candidate copy source. See stagedDiff's doc
+// comment (worktree.go) for the cost tradeoff this flag accepts.
+func TestFetchCommitDetailDetectsCopyFromUntouchedSource(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	content := []byte("line one\nline two\nline three\nline four\n")
+	if err := os.WriteFile(filepath.Join(dir, "source.txt"), content, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "source.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "add source.txt")
+
+	if err := os.WriteFile(filepath.Join(dir, "copy.txt"), content, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "copy.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "copy source.txt to copy.txt")
+
+	repo, err := OpenRepo(ctx, dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	detail, err := repo.FetchCommitDetail(ctx, headHash(t, dir))
+	if err != nil {
+		t.Fatalf("FetchCommitDetail: %v", err)
+	}
+	if len(detail.Files) != 1 {
+		t.Fatalf("Files = %v, want 1 file", detail.Files)
+	}
+	f := detail.Files[0]
+	if f.Path != "copy.txt" || f.OldPath != "source.txt" || f.Status != StatusCopied {
+		t.Errorf("file = %+v, want copy.txt copied from source.txt", f)
+	}
+}

@@ -123,6 +123,39 @@ func TestFetchWorktreeEntryStaged(t *testing.T) {
 	}
 }
 
+// TestFetchWorktreeEntryStagedDetectsCopyFromUntouchedSource pins down that
+// stagedDiff uses --find-copies-harder specifically (not plain
+// --find-copies): source.txt isn't itself staged, so only "-harder" scans
+// it as a candidate copy source. See stagedDiff's doc comment for the cost
+// tradeoff this flag accepts.
+func TestFetchWorktreeEntryStagedDetectsCopyFromUntouchedSource(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	dir := repo.Path
+	content := []byte("line one\nline two\nline three\nline four\n")
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), content, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "tracked.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "give tracked.txt real content")
+
+	if err := os.WriteFile(filepath.Join(dir, "copy.txt"), content, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "copy.txt")
+
+	files, err := repo.FetchWorktreeEntry(context.Background(), EntryStaged)
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryStaged): %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("got files = %+v, want one file", files)
+	}
+	f := files[0]
+	if f.Path != "copy.txt" || f.OldPath != "tracked.txt" || f.Status != StatusCopied {
+		t.Errorf("file = %+v, want copy.txt copied from tracked.txt", f)
+	}
+}
+
 func TestFetchWorktreeEntryWorktree(t *testing.T) {
 	repo := initFixtureRepoWithFile(t)
 	dir := repo.Path

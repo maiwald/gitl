@@ -98,11 +98,19 @@ func EntryDetail(e WorktreeEntry) *CommitDetail {
 	return &CommitDetail{Kind: e.Kind, Files: e.Files}
 }
 
-// stagedDiff diffs the index against HEAD. On an unborn HEAD (no commits
+// stagedDiff diffs the index against HEAD with copy detection
+// (`--find-copies-harder`, matching `git diff --cached --find-copies-harder`)
+// — unlike the worktree diff, a newly staged file genuinely can appear as
+// "added" here, so there's something for copy detection to pair against.
+// The "-harder" variant (vs. plain --find-copies) also catches a copy whose
+// source file wasn't itself touched, at the cost of scanning every
+// unmodified file in the tree as a candidate source rather than just the
+// files already in the diff — acceptable here since this fetches once per
+// detail-view open, not on every keystroke. On an unborn HEAD (no commits
 // yet) git already treats this as a diff against the empty tree, so no
 // explicit fallback is needed.
 func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
-	return r.diffFiles(ctx, "--cached")
+	return r.diffFiles(ctx, "--cached", "--find-copies-harder")
 }
 
 // worktreeDiff diffs tracked files against the index, then appends one
@@ -110,6 +118,13 @@ func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
 // covers everything `git status` would flag as new (not just what plain
 // `git diff` shows). The tracked diff and the untracked-file scan are
 // independent git invocations, so they run concurrently.
+//
+// Unlike stagedDiff/FetchCommitDetail, this diff has no copy-detection flag:
+// both sides (index and working tree) are restricted to already-tracked
+// paths, so a path can never appear as "added" for copy detection to pair
+// against — a genuinely new path is untracked, which never reaches this git
+// invocation at all (it's handled by untrackedFiles below instead). Passing
+// --find-copies here would be a pure no-op.
 func (r *Repo) worktreeDiff(ctx context.Context) ([]File, error) {
 	var files, untracked []File
 	err := concurrent.RunConcurrently(
