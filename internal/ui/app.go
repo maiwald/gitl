@@ -69,6 +69,15 @@ type Model struct {
 	searchPromptOpen bool
 	searchInput      textinput.Model
 	pendingSearch    *pendingSearch
+	// allHashes is the full reachable commit-hash history in log order,
+	// fetched once on the first search and reused for every later one —
+	// gitl has no refresh mechanism (see CLAUDE.md's "Known limitations"),
+	// so this can't go stale during a run, and refetching it via a git
+	// subprocess on every search submission would be wasted I/O on a large
+	// repo. haveAllHashes distinguishes "not fetched yet" from "fetched an
+	// empty/unborn history".
+	allHashes     []string
+	haveAllHashes bool
 
 	// searchTerm and searchDismissed are the single, canonical search state
 	// shared by both views — see setSearchDisplay, the only place that
@@ -422,6 +431,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case allHashesLoadedMsg:
+		m.allHashes = msg.hashes
+		m.haveAllHashes = true
 		if m.pendingSearch != nil && m.pendingSearch.term == msg.term {
 			m.pendingSearch.order = msg.hashes
 			m.pendingSearch.haveOrder = true
@@ -441,12 +452,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// startListSearch kicks off the two independent git queries a list search
-// needs (which commits match, and the full hash order to place them),
-// concurrently — they're read-only subprocess calls with no shared state,
-// so there's no reason to make one wait for the other.
+// startListSearch kicks off the git queries a list search needs (which
+// commits match, and the full hash order to place them). The hash order is
+// invariant for the process's lifetime, so it's only fetched on the first
+// search — see allHashes's doc comment — and reused directly here on every
+// later one instead of being requeried concurrently with the match query.
 func (m Model) startListSearch(term string) (Model, tea.Cmd) {
 	m.pendingSearch = &pendingSearch{term: term}
+	if m.haveAllHashes {
+		m.pendingSearch.order = m.allHashes
+		m.pendingSearch.haveOrder = true
+		return m, searchHashesCmd(m.repo, term)
+	}
 	return m, tea.Batch(searchHashesCmd(m.repo, term), allHashesCmd(m.repo, term))
 }
 
