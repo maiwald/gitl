@@ -75,18 +75,27 @@ func TestRenderCommitRowHighlightsSubjectMatch(t *testing.T) {
 	}
 }
 
-// TestRenderCommitRowNeverHighlightsShaOrDate pins down that sha and date
-// are rendered as opaque, unsplit spans regardless of searchTerm: they're
-// never part of what SearchCommitHashes actually searches (author name and
-// commit message only), so highlighting them — even when their text
-// happens to contain the term — would be misleading about what matched.
-func TestRenderCommitRowNeverHighlightsShaOrDate(t *testing.T) {
+// TestRenderCommitRowHighlightsShaMatch pins down that the visible sha
+// prefix is search-highlighted like author/subject: list search also
+// matches the commit hash (git.HashesMatching), unlike the detail view's
+// in-commit search (see headerLinesFor's doc comment in detail.go).
+func TestRenderCommitRowHighlightsShaMatch(t *testing.T) {
 	c := fixtureCommitForRow()
 
 	shaRow := renderCommitRow(c, 120, false, false, "abc", false)
-	if strings.Contains(shaRow, searchMatchStyle.Render("abc")) {
-		t.Errorf("row = %q, sha should never be search-highlighted", shaRow)
+	want := searchMatchStyle.Render("abc")
+	if !strings.Contains(shaRow, want) {
+		t.Errorf("row = %q, want it to contain the highlighted sha %q", shaRow, want)
 	}
+}
+
+// TestRenderCommitRowNeverHighlightsDate pins down that date is rendered as
+// an opaque, unsplit span regardless of searchTerm: it's never part of what
+// list search actually searches (sha, author name, and commit message
+// only), so highlighting it — even when its text happens to contain the
+// term — would be misleading about what matched.
+func TestRenderCommitRowNeverHighlightsDate(t *testing.T) {
+	c := fixtureCommitForRow()
 
 	dateRow := renderCommitRow(c, 120, false, false, "2024", false)
 	if strings.Contains(dateRow, searchMatchStyle.Render("2024")) {

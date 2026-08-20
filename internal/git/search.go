@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"strings"
 
 	"github.com/maiwald/gitl/internal/concurrent"
 )
@@ -59,4 +60,27 @@ func (r *Repo) AllCommitHashes(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return splitLines(out), nil
+}
+
+// HashesMatching filters hashes to those containing term as a
+// case-insensitive substring — the same match semantics
+// SearchCommitHashes applies to author/message. It's a pure function (no
+// git subprocess) rather than a third case in SearchCommitHashes because
+// callers already have the full hash order in hand (fetched once via
+// AllCommitHashes and reused across searches, see allHashes's doc comment
+// in app.go) for mapping matches to list positions, so filtering it
+// in-memory avoids spawning a second git process just to search by hash.
+// Returns an empty, non-nil set when term is empty.
+func HashesMatching(hashes []string, term string) map[string]bool {
+	matches := map[string]bool{}
+	if term == "" {
+		return matches
+	}
+	term = strings.ToLower(term)
+	for _, h := range hashes {
+		if strings.Contains(h, term) {
+			matches[h] = true
+		}
+	}
+	return matches
 }

@@ -252,10 +252,13 @@ type baseSpan struct {
 //
 // authorLine and bodyStart mark the two regions eligible for search — the
 // author line and the message body — matching what
-// internal/git.SearchCommitHashes matches for list search, deliberately
-// excluding the hash/parent/date metadata lines. spans (keyed by line
-// index) marks the hash/name/date substrings that get base coloring
-// regardless of search state.
+// internal/git.SearchCommitHashes matches for list search's author/message
+// fields, deliberately excluding the hash/parent/date metadata lines: list
+// search also matches the commit hash (git.HashesMatching), but that's
+// useful for finding a commit in the list, not for searching within a
+// commit you're already viewing. spans (keyed by line index) marks the
+// hash/name/date substrings that get base coloring regardless of search
+// state.
 //
 // The body is indented 4 spaces, matching `git show`'s own convention.
 func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int, spans map[int][]baseSpan) {
@@ -411,7 +414,8 @@ type MessageMatch struct {
 // FindMessageMatches returns every occurrence of term in the header lines
 // eligible for search: the author line and every line from bodyStart
 // onward (see headerLinesFor) — deliberately not the hash/parent/date
-// lines, keeping scope consistent with internal/git.SearchCommitHashes.
+// lines (see headerLinesFor's doc comment for why hash is excluded here
+// even though list search matches it).
 func FindMessageMatches(lines []string, authorLine, bodyStart int, term string) []MessageMatch {
 	if term == "" {
 		return nil
@@ -495,8 +499,8 @@ func (m *DetailModel) syncHighlightFromScroll() {
 }
 
 // RunSearch finds every occurrence of term across this commit's header and
-// message (the author line and body — the same two fields
-// internal/git.SearchCommitHashes matches for list search) and its diff
+// message (the author line and body — see headerLinesFor's doc comment for
+// why this deliberately excludes the hash, unlike list search) and its diff
 // content, message matches first in document order and diff matches after,
 // and jumps to the first one, returning the total match count. Unlike list
 // search this is fully synchronous: the whole commit is already in memory

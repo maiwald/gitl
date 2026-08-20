@@ -32,7 +32,8 @@ internal/git/              data access layer, no TUI dependencies
   log.go                   Commit type, FetchLogBatch, CommitCount (paged log)
   show.go                  CommitDetail (+ EntryKind), FetchCommitDetail (metadata + diff)
   diff.go                  File/Hunk/DiffLine, ParseUnifiedDiff (go-gitdiff wrapper)
-  search.go                SearchCommitHashes (author+message, OR), AllCommitHashes
+  search.go                SearchCommitHashes (author+message, OR), AllCommitHashes,
+                           HashesMatching (in-memory hash-substring filter, list search only)
   rev.go                   ResolveRevision, CommitPosition (CLI revision jump support)
   worktree.go              EntryKind/WorktreeEntry, FetchWorktreeEntries/FetchWorktreeEntry
                            (staged + working-tree diffs, untracked files as synthesized
@@ -174,10 +175,17 @@ before every commit — don't commit red.
   first-parent, is deferred).
 - No language-aware syntax highlighting inside diffs, only diff-status
   coloring (add/delete/context).
-- List search matching a commit's message body (not its one-line subject)
-  has nothing to visibly highlight in that row, since the row never shows
-  the body — it still counts correctly toward the match total, and is
-  distinguishable from a true non-match by not being dimmed.
+- List search matching a commit's message body (not its one-line subject),
+  or matching the commit hash beyond the visible `shaColumnWidth`-character
+  prefix, has nothing to visibly highlight in that row, since the row
+  doesn't show the full body or the full hash — it still counts correctly
+  toward the match total, and is distinguishable from a true non-match by
+  not being dimmed.
+- List search matches the commit hash (`git.HashesMatching`), but the
+  detail view's in-commit search deliberately does not — see
+  `headerLinesFor`'s doc comment in `detail.go`. Searching for a commit's
+  own hash while already viewing that commit isn't useful; the hash field
+  is only a search target when picking a commit out of the list.
 - The working-tree/staged rows and their diffs are fetched once at startup,
   like the rest of the app's data — there's no refresh key, so edits made
   in another terminal while gitl is running aren't reflected.

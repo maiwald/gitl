@@ -478,9 +478,10 @@ func (m Model) pumpPendingSearch() (Model, tea.Cmd) {
 	}
 	m.pendingSearch = nil
 
-	matches := make([]int, 0, len(p.matchSet))
+	hashMatches := git.HashesMatching(p.order, p.term)
+	matches := make([]int, 0, len(p.matchSet)+len(hashMatches))
 	for i, h := range p.order {
-		if p.matchSet[h] {
+		if p.matchSet[h] || hashMatches[h] {
 			matches = append(matches, i)
 		}
 	}

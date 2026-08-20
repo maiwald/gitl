@@ -36,11 +36,14 @@ const (
 
 // renderCommitRow renders a single commit list row: abbreviated sha, date,
 // local time, author, ref decorations, and the commit subject,
-// truncated/padded to width. searchTerm highlights matches in the author
-// and subject fields only — the only fields SearchCommitHashes actually
-// searches, so a body-only match has nothing here to highlight, which is
-// expected. isActiveMatch picks a distinct style for whichever match n/N
-// currently points at.
+// truncated/padded to width. searchTerm highlights matches in the sha,
+// author, and subject fields — the fields SearchCommitHashes/HashesMatching
+// actually search, plus the commit message body, which has nothing visible
+// here to highlight (a body-only match still counts and stays undimmed, it
+// just shows no highlighted span). A hash match beyond the visible
+// shaColumnWidth-character prefix is the same case: real match, nothing in
+// the truncated text to highlight. isActiveMatch picks a distinct style for
+// whichever match n/N currently points at.
 //
 // dimmed fades a row outside the search's real match set (from the actual
 // git query, not from re-scanning this row's own text — see
@@ -69,10 +72,9 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 	subjectBase := rowFieldStyle(normalRowStyle, dimmed, selected)
 	gap := rowGap(selected)
 
-	// sha/date/clock are never search targets (SearchCommitHashes only
-	// matches author name and commit message), so they're just rendered in
-	// their base style — only author and subject go through highlightSpans.
-	sha = shaBase.Render(sha)
+	// date/clock are never search targets, so they're just rendered in
+	// their base style — sha, author, and subject go through highlightSpans
+	// below (sha only when unselected, alongside author/subject).
 
 	// when collapses date+clock into whichever single value is most useful
 	// for this row once the pane is narrow (see narrowListWidth): today's
@@ -95,9 +97,11 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 
 	if !selected {
 		ms := matchStyle(isActiveMatch)
+		sha = highlightSpans(sha, searchTerm, shaBase, ms)
 		author = highlightSpans(author, searchTerm, authorBase, ms)
 		subject = highlightSpans(subject, searchTerm, subjectBase, ms)
 	} else {
+		sha = shaBase.Render(sha)
 		author = authorBase.Render(author)
 		subject = subjectBase.Render(subject)
 	}
