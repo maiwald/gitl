@@ -44,12 +44,10 @@ func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) st
 	// leading mirrors renderCommitRow's sha/when blank columns exactly, at
 	// whichever width is active, so the title/counts that follow keep
 	// landing where a real row's author/subject would.
-	leading := gap(strings.Repeat(" ", shaColumnWidth)) + gap(" ")
-	if narrow {
-		leading += gap(strings.Repeat(" ", dateColumnWidth)) + gap(" ")
-	} else {
-		leading += gap(strings.Repeat(" ", dateColumnWidth)) + gap(" ") +
-			gap(strings.Repeat(" ", clockColumnWidth)) + gap(" ")
+	leading := gap(strings.Repeat(" ", shaColumnWidth)) + gap(" ") +
+		gap(strings.Repeat(" ", dateColumnWidth)) + gap(" ")
+	if !narrow {
+		leading += gap(strings.Repeat(" ", clockColumnWidth)) + gap(" ")
 	}
 
 	row := leading + titleStyle.Render(title) + gap("  ") +
