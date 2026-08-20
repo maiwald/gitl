@@ -301,9 +301,7 @@ func (m *ListModel) ensureVisible() {
 	} else if row >= m.vp.YOffset+m.vp.Height {
 		m.vp.YOffset = row - m.vp.Height + 1
 	}
-	if m.vp.YOffset < 0 {
-		m.vp.YOffset = 0
-	}
+	m.vp.YOffset = max(m.vp.YOffset, 0)
 }
 
 // Search records matches (absolute commit positions, ascending, as computed

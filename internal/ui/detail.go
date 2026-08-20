@@ -164,9 +164,7 @@ func (m *DetailModel) reflow() {
 	if len(m.fileRanges) > 0 {
 		m.leftVP.Height--
 	}
-	if m.leftVP.Height < 0 {
-		m.leftVP.Height = 0
-	}
+	m.leftVP.Height = max(m.leftVP.Height, 0)
 	// viewport.SetYOffset clamps to the content's own max scroll position,
 	// which is normally what you want (no blank space below the last
 	// line) — but it also means a short trailing file's landing line (see

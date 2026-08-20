@@ -706,11 +706,7 @@ func (m Model) View() string {
 // contentHeight is how many rows remain for the list/detail views once the
 // bottom status bar's single row is reserved.
 func (m Model) contentHeight() int {
-	h := m.height - 1
-	if h < 0 {
-		h = 0
-	}
-	return h
+	return max(m.height-1, 0)
 }
 
 // renderStatusBar renders the bottom status bar: the live query while the
