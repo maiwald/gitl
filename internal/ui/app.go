@@ -678,7 +678,13 @@ func (m Model) dismissSearch() (Model, tea.Cmd) {
 // this may dispatch a targeted fetch if the newly-selected match isn't
 // loaded yet; the detail view is fully synchronous and never needs one.
 func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
-	m.setSearchDisplay(m.searchTerm, false)
+	// Only reviving a dismissed search needs setSearchDisplay's own
+	// render/reflow: NextMatch/PrevMatch below always re-render themselves
+	// to show the newly active match, so calling it unconditionally would
+	// pay for a full re-render/reflow twice on every plain n/N press.
+	if m.searchDismissed {
+		m.setSearchDisplay(m.searchTerm, false)
+	}
 
 	if m.active == viewDetail {
 		if delta > 0 {
