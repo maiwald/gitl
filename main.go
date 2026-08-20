@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	tea "github.com/charmbracelet/bubbletea"
 	xterm "github.com/charmbracelet/x/term"
@@ -22,7 +23,13 @@ func main() {
 	flag.Usage = printUsage
 	n := flag.Int("n", 0, "print the N most recent commits non-interactively and exit")
 	staged := flag.Bool("staged", false, "open the staged changes (index vs HEAD) directly; q exits")
+	version := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *version {
+		fmt.Println("gitl " + versionString())
+		return
+	}
 
 	args := flag.Args()
 	if len(args) > 1 {
@@ -82,10 +89,23 @@ Usage:
   gitl --staged       open the staged changes (index vs HEAD) directly;
                        q/Esc quits outright
   gitl -n <count>     print the N most recent commits and exit
+  gitl --version      print the version and exit
 
 Flags:
 `)
 	flag.PrintDefaults()
+}
+
+// versionString reports the module version go install embedded (a tag like
+// "v1.3.0", or a pseudo-version on an untagged commit). A plain `go build`
+// from a local checkout has no such metadata, so that case falls back to
+// "dev" rather than printing Go's uninformative "(devel)".
+func versionString() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return "dev"
+	}
+	return info.Main.Version
 }
 
 // checkHasStagedChanges is a pre-flight for --staged, so an empty index

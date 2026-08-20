@@ -46,6 +46,8 @@ cd gitl
 go build -o gitl .
 ```
 
+Check what's installed with `gitl --version`.
+
 ## Usage
 
 Run it inside any git repository:
