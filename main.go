@@ -64,7 +64,7 @@ func main() {
 	}
 
 	if *staged {
-		hasStaged, err := checkHasStagedChanges()
+		hasStaged, err := checkHasChanges((*git.Repo).HasStagedChanges)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
@@ -75,7 +75,7 @@ func main() {
 		}
 	}
 	if *diff {
-		hasWorktreeChanges, err := checkHasWorktreeChanges()
+		hasWorktreeChanges, err := checkHasChanges((*git.Repo).HasWorktreeChanges)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
@@ -126,31 +126,29 @@ func versionString() string {
 	return info.Main.Version
 }
 
-// checkHasStagedChanges is a pre-flight for --staged, so an empty index
-// prints a one-line message and exits instead of flashing an alt-screen TUI
-// just to immediately say there's nothing to show.
-func checkHasStagedChanges() (bool, error) {
-	ctx := context.Background()
-	repo, err := git.OpenRepo(ctx, ".")
-	if err != nil {
-		return false, err
-	}
-	return repo.HasStagedChanges(ctx)
+// openCWDRepo opens the repository rooted at the current working directory,
+// the only place gitl's CLI needs a hardcoded "." — internal/git itself
+// stays path-agnostic.
+func openCWDRepo(ctx context.Context) (*git.Repo, error) {
+	return git.OpenRepo(ctx, ".")
 }
 
-// checkHasWorktreeChanges is --diff's equivalent of checkHasStagedChanges.
-func checkHasWorktreeChanges() (bool, error) {
+// checkHasChanges is a pre-flight for --staged/--diff, so an empty
+// index/worktree prints a one-line message and exits instead of flashing an
+// alt-screen TUI just to immediately say there's nothing to show. check is
+// passed as a method expression, e.g. (*git.Repo).HasStagedChanges.
+func checkHasChanges(check func(*git.Repo, context.Context) (bool, error)) (bool, error) {
 	ctx := context.Background()
-	repo, err := git.OpenRepo(ctx, ".")
+	repo, err := openCWDRepo(ctx)
 	if err != nil {
 		return false, err
 	}
-	return repo.HasWorktreeChanges(ctx)
+	return check(repo, ctx)
 }
 
 func printCommits(n int) error {
 	ctx := context.Background()
-	repo, err := git.OpenRepo(ctx, ".")
+	repo, err := openCWDRepo(ctx)
 	if err != nil {
 		return err
 	}
