@@ -249,16 +249,17 @@ func (m *ListModel) jumpToBottom() (fetchRequest, bool) {
 		return fetchRequest{}, false
 	}
 	m.pendingCursor = m.totalCount - 1
-	return m.beginLoadingUpTo(m.totalCount - 1)
+	return m.RequestLoadUpTo(m.totalCount - 1)
 }
 
-// beginLoadingUpTo requests whatever commits are needed so that index
-// target (plus a little lookahead) is loaded, unless a fetch is already in
-// flight or it's already loaded. This is the same "fetch the rest in one
-// shot" mechanism jumpToBottom uses (target = totalCount-1 there), just
+// RequestLoadUpTo requests whatever commits are needed so that index target
+// (plus a little lookahead) is loaded, unless a fetch is already in flight
+// or it's already loaded. This is the same "fetch the rest in one shot"
+// mechanism jumpToBottom uses (target = totalCount-1 there), just
 // parameterized by an arbitrary position — used by search to load only as
 // far as the relevant match rather than the entire remaining history.
-func (m *ListModel) beginLoadingUpTo(target int) (fetchRequest, bool) {
+// Exported so app.go can trigger it directly for search-driven jumps.
+func (m *ListModel) RequestLoadUpTo(target int) (fetchRequest, bool) {
 	if m.loadingMore || len(m.commits) >= m.totalCount {
 		return fetchRequest{}, false
 	}
@@ -271,13 +272,6 @@ func (m *ListModel) beginLoadingUpTo(target int) (fetchRequest, bool) {
 	}
 	m.loadingMore = true
 	return fetchRequest{skip: len(m.commits), limit: need - len(m.commits)}, true
-}
-
-// RequestLoadUpTo dispatches (or reuses an already-in-flight) fetch to
-// bring position target into the loaded range. Exported so app.go can
-// trigger it directly for search-driven jumps.
-func (m *ListModel) RequestLoadUpTo(target int) (fetchRequest, bool) {
-	return m.beginLoadingUpTo(target)
 }
 
 // maybeLoadMore requests the next batch when the cursor has scrolled near
