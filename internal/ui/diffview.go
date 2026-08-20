@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/maiwald/gitl/internal/git"
@@ -45,6 +46,7 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 		}
 		for hi, h := range f.Hunks {
 			lines = append(lines, renderClipped(hunkHeaderStyle, h.Header, width))
+			hunkSpans := intralineSpans(h)
 			for li, l := range h.Lines {
 				lineStart := len(lines)
 				var lineMatches []lineMatch
@@ -57,7 +59,7 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 					matchLines[mi] = lineStart
 					mi++
 				}
-				lines = append(lines, renderDiffLine(l, width, lineMatches)...)
+				lines = append(lines, renderDiffLine(l, width, hunkSpans[li], lineMatches)...)
 			}
 		}
 		ranges = append(ranges, FileRange{FileIndex: fi, StartLine: start, EndLine: len(lines)})
@@ -169,20 +171,27 @@ type lineMatch struct {
 // renderDiffLine renders a single diff line, word-wrapping it to width when
 // it doesn't fit on one row. Each wrapped row is returned as its own
 // element so it becomes its own entry in the flattened diff content,
-// keeping FileRange line-index bookkeeping correct.
-func renderDiffLine(l git.DiffLine, width int, matches []lineMatch) []string {
+// keeping FileRange line-index bookkeeping correct. spans (from
+// intralineSpans) mark the intraline change within a paired add/delete
+// line, in the same byte-offset-into-DiffLine.Text coordinate space as
+// matches, so both are shifted by len(prefix) together before rendering.
+func renderDiffLine(l git.DiffLine, width int, spans []baseSpan, matches []lineMatch) []string {
 	style, prefix := diffLineStyle(l.Op)
 	text := prefix + l.Text
 
 	var content string
-	if len(matches) == 0 {
+	if len(spans) == 0 && len(matches) == 0 {
 		content = style.Render(text)
 	} else {
-		shifted := make([]lineMatch, len(matches))
+		shiftedMatches := make([]lineMatch, len(matches))
 		for i, m := range matches {
-			shifted[i] = lineMatch{start: len(prefix) + m.start, end: len(prefix) + m.end, active: m.active}
+			shiftedMatches[i] = lineMatch{start: len(prefix) + m.start, end: len(prefix) + m.end, active: m.active}
 		}
-		content = renderLineWithBaseSpans(text, nil, shifted, style)
+		shiftedSpans := make([]baseSpan, len(spans))
+		for i, s := range spans {
+			shiftedSpans[i] = baseSpan{start: len(prefix) + s.start, end: len(prefix) + s.end, style: s.style}
+		}
+		content = renderLineWithBaseSpans(text, shiftedSpans, shiftedMatches, style)
 	}
 
 	if width <= 0 {
@@ -205,4 +214,108 @@ func diffLineStyle(op git.LineOp) (lipgloss.Style, string) {
 	default:
 		return diffContextStyle, " "
 	}
+}
+
+// intralineSpans finds, for each maximal run of consecutive non-context
+// lines in a hunk (a "replace block" — the deleted lines followed by the
+// lines that replaced them), the intraline change within each positionally
+// paired delete/add line, keyed by that line's index into h.Lines. Matches
+// diff-highlight's own show_hunk: a block is only paired up, and only its
+// lines individually highlighted, when it has exactly as many removed
+// lines as added lines — an unequal block is left with no spans at all
+// (same as a pure insertion or deletion block), since diff-highlight
+// doesn't attempt any partial or best-effort pairing when the counts
+// don't line up.
+func intralineSpans(h git.Hunk) map[int][]baseSpan {
+	spans := make(map[int][]baseSpan)
+
+	i := 0
+	for i < len(h.Lines) {
+		if h.Lines[i].Op == git.OpContext {
+			i++
+			continue
+		}
+
+		var deleteIdx, addIdx []int
+		for i < len(h.Lines) && h.Lines[i].Op != git.OpContext {
+			if h.Lines[i].Op == git.OpDelete {
+				deleteIdx = append(deleteIdx, i)
+			} else {
+				addIdx = append(addIdx, i)
+			}
+			i++
+		}
+
+		if len(deleteIdx) != len(addIdx) {
+			continue
+		}
+		for k := range deleteIdx {
+			di, ai := deleteIdx[k], addIdx[k]
+			oldSpan, newSpan, ok := intralineDiff(h.Lines[di].Text, h.Lines[ai].Text)
+			if !ok {
+				continue
+			}
+			spans[di] = []baseSpan{{start: oldSpan[0], end: oldSpan[1], style: diffDeleteEmphStyle}}
+			spans[ai] = []baseSpan{{start: newSpan[0], end: newSpan[1], style: diffAddEmphStyle}}
+		}
+	}
+
+	return spans
+}
+
+// intralineDiff finds the byte-offset [start,end) "changed middle" of
+// oldText and newText — the region left after trimming their common prefix
+// and common suffix (rune-aware, so a multi-byte UTF-8 sequence is never
+// split) — the same common-prefix/common-suffix technique git's own
+// contrib/diff-highlight uses to keep this cheap for short lines rather
+// than needing a general LCS. ok is false when the lines are identical, or
+// when neither the common prefix nor the common suffix has any non-space
+// content — i.e. the two lines don't actually share anything meaningful,
+// so marking almost the whole line as "changed" wouldn't clarify anything
+// over the plain flat add/delete color. This mirrors diff-highlight's own
+// is_pair_interesting check (a pair is worth highlighting only if the
+// shared prefix or suffix has content beyond its diff marker and
+// whitespace) rather than a percentage-based cutoff — deliberately, since
+// diff-highlight (which diff-so-fancy wraps) has no such ratio: a single
+// shared non-space character at either end is enough to highlight, however
+// large the changed middle is.
+func intralineDiff(oldText, newText string) (oldSpan, newSpan [2]int, ok bool) {
+	oldRunes, newRunes := []rune(oldText), []rune(newText)
+	maxCommon := min(len(oldRunes), len(newRunes))
+
+	prefix := 0
+	for prefix < maxCommon && oldRunes[prefix] == newRunes[prefix] {
+		prefix++
+	}
+
+	suffix := 0
+	for suffix < maxCommon-prefix &&
+		oldRunes[len(oldRunes)-1-suffix] == newRunes[len(newRunes)-1-suffix] {
+		suffix++
+	}
+
+	oldMiddle, newMiddle := len(oldRunes)-prefix-suffix, len(newRunes)-prefix-suffix
+	if oldMiddle <= 0 && newMiddle <= 0 {
+		return oldSpan, newSpan, false
+	}
+	if !hasNonSpace(oldRunes[:prefix]) && !hasNonSpace(oldRunes[len(oldRunes)-suffix:]) {
+		return oldSpan, newSpan, false
+	}
+
+	oldSpan = [2]int{runeIndexToByte(oldRunes, prefix), runeIndexToByte(oldRunes, len(oldRunes)-suffix)}
+	newSpan = [2]int{runeIndexToByte(newRunes, prefix), runeIndexToByte(newRunes, len(newRunes)-suffix)}
+	return oldSpan, newSpan, true
+}
+
+func hasNonSpace(runes []rune) bool {
+	for _, r := range runes {
+		if !unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func runeIndexToByte(runes []rune, idx int) int {
+	return len(string(runes[:idx]))
 }

@@ -60,6 +60,22 @@ var (
 	diffDeleteStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("167"))
 
+	// diffAddEmphStyle and diffDeleteEmphStyle mark the intraline span that
+	// actually changed within a paired add/delete line (see intralineSpans
+	// in diffview.go): same hue as diffAddStyle/diffDeleteStyle plus a
+	// tinted background and bold weight, so the changed substring stands
+	// out against the rest of the line's flat color rather than replacing
+	// it with an unrelated color.
+	diffAddEmphStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("2")).
+				Background(lipgloss.Color("22"))
+
+	diffDeleteEmphStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("167")).
+				Background(lipgloss.Color("52"))
+
 	diffContextStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("250"))
 
