@@ -73,7 +73,11 @@ type DetailModel struct {
 	cursorLine int
 	// contentLen is reflow's most recent flattened content length, cached
 	// so setCursor/jumpCursor can clamp without threading it through as a
-	// parameter.
+	// parameter. Deliberately excludes the trailing blank padding rows
+	// reflow appends past the real content so jumpToSection can always
+	// scroll a short trailing file's header to the very top of the
+	// viewport — the cursor has no business visiting that padding (see
+	// reflow, where this is captured before the padding is appended).
 	contentLen int
 
 	// jumpBack and jumpForward mirror ListModel's own jumplist fields (see
@@ -209,6 +213,13 @@ func (m *DetailModel) reflow() {
 		m.leftVP.Height--
 	}
 	m.leftVP.Height = max(m.leftVP.Height, 0)
+	// contentLen is captured here, before the padding appended below: that
+	// padding exists only so the viewport can scroll a short trailing
+	// file's header to the very top (see the comment on the append just
+	// below), and the cursor has no business venturing into it — G, and
+	// the end-of-reflow clamp further down, both bound themselves to this
+	// value, not to len(content) after padding.
+	m.contentLen = len(content)
 	// viewport.SetYOffset clamps to the content's own max scroll position,
 	// which is normally what you want (no blank space below the last
 	// line) — but it also means a short trailing file's landing line (see
@@ -223,7 +234,6 @@ func (m *DetailModel) reflow() {
 			content = append(content, make([]string, need)...)
 		}
 	}
-	m.contentLen = len(content)
 	m.leftVP.SetContent(strings.Join(content, "\n"))
 
 	// A resize can shrink contentLen out from under an already-set

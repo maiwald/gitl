@@ -160,6 +160,31 @@ func TestDetailModelCursorSurvivesReflowClampedInRange(t *testing.T) {
 	}
 }
 
+// TestDetailModelBottomStaysWithinRealContentNotPadding pins down a
+// regression: reflow pads content with trailing blank rows past the real
+// diff (see reflow's doc comment on the append just after contentLen is
+// captured) purely so jumpToSection can scroll a short trailing file's
+// header to the very top of the viewport. G must land the cursor on the
+// last *real* content line, not wander into that invisible padding —
+// contentLen is captured before the padding is appended specifically so
+// G (which targets contentLen-1) can't reach it.
+func TestDetailModelBottomStaysWithinRealContentNotPadding(t *testing.T) {
+	d := fixtureDetailWithFiles(2, 30)
+	d.Files[1].Hunks[0].Lines = d.Files[1].Hunks[0].Lines[:2] // short trailing file, triggers padding
+	m := NewDetailModel(d)
+	m.SetSize(80, 20) // tall enough that the short file alone can't fill it
+
+	lastEnd := m.fileRanges[len(m.fileRanges)-1].EndLine
+	if m.contentLen != lastEnd {
+		t.Fatalf("contentLen = %d, want %d (the real content's end, excluding jumpToSection's trailing padding)", m.contentLen, lastEnd)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	if m.cursorLine != lastEnd-1 {
+		t.Fatalf("cursorLine after G = %d, want %d (the last real content line, not the padding)", m.cursorLine, lastEnd-1)
+	}
+}
+
 // TestDetailModelCursorHighlightFillsFullRowWidth pins down that the
 // cursor background covers the whole row, not just the text — a
 // regression check for a bug where the trailing padding a prior word-wrap
