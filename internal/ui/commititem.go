@@ -209,10 +209,7 @@ func isToday(t time.Time) bool {
 // Brewster Murray Hopper" -> "Gra Bre…").
 func abbreviateName(name string) string {
 	fields := strings.Fields(name)
-	kept := len(fields)
-	if kept > 2 {
-		kept = 2
-	}
+	kept := min(len(fields), 2)
 	for i := 0; i < kept; i++ {
 		r := []rune(fields[i])
 		if len(r) > 3 {

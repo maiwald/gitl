@@ -131,13 +131,7 @@ func sectionAt(sections []detailSection, lineIndex int) int {
 		return -1
 	}
 	idx := sort.Search(len(sections), func(i int) bool { return sections[i].startLine > lineIndex }) - 1
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= len(sections) {
-		idx = len(sections) - 1
-	}
-	return idx
+	return clamp(idx, 0, len(sections)-1)
 }
 
 // NewDetailModel constructs a detail view for the given commit, sharing jl —

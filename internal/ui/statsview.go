@@ -45,34 +45,22 @@ func statLinesFor(files []git.File, width int, cursorLine int) []string {
 	delCounts := make([]string, len(files))
 	var totalAdd, totalDel int
 	for i, f := range files {
-		if n := len(filePathLabel(f)); n > nameWidth {
-			nameWidth = n
-		}
+		nameWidth = max(nameWidth, len(filePathLabel(f)))
 		if !f.Binary {
 			addCounts[i], delCounts[i] = formatCountParts(f.Additions, f.Deletions)
-			if n := len(addCounts[i]); n > addWidth {
-				addWidth = n
-			}
-			if n := len(delCounts[i]); n > delWidth {
-				delWidth = n
-			}
+			addWidth = max(addWidth, len(addCounts[i]))
+			delWidth = max(delWidth, len(delCounts[i]))
 		}
 		totalAdd += f.Additions
 		totalDel += f.Deletions
 	}
 
 	totalAddCount, totalDelCount := formatCountParts(totalAdd, totalDel)
-	if n := len(totalAddCount); n > addWidth {
-		addWidth = n
-	}
-	if n := len(totalDelCount); n > delWidth {
-		delWidth = n
-	}
+	addWidth = max(addWidth, len(totalAddCount))
+	delWidth = max(delWidth, len(totalDelCount))
 
 	summaryLabel := fmt.Sprintf("%d %s changed", len(files), pluralize(len(files), "file", "files"))
-	if n := len(summaryLabel); n > nameWidth {
-		nameWidth = n
-	}
+	nameWidth = max(nameWidth, len(summaryLabel))
 
 	lines := make([]string, 0, len(files)+3)
 	lines = append(lines, renderClipped(cursorMerged(fileHeaderStyle, cursorLine == 0), statsSectionTitle, width))

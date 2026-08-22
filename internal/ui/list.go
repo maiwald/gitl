@@ -284,10 +284,7 @@ func (m *ListModel) RequestLoadUpTo(target int) (fetchRequest, bool) {
 	if m.loadingMore || len(m.commits) >= m.totalCount {
 		return fetchRequest{}, false
 	}
-	need := target + 1 + loadMoreLookahead
-	if need > m.totalCount {
-		need = m.totalCount
-	}
+	need := min(target+1+loadMoreLookahead, m.totalCount)
 	if need <= len(m.commits) {
 		return fetchRequest{}, false
 	}
