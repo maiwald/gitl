@@ -590,6 +590,64 @@ func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
 	}
 }
 
+// TestDetailModelEnterOnStatsRowJumpsToFile pins down that Enter on one of
+// the "Files changed" stats block's per-file rows jumps straight to that
+// file's diff section, the same landing point [ / ] use.
+func TestDetailModelEnterOnStatsRowJumpsToFile(t *testing.T) {
+	d := fixtureDetailWithFiles(3, 10)
+	m := NewDetailModel(d, &jumplist{})
+	m.SetSize(80, 8)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")}) // land on the stats block, cursor on file 0's row
+	if fi, ok := m.statsFileIndexAt(m.cursorLine); !ok || fi != 0 {
+		t.Fatalf("statsFileIndexAt(%d) = (%d, %v), want (0, true) right after landing on the stats block", m.cursorLine, fi, ok)
+	}
+
+	m.moveCursor(1) // down to file 1's row
+	if fi, ok := m.statsFileIndexAt(m.cursorLine); !ok || fi != 1 {
+		t.Fatalf("statsFileIndexAt(%d) = (%d, %v), want (1, true) on file 1's row", m.cursorLine, fi, ok)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	target := fileSectionIndex(m.sections, 1)
+	if m.currentSection != target || m.leftVP.YOffset != m.sections[target].startLine+1 {
+		t.Fatalf("after Enter on file 1's stats row: currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.leftVP.YOffset, target, m.sections[target].startLine+1)
+	}
+}
+
+// TestDetailModelEnterElsewhereIsNoop pins down that Enter does nothing
+// when the cursor isn't on one of the stats block's per-file rows: the
+// stats heading row, the totals row, and a file's own header row inside
+// the diff all leave currentSection/YOffset untouched.
+func TestDetailModelEnterElsewhereIsNoop(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithFiles(2, 10), &jumplist{})
+	m.SetSize(80, 8)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")}) // stats heading's file-0 row... move back up to the heading itself
+	m.moveCursor(-1)
+	if _, ok := m.statsFileIndexAt(m.cursorLine); ok {
+		t.Fatalf("statsFileIndexAt(%d) = ok, want false on the stats heading row", m.cursorLine)
+	}
+	before := m.currentSection
+	beforeOffset := m.leftVP.YOffset
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.currentSection != before || m.leftVP.YOffset != beforeOffset {
+		t.Fatalf("Enter on the stats heading row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection, m.leftVP.YOffset, before, beforeOffset)
+	}
+
+	m.jumpCursor(m.fileRanges[0].StartLine) // a file's own header row inside the diff (not a stats row)
+	if _, ok := m.statsFileIndexAt(m.cursorLine); ok {
+		t.Fatalf("statsFileIndexAt(%d) = ok, want false on a file's own header row inside the diff", m.cursorLine)
+	}
+	before = m.currentSection
+	beforeOffset = m.leftVP.YOffset
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.currentSection != before || m.leftVP.YOffset != beforeOffset {
+		t.Fatalf("Enter on a file's own header row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection, m.leftVP.YOffset, before, beforeOffset)
+	}
+}
+
 // TestDetailModelNextFileReachesShortTrailingFile pins down that ] can
 // reach the last file's header even when that file's own content is too
 // short to fill the remaining viewport on its own — viewport.SetYOffset

@@ -552,7 +552,10 @@ func findMessageLineMatches(line, term string, lineIndex int) []MessageMatch {
 // entry first when they actually move the cursor (see pushJump); plain
 // j/k/ctrl-u/ctrl-d don't, matching vim's own jumplist (only "big" motions
 // are jump-worthy). ctrl-o/ctrl-i themselves aren't handled here — see the
-// root Model's doJumpBack/doJumpForward.
+// root Model's doJumpBack/doJumpForward. Enter jumps straight to a file's
+// diff section when the cursor is on that file's row in the "Files
+// changed" stats block (see statsFileIndexAt/jumpToFile) and is a no-op
+// anywhere else, including on a file's own header row inside the diff.
 func (m *DetailModel) Update(msg tea.KeyMsg) {
 	switch {
 	case key.Matches(msg, DefaultKeyMap.Up):
@@ -571,6 +574,10 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 		m.jumpToSection(-1)
 	case key.Matches(msg, DefaultKeyMap.NextFile):
 		m.jumpToSection(1)
+	case key.Matches(msg, DefaultKeyMap.Enter):
+		if fi, ok := m.statsFileIndexAt(m.cursorLine); ok {
+			m.jumpToFile(fi)
+		}
 	}
 }
 
@@ -647,7 +654,47 @@ func (m *DetailModel) jumpToSection(delta int) {
 		return
 	}
 	target := clampIndex(m.currentSection+delta, len(m.sections)-1)
-	line := sectionContentStart(m.sections[target])
+	m.landOnLine(sectionContentStart(m.sections[target]))
+}
+
+// jumpToFile scrolls the diff panel directly to the diff section for
+// fileIndex, the same landing point jumpToSection uses when reached via
+// [ / ] — used by the Enter-on-a-stats-row action (see statsFileIndexAt).
+// A no-op if fileIndex has no corresponding section (shouldn't happen: a
+// caller-side bounds check against m.detail.Files already guards this).
+func (m *DetailModel) jumpToFile(fileIndex int) {
+	for _, s := range m.sections {
+		if s.kind == sectionKindFile && s.fileIndex == fileIndex {
+			m.landOnLine(sectionContentStart(s))
+			return
+		}
+	}
+}
+
+// statsFileIndexAt reports which file, if any, the stats block's row at
+// line corresponds to — matching statLinesFor's own local line convention
+// (0 = the "Files changed" heading, 1..len(files) = one row per file) —
+// so ok is false for the heading row, the blank separator, and the totals
+// row, as well as for any line outside the stats block entirely.
+func (m *DetailModel) statsFileIndexAt(line int) (fileIndex int, ok bool) {
+	for _, s := range m.sections {
+		if s.kind != sectionKindStats {
+			continue
+		}
+		fi := line - s.startLine - 1
+		if fi >= 0 && fi < len(m.detail.Files) {
+			return fi, true
+		}
+		return -1, false
+	}
+	return -1, false
+}
+
+// landOnLine scrolls directly to line, pushing a jump first if it actually
+// moves the cursor (see pushJump) — the "land the target at the very top
+// of the viewport" behavior shared by jumpToSection and jumpToFile, as
+// opposed to setCursor's minimal-scroll-to-keep-visible behavior.
+func (m *DetailModel) landOnLine(line int) {
 	if line != m.cursorLine {
 		m.pushJump(m.cursorLine)
 	}
