@@ -25,13 +25,19 @@ A terminal UI for browsing git history, with vim-style navigation.
   paging, `g`/`G` to jump to top/bottom.
 - **Search** — `/` to search, `n`/`N` to cycle matches (wrapping at both
   ends), with all matches highlighted and the current one visually
-  distinct. In the commit list, search covers author name and the full
-  commit message; in the commit detail view, it covers the commit
-  message (author line and body) and the diff content, message matches
-  first. Commits that don't match a search are dimmed in the list, so a
-  match whose only hit is in the message body (nothing visible to
-  highlight in the row) still stands out by contrast with the
-  surrounding non-matches.
+  distinct. One term is shared by both views: the commit list matches
+  author name, full commit message and hash; an open commit matches its
+  message (author line and body) and diff content, message matches first.
+  Only the view you're in jumps to a match — the other highlights them, so
+  `n` picks up where you left off when you get there. `Esc`/`q` hides the
+  highlighting without forgetting the term; `n`/`N` brings it back.
+  Commits that don't match are dimmed in the list, so a match whose only
+  hit is in the message body (nothing visible to highlight in the row)
+  still stands out by contrast with the surrounding non-matches.
+- **Jumplist** — `ctrl-o`/`ctrl-i` step back and forward through the
+  positions you jumped from, across both views: opening a commit, `g`/`G`,
+  `[`/`]`, and every search jump are recorded, so `ctrl-o` from inside a
+  commit returns to the list row you opened it from.
 - Handles large repositories: commits are fetched in lazily-loaded batches
   rather than all at once, so startup and memory use don't scale with the
   size of the history. Searching the list only loads as much history as a
@@ -92,11 +98,12 @@ Run `gitl --help` (or `-h`) at any time for the full flag reference.
 | `j`/`k`, `↓`/`↑`        | Move down/up                            |
 | `ctrl-d` / `ctrl-u`     | Half-page down/up                       |
 | `g` / `G`               | Jump to top / bottom                    |
-| `Enter`                 | Open commit detail                      |
+| `Enter`                 | Open commit detail; on a "Files changed" row, jump to that file's diff |
 | `[` / `]`               | Jump to previous/next file's diff (detail view) |
-| `/`                     | Search (list: author + message; detail: message + diff) |
+| `/`                     | Search (list: author + message + hash; detail: message + diff) |
 | `n` / `N`               | Next / previous search match (wraps)    |
-| `Esc` / `q`             | Back (detail view) / quit (list view)   |
+| `ctrl-o` / `ctrl-i`     | Jump back / forward through the positions you left |
+| `Esc` / `q`             | Hide the search, then back (detail view) / quit (list view) |
 | `ctrl-c`                | Quit                                     |
 
 ## Known limitations
