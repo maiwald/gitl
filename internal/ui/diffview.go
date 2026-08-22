@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 	"unicode"
 
@@ -22,9 +21,11 @@ type FileRange struct {
 // lines suitable for a single scrollable viewport, along with the line
 // range each file occupies within that flattened content. matches (from
 // FindDiffMatches, in the same file/hunk/line traversal order this function
-// uses) are highlighted inline unless dismissed is true. activeMatch
-// indexes into matches for the one that should stand out with a distinct
-// style (-1 for none; ignored when dismissed).
+// uses) are highlighted inline unless dismissed is true — a DiffMatchFileName
+// match highlights within that file's header row, a DiffMatchLine match
+// within the diff line it belongs to. activeMatch indexes into matches for
+// the one that should stand out with a distinct style (-1 for none; ignored
+// when dismissed).
 //
 // cursorLine, if it falls within this diff's own flattened line space
 // (negative or past the end otherwise selects nothing — the caller doesn't
@@ -52,7 +53,17 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 		start := len(lines)
 
 		fileHeaderRow := len(lines)
-		lines = append(lines, renderFileHeader(f, width, cursorLine == fileHeaderRow))
+		var headerMatches []lineMatch
+		for mi < len(matches) && matches[mi].Kind == DiffMatchFileName && matches[mi].FileIndex == fi {
+			if !dismissed {
+				headerMatches = append(headerMatches, lineMatch{
+					start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
+				})
+			}
+			matchLines[mi] = fileHeaderRow
+			mi++
+		}
+		lines = append(lines, renderFileHeader(f, width, cursorLine == fileHeaderRow, headerMatches))
 		if f.Binary {
 			binaryRow := len(lines)
 			lines = append(lines, renderClipped(cursorMerged(binaryNoticeStyle, cursorLine == binaryRow), "Binary file, diff not shown", width))
@@ -64,7 +75,7 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 			for li, l := range h.Lines {
 				lineStart := len(lines)
 				var lineMatches []lineMatch
-				for mi < len(matches) && matches[mi].FileIndex == fi && matches[mi].HunkIndex == hi && matches[mi].LineIndex == li {
+				for mi < len(matches) && matches[mi].Kind == DiffMatchLine && matches[mi].FileIndex == fi && matches[mi].HunkIndex == hi && matches[mi].LineIndex == li {
 					if !dismissed {
 						lineMatches = append(lineMatches, lineMatch{
 							start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
@@ -99,19 +110,38 @@ func cursorMerged(base lipgloss.Style, isCursor bool) lipgloss.Style {
 	return base
 }
 
+// DiffMatchKind distinguishes a DiffMatch found in a file's own displayed
+// name (DiffMatchFileName) from one found in a diff line's content
+// (DiffMatchLine). DiffMatchLine is deliberately the zero value: existing
+// DiffMatch struct literals that predate this field (e.g. in tests) omit
+// Kind entirely and must keep meaning "line match", not silently become
+// file-name matches.
+type DiffMatchKind int
+
+const (
+	DiffMatchLine DiffMatchKind = iota
+	DiffMatchFileName
+)
+
 // DiffMatch identifies one case-insensitive occurrence of a search term
-// within a single diff line's content (DiffLine.Text — excluding the
-// leading +/-/space prefix, and excluding file paths and hunk headers;
-// only line content participates in diff search).
+// either within a file's displayed name (Kind == DiffMatchFileName —
+// StartCol/EndCol are byte offsets into filePathLabel(files[FileIndex]);
+// HunkIndex/LineIndex are unused) or within a single diff line's content
+// (Kind == DiffMatchLine — DiffLine.Text, excluding the leading +/-/space
+// prefix and excluding hunk headers; StartCol/EndCol are byte offsets into
+// that text).
 type DiffMatch struct {
+	Kind                            DiffMatchKind
 	FileIndex, HunkIndex, LineIndex int
-	StartCol, EndCol                int // byte offsets into DiffLine.Text
+	StartCol, EndCol                int
 }
 
-// FindDiffMatches returns every occurrence of term across files' diff
-// lines, in the same file/hunk/line traversal order RenderDiff uses — a
-// documented invariant both functions rely on to stay in sync. Returns nil
-// for an empty term.
+// FindDiffMatches returns every occurrence of term across files' displayed
+// names and diff lines, in the same file/hunk/line traversal order
+// RenderDiff uses — a documented invariant both functions rely on to stay
+// in sync. Within a file, its own name-match(es), if any, sort ahead of
+// its line matches, matching the file header row's position above its
+// hunks in the rendered/flattened content. Returns nil for an empty term.
 func FindDiffMatches(files []git.File, term string) []DiffMatch {
 	if term == "" {
 		return nil
@@ -119,11 +149,17 @@ func FindDiffMatches(files []git.File, term string) []DiffMatch {
 
 	var matches []DiffMatch
 	for fi, f := range files {
+		for _, occ := range findOccurrences(filePathLabel(f), term) {
+			matches = append(matches, DiffMatch{
+				Kind: DiffMatchFileName, FileIndex: fi,
+				StartCol: occ[0], EndCol: occ[1],
+			})
+		}
 		for hi, h := range f.Hunks {
 			for li, l := range h.Lines {
 				for _, occ := range findOccurrences(l.Text, term) {
 					matches = append(matches, DiffMatch{
-						FileIndex: fi, HunkIndex: hi, LineIndex: li,
+						Kind: DiffMatchLine, FileIndex: fi, HunkIndex: hi, LineIndex: li,
 						StartCol: occ[0], EndCol: occ[1],
 					})
 				}
@@ -151,9 +187,26 @@ func findOccurrences(text, term string) [][2]int {
 	return occs
 }
 
-func renderFileHeader(f git.File, width int, cursor bool) string {
-	label := fmt.Sprintf("%s %s", fileStatusGlyph(f.Status), filePathLabel(f))
-	return renderClipped(cursorMerged(fileHeaderStyle, cursor), label, width)
+// renderFileHeader renders a file's header row: its status glyph plus
+// displayed name (filePathLabel), with any file-name search matches (see
+// DiffMatchFileName) highlighted inline. matches are in the same
+// byte-offset-into-filePathLabel(f) coordinate space as DiffMatch, shifted
+// by the glyph+space prefix before rendering, the same convention
+// renderDiffLine uses for its own prefix. Falls back to a single
+// renderClipped call when there's nothing to highlight and no cursor, to
+// skip the extra composite-then-clip render pass on the common case.
+func renderFileHeader(f git.File, width int, cursor bool, matches []lineMatch) string {
+	prefix := fileStatusGlyph(f.Status) + " "
+	label := prefix + filePathLabel(f)
+	if len(matches) == 0 && !cursor {
+		return renderClipped(fileHeaderStyle, label, width)
+	}
+	shiftedMatches := make([]lineMatch, len(matches))
+	for i, m := range matches {
+		shiftedMatches[i] = lineMatch{start: len(prefix) + m.start, end: len(prefix) + m.end, active: m.active}
+	}
+	content := renderLineWithBaseSpans(label, nil, shiftedMatches, fileHeaderStyle, cursor)
+	return renderClippedStyled(content, width, cursor)
 }
 
 // filePathLabel is a file's display path: "old -> new" for renames (when

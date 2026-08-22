@@ -161,9 +161,9 @@ func TestFindDiffMatchesMultipleOccurrencesInOneLine(t *testing.T) {
 	}
 }
 
-func TestFindDiffMatchesExcludesHeadersAndHunkHeaders(t *testing.T) {
+func TestFindDiffMatchesExcludesHunkHeaders(t *testing.T) {
 	files := []git.File{{
-		Path: "secretterm.txt",
+		Path: "unrelated.txt",
 		Hunks: []git.Hunk{{
 			Header: "@@ secretterm @@",
 			Lines:  []git.DiffLine{{Op: git.OpContext, Text: "nothing relevant here"}},
@@ -172,7 +172,65 @@ func TestFindDiffMatchesExcludesHeadersAndHunkHeaders(t *testing.T) {
 
 	got := FindDiffMatches(files, "secretterm")
 	if len(got) != 0 {
-		t.Errorf("got %+v, want no matches (search must not consider file paths or hunk headers)", got)
+		t.Errorf("got %+v, want no matches (search must not consider hunk headers)", got)
+	}
+}
+
+func TestFindDiffMatchesIncludesFileName(t *testing.T) {
+	files := []git.File{{
+		Path: "secretterm.txt",
+		Hunks: []git.Hunk{{
+			Header: "@@ -1 +1 @@",
+			Lines:  []git.DiffLine{{Op: git.OpContext, Text: "nothing relevant here"}},
+		}},
+	}}
+
+	got := FindDiffMatches(files, "secretterm")
+	want := []DiffMatch{{Kind: DiffMatchFileName, FileIndex: 0, StartCol: 0, EndCol: 10}}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("got %+v, want %+v (search must match file names)", got, want)
+	}
+}
+
+func TestFindDiffMatchesFileNameSortsBeforeItsOwnLineMatches(t *testing.T) {
+	files := []git.File{{
+		Path: "needle.txt",
+		Hunks: []git.Hunk{{
+			Header: "@@ -1 +1 @@",
+			Lines:  []git.DiffLine{{Op: git.OpContext, Text: "needle in a haystack"}},
+		}},
+	}}
+
+	got := FindDiffMatches(files, "needle")
+	want := []DiffMatch{
+		{Kind: DiffMatchFileName, FileIndex: 0, StartCol: 0, EndCol: 6},
+		{Kind: DiffMatchLine, FileIndex: 0, HunkIndex: 0, LineIndex: 0, StartCol: 0, EndCol: 6},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d matches, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("match %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFindDiffMatchesRenamedFileMatchesOldAndNewPath(t *testing.T) {
+	files := []git.File{{
+		Status:  git.StatusRenamed,
+		OldPath: "old_name.txt",
+		Path:    "new_name.txt",
+	}}
+
+	oldMatches := FindDiffMatches(files, "old_name")
+	if len(oldMatches) != 1 || oldMatches[0].Kind != DiffMatchFileName {
+		t.Errorf("got %+v, want one file-name match against the old path", oldMatches)
+	}
+
+	newMatches := FindDiffMatches(files, "new_name")
+	if len(newMatches) != 1 || newMatches[0].Kind != DiffMatchFileName {
+		t.Errorf("got %+v, want one file-name match against the new path", newMatches)
 	}
 }
 

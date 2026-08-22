@@ -50,8 +50,10 @@ type DetailModel struct {
 
 	// messageMatches and diffMatches together form one ordered sequence
 	// (message matches first, in document order, then diff matches in
-	// existing file/hunk/line order) that matchPos indexes into, so n/N
-	// sweeps a commit top to bottom the way you'd read it.
+	// existing file/hunk/line order — where each file's own name match, if
+	// any, sorts ahead of its line matches, matching its header row's
+	// position above its hunks) that matchPos indexes into, so n/N sweeps a
+	// commit top to bottom the way you'd read it.
 	messageMatches []MessageMatch
 	diffMatches    []DiffMatch
 	matchPos       int // index into the combined sequence; -1 when there are none
@@ -842,7 +844,7 @@ func (m DetailModel) renderStickyHeader() string {
 	case sectionKindStats:
 		return renderClipped(fileHeaderStyle, statsSectionTitle, m.width)
 	case sectionKindFile:
-		return renderFileHeader(m.detail.Files[s.fileIndex], m.width, false)
+		return renderFileHeader(m.detail.Files[s.fileIndex], m.width, false, nil)
 	default:
 		title := "Commit"
 		if m.detail.IsPseudo() {
