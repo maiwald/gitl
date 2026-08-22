@@ -40,10 +40,15 @@ internal/git/              data access layer, no TUI dependencies
                            added-file diffs), HasStagedChanges/HasWorktreeChanges, EntryDetail
 internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
-                           commands, search prompt overlay + status bar, StartTarget
-                           dispatch (plain / --staged / --diff / <rev>)
+                           commands, canonical search state + prompt overlay +
+                           status bar, StartTarget dispatch (plain / --staged /
+                           --diff / <rev>)
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions
+  render.go                primitives every view renders through (clipping/padding
+                           a row to width, compositing styled spans into a line,
+                           cursor + search-match styling) plus the cursor/match
+                           arithmetic both view models share
   list.go, commititem.go   commit list: cursor, viewport, lazy pagination, search
   worktreerow.go           renderWorktreeRow: the two synthetic leading rows
   entry.go                 entryTitle/entryDescription: display strings shared by
@@ -104,7 +109,8 @@ before every commit — don't commit red.
   checks. When you need to eyeball rendered output (colors, layout,
   scrolling), drive the built binary through a `pty.fork()`-based Python
   script (see conversation history / PR descriptions for examples) that
-  answers the terminal's startup capability queries (OSC 11 background
+  sets the window size via `TIOCSWINSZ` and answers the terminal's startup
+  capability queries (OSC 11 background
   color, cursor position report) before sending keys — without a reply to
   those queries, Bubble Tea's terminal detection can stall waiting for a
   response that never comes.
@@ -125,8 +131,8 @@ before every commit — don't commit red.
   width.
 - Search-match highlighting always styles plain-text spans *before* any
   `.Render()` call touches them, then concatenates the already-rendered
-  pieces (see `highlightSpans` in `commititem.go`, `renderLineWithBaseSpans`
-  in `detail.go`) — this codebase has no facility for splicing a style
+  pieces (see `highlightSpans` and `renderLineWithBaseSpans` in
+  `render.go`) — this codebase has no facility for splicing a style
   into an already-ANSI'd string, and doesn't need one as long as styling
   decisions are made on the underlying plain text first.
 - List search loads only as much history as the relevant match needs
@@ -149,7 +155,11 @@ before every commit — don't commit red.
   lookahead check) is keyed to real positions in HEAD's history and stays
   completely unaware synthetic rows exist — don't "fix" the negative
   values by switching to a combined row-space index; that would require
-  touching all of those instead of none of them.
+  touching all of those instead of none of them. The cursor always stays
+  within `[topIndex(), lastIndex()]`, the rows that actually exist:
+  `lastIndex()` floors `len(commits)-1` at `topIndex()` so a list with
+  nothing loaded yet (every run's first frames, and the whole of a
+  `--staged`/`--diff` run) can't put the cursor on a row that isn't there.
 - A synthetic leading row (working tree/staged) is represented as a
   `git.CommitDetail` with `Kind != EntryCommit` and the embedded `Commit`
   left zero-valued (`IsPseudo()`). `detail.go`'s diff/stats/sections/search
@@ -162,11 +172,17 @@ before every commit — don't commit red.
   new field on `Commit`, a new dim/highlight condition, appended commits,
   an updated `matches` set) must go through `render()`'s full rebuild —
   otherwise the cache silently keeps showing stale content.
-- An async fetch's own in-flight guard (e.g. `ListModel.loadingMore`) is
-  cleared by that fetch's own message type (`moreCommitsFailedMsg` in
-  `app.go`), never by the generic `errMsg` — an unrelated later failure
-  must not unlatch a guard some other in-flight fetch still owns. Any new
-  async command with its own in-flight state should follow this pattern.
+- An async fetch's own in-flight guard (`ListModel.loadingMore`,
+  `Model.searchingTerm`) is cleared by that fetch's own message type
+  (`moreCommitsFailedMsg`, `searchFailedMsg` in `app.go`), never by the
+  generic `errMsg` — an unrelated later failure must not unlatch a guard
+  some other in-flight fetch still owns, nor leave one latched that no
+  message will ever clear. Any new async command with its own in-flight
+  state should follow this pattern. A deferred navigation waiting on such
+  a fetch (`ListModel.pendingCursor`) has to be re-offered when the fetch
+  that blocked it lands (`moreCommitsLoadedMsg`), since `RequestLoadUpTo`
+  refuses while another fetch is in flight and nothing else would ask
+  again.
 - `DetailModel.cursorLine` is a tig-style line cursor (index into the same
   flattened line space `leftVP`'s scroll offset lives in), decoupled from
   `leftVP.YOffset` the same way `ListModel.cursor` is decoupled from
@@ -211,26 +227,44 @@ before every commit — don't commit red.
   is what makes ctrl-o/ctrl-i correctly cross the list/detail boundary
   (previously two independent per-view jumplists couldn't). `jl` is seeded
   with a single entry at the list's position 0 in `NewModel`, so ctrl-o can
-  always reach the very top even before any real jump has happened.
+  always reach the very top even before any real jump has happened — but
+  only when the run actually has a list (`StartTarget.opensList`), since
+  `--staged`/`--diff` never load one and ctrl-o would otherwise strand the
+  user on a permanently empty list view.
   `ctrl+i` (not the literal string `"ctrl+i"`) is bound to bubbletea's
   `"tab"` key string — the two are the same byte (0x09) at the terminal
   protocol level, and bubbletea's own decoder reports it as tab (see
   `KeyTab`'s doc comment in bubbletea's `key.go`). Jumping back/forward
   into a detail view that isn't the currently active one reconstructs it
   from the entry's stored `*git.CommitDetail` (no re-fetch) via
-  `gotoJumpPos`, which restores search matches with `computeMatches`
-  (compute only, no jump) rather than `RunSearch` — `RunSearch`'s own
-  jump-to-first-match would fight the `cursorLine` this restore is
-  specifically trying to land on.
-- Opening a commit/entry while a search is already active (from the list,
-  or via ctrl-o/ctrl-i landing back on one) computes and highlights its
-  matches immediately (`DetailModel.computeMatches`) but does *not* jump
-  the cursor to the first one — unlike submitting `/` from inside an
-  already-open commit (`RunSearch`, `computeMatches` plus a jump), which
-  does. Landing straight in the middle of a diff/message the moment a
-  view opens would be a surprising way for a view to open; n/N reach the
-  first match the same as from anywhere else. See `openDetail`'s doc
-  comment in `app.go`.
+  `gotoJumpPos`/`newDetailModel`, which installs the search term the same
+  non-jumping way opening a commit does — a jump to the first match would
+  fight the `cursorLine` this restore is specifically trying to land on.
+- There is **one search term**, owned by the root `Model` (`searchTerm`/
+  `searchDismissed`/`listMatches`, written only by `setSearchDisplay`), and
+  **both views match against it**: the detail view synchronously (its whole
+  commit is in memory), the list via the git queries `startListSearch`
+  dispatches. Only the view that is *active* when `/` is submitted jumps to
+  its first match (`DetailModel.jumpToFirstMatch`, `applyListMatches`'s
+  `viewList` gate) — moving a cursor the user isn't looking at is the same
+  surprise as landing mid-diff the moment a commit opens, and n/N reach
+  those matches from either view anyway. A view with matches but none
+  active reports `[0/N]`; `stepMatchPos` makes n take the first from there
+  and N the last.
+- A match set must never outlive the term it was computed for. Each view
+  keeps its own `displayTerm` next to its matches and drops (`ListModel`,
+  whose matches take a git query) or recomputes (`DetailModel`) them the
+  moment `SetSearchDisplay` hands it a different term — including the empty
+  term, which is how clearing a search is expressed, so neither view needs
+  a separate `ClearSearch`. Same rule one level up: changing the canonical
+  term retires `listMatches` and forgets `searchingTerm`, so an in-flight
+  search's results are discarded when they land.
+- The list model is constructed in `NewModel`, not left a zero value until
+  `commitsLoadedMsg` — keys reach it from the first frame, and a zero
+  `ListModel` has no shared jumplist to push onto. `commitsLoadedMsg` still
+  replaces it wholesale, so anything the root `Model` holds canonically for
+  it (search display state, `listMatches`) must be re-applied there;
+  anything that *isn't* held canonically is silently lost by that swap.
 
 ## Known limitations (intentional, not bugs)
 
@@ -258,6 +292,11 @@ before every commit — don't commit red.
   untracked file still appears (correctly counted, marked `StatusAdded`)
   but without its own hunks, so a repo with a huge untracked directory
   doesn't spawn hundreds of subprocesses.
+- A search submitted from the detail view also runs the list's git queries
+  (one term, both views), so searching inside a commit costs a `git log
+  --grep`/`--author` pair even if the user never returns to the list. The
+  hash order those queries need is fetched once per run and cached
+  (`Model.allHashes`).
 - `gitl <rev>` for a revision not reachable from HEAD still opens its
   detail view (via `FetchCommitDetail`, which accepts any git-resolvable
   revision), but `CommitPosition` has no list position to offer, so the
