@@ -137,7 +137,7 @@ func openCWDRepo(ctx context.Context) (*git.Repo, error) {
 // index/worktree prints a one-line message and exits instead of flashing an
 // alt-screen TUI just to immediately say there's nothing to show. check is
 // passed as a method expression, e.g. (*git.Repo).HasStagedChanges.
-func checkHasChanges(check func(*git.Repo, context.Context) (bool, error)) (bool, error) {
+func checkHasChanges(check func(*git.Repo, context.Context, ...string) (bool, error)) (bool, error) {
 	ctx := context.Background()
 	repo, err := openCWDRepo(ctx)
 	if err != nil {

@@ -24,11 +24,16 @@ const emptyTreeHash = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // FetchCommitDetail below; EntryDetail (worktree.go) builds the other two
 // kinds directly, with Commit and Body left zero since a synthetic entry has
 // no commit metadata.
+//
+// Paths records the pathspecs Files was restricted to, empty when it wasn't.
+// It's carried purely so the UI can say *why* a diff came out empty (see
+// noDiffNotice in internal/ui/detail.go) — nothing re-runs a fetch from it.
 type CommitDetail struct {
 	Kind EntryKind
 	Commit
 	Body  string
 	Files []File
+	Paths []string
 }
 
 // IsPseudo reports whether d describes a synthetic working-tree/staged entry
@@ -37,8 +42,10 @@ type CommitDetail struct {
 func (d CommitDetail) IsPseudo() bool { return d.Kind != EntryCommit }
 
 // FetchCommitDetail retrieves full metadata, message body, and diff for
-// hash.
-func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetail, error) {
+// hash. Given paths, the diff is limited to them, the way `git show <rev> --
+// <path>...` limits its own; the metadata half is unaffected, so a commit
+// that touches none of the paths still opens, just with an empty diff.
+func (r *Repo) FetchCommitDetail(ctx context.Context, hash string, paths ...string) (*CommitDetail, error) {
 	out, err := runGit(ctx, r.Path, "log", "-1", "--date=iso-strict", "--pretty=format:"+commitDetailFormat, hash)
 	if err != nil {
 		return nil, err
@@ -47,6 +54,7 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetai
 	if err != nil {
 		return nil, err
 	}
+	detail.Paths = paths
 
 	if !detail.IsMerge() {
 		from := emptyTreeHash
@@ -55,7 +63,7 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetai
 		}
 		// --find-copies-harder: see stagedDiff's doc comment (worktree.go)
 		// for why the "-harder" variant is worth its cost here.
-		files, err := r.diffFiles(ctx, from, detail.Hash, "--find-copies-harder")
+		files, err := r.diffFiles(ctx, paths, from, detail.Hash, "--find-copies-harder")
 		if err != nil {
 			return nil, err
 		}

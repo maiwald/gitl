@@ -21,30 +21,36 @@ const (
 )
 
 // WorktreeEntry is one synthetic list entry (working tree or staged
-// changes) together with the diff behind it.
+// changes) together with the diff behind it. Paths is the pathspec the diff
+// was limited to, empty when it wasn't — see CommitDetail.Paths, which it
+// feeds via EntryDetail.
 type WorktreeEntry struct {
 	Kind  EntryKind
 	Files []File
+	Paths []string
 }
 
 // HasStagedChanges reports whether the index differs from HEAD, via `git
-// diff --cached --quiet`'s exit code.
-func (r *Repo) HasStagedChanges(ctx context.Context) (bool, error) {
-	_, differs, err := runGitDiffExit(ctx, r.Path, "diff", "--cached", "--quiet")
+// diff --cached --quiet`'s exit code, optionally only within paths.
+func (r *Repo) HasStagedChanges(ctx context.Context, paths ...string) (bool, error) {
+	args := append([]string{"diff", "--cached", "--quiet"}, pathspecArgs(paths)...)
+	_, differs, err := runGitDiffExit(ctx, r.Path, args...)
 	return differs, err
 }
 
 // HasWorktreeChanges reports whether worktreeDiff would have anything to
-// show: tracked files differing from the index, or untracked files. Checked
-// separately (rather than just calling worktreeDiff and looking at the
-// result) so a CLI `--diff` pre-flight can answer without paying for a full
-// untracked-file diff synthesis just to find out the answer is "no".
-func (r *Repo) HasWorktreeChanges(ctx context.Context) (bool, error) {
+// show within paths (everything, given none): tracked files differing from
+// the index, or untracked files. Checked separately (rather than just
+// calling worktreeDiff and looking at the result) so a CLI `--diff`
+// pre-flight can answer without paying for a full untracked-file diff
+// synthesis just to find out the answer is "no".
+func (r *Repo) HasWorktreeChanges(ctx context.Context, paths ...string) (bool, error) {
 	var trackedDiffers bool
 	var untracked []string
+	args := append([]string{"diff", "--quiet"}, pathspecArgs(paths)...)
 	err := concurrent.RunConcurrently(
-		func() (err error) { _, trackedDiffers, err = runGitDiffExit(ctx, r.Path, "diff", "--quiet"); return },
-		func() (err error) { untracked, err = r.untrackedPaths(ctx); return },
+		func() (err error) { _, trackedDiffers, err = runGitDiffExit(ctx, r.Path, args...); return },
+		func() (err error) { untracked, err = r.untrackedPaths(ctx, paths); return },
 	)
 	if err != nil {
 		return false, err
@@ -53,14 +59,14 @@ func (r *Repo) HasWorktreeChanges(ctx context.Context) (bool, error) {
 }
 
 // FetchWorktreeEntry returns the diff behind a single synthetic entry kind
-// (EntryStaged or EntryWorktree). Returns nil files when there is nothing to
-// show.
-func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind) ([]File, error) {
+// (EntryStaged or EntryWorktree), limited to paths when given. Returns nil
+// files when there is nothing to show.
+func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind, paths ...string) ([]File, error) {
 	switch kind {
 	case EntryStaged:
-		return r.stagedDiff(ctx)
+		return r.stagedDiff(ctx, paths)
 	case EntryWorktree:
-		return r.worktreeDiff(ctx)
+		return r.worktreeDiff(ctx, paths)
 	default:
 		return nil, fmt.Errorf("not a synthetic entry kind: %v", kind)
 	}
@@ -68,14 +74,17 @@ func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind) ([]File, 
 
 // FetchWorktreeEntries returns every synthetic entry that currently has
 // something to show, working tree first (furthest from HEAD) then staged.
+// Deliberately unfiltered by pathspec even on a run started with one: these
+// are the commit list's leading rows, and the list itself is never restricted
+// to the CLI's paths — only the startup detail view is.
 // Entries with no changes are omitted entirely, mirroring how `git status`
 // omits empty sections. The two diffs are independent git invocations, so
 // they run concurrently rather than one after another.
 func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error) {
 	var worktreeFiles, stagedFiles []File
 	err := concurrent.RunConcurrently(
-		func() (err error) { worktreeFiles, err = r.worktreeDiff(ctx); return },
-		func() (err error) { stagedFiles, err = r.stagedDiff(ctx); return },
+		func() (err error) { worktreeFiles, err = r.worktreeDiff(ctx, nil); return },
+		func() (err error) { stagedFiles, err = r.stagedDiff(ctx, nil); return },
 	)
 	if err != nil {
 		return nil, err
@@ -95,7 +104,7 @@ func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error
 // detail view renders it with exactly the same machinery a real commit
 // uses; the commit metadata fields are deliberately left zero.
 func EntryDetail(e WorktreeEntry) *CommitDetail {
-	return &CommitDetail{Kind: e.Kind, Files: e.Files}
+	return &CommitDetail{Kind: e.Kind, Files: e.Files, Paths: e.Paths}
 }
 
 // stagedDiff diffs the index against HEAD with copy detection
@@ -109,8 +118,8 @@ func EntryDetail(e WorktreeEntry) *CommitDetail {
 // detail-view open, not on every keystroke. On an unborn HEAD (no commits
 // yet) git already treats this as a diff against the empty tree, so no
 // explicit fallback is needed.
-func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
-	return r.diffFiles(ctx, "--cached", "--find-copies-harder")
+func (r *Repo) stagedDiff(ctx context.Context, paths []string) ([]File, error) {
+	return r.diffFiles(ctx, paths, "--cached", "--find-copies-harder")
 }
 
 // worktreeDiff diffs tracked files against the index, then appends one
@@ -125,11 +134,11 @@ func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
 // against — a genuinely new path is untracked, which never reaches this git
 // invocation at all (it's handled by untrackedFiles below instead). Passing
 // --find-copies here would be a pure no-op.
-func (r *Repo) worktreeDiff(ctx context.Context) ([]File, error) {
+func (r *Repo) worktreeDiff(ctx context.Context, paths []string) ([]File, error) {
 	var files, untracked []File
 	err := concurrent.RunConcurrently(
-		func() (err error) { files, err = r.diffFiles(ctx); return },
-		func() (err error) { untracked, err = r.untrackedFiles(ctx); return },
+		func() (err error) { files, err = r.diffFiles(ctx, paths); return },
+		func() (err error) { untracked, err = r.untrackedFiles(ctx, paths); return },
 	)
 	if err != nil {
 		return nil, err
@@ -157,8 +166,8 @@ const untrackedDiffConcurrency = 16
 // untrackedFiles returns one synthesized File per untracked path, rendered
 // as an added-file diff against /dev/null — the same approach lazygit/tig
 // use for showing untracked files alongside a real diff.
-func (r *Repo) untrackedFiles(ctx context.Context) ([]File, error) {
-	paths, err := r.untrackedPaths(ctx)
+func (r *Repo) untrackedFiles(ctx context.Context, pathspec []string) ([]File, error) {
+	paths, err := r.untrackedPaths(ctx, pathspec)
 	if err != nil {
 		return nil, err
 	}
@@ -183,8 +192,9 @@ func (r *Repo) untrackedFiles(ctx context.Context) ([]File, error) {
 	return files, nil
 }
 
-func (r *Repo) untrackedPaths(ctx context.Context) ([]string, error) {
-	out, err := runGit(ctx, r.Path, "ls-files", "--others", "--exclude-standard", "-z")
+func (r *Repo) untrackedPaths(ctx context.Context, pathspec []string) ([]string, error) {
+	args := append([]string{"ls-files", "--others", "--exclude-standard", "-z"}, pathspecArgs(pathspec)...)
+	out, err := runGit(ctx, r.Path, args...)
 	if err != nil {
 		return nil, err
 	}

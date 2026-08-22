@@ -346,3 +346,116 @@ func TestFetchCommitDetailIsNotPseudo(t *testing.T) {
 		t.Errorf("Kind = %v, want EntryCommit", detail.Kind)
 	}
 }
+
+// dirtyTwoFileRepo returns a repo with two tracked files, both edited in the
+// working tree and one of them also staged, plus an untracked file — enough
+// for the pathspec tests below to tell "limited to a.txt" apart from
+// "everything".
+func dirtyTwoFileRepo(t *testing.T) *Repo {
+	t.Helper()
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("one\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "a.txt", "b.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "add a.txt and b.txt")
+
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("one\ntwo\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "b.txt")
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	repo, err := OpenRepo(ctx, dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	return repo
+}
+
+func TestFetchWorktreeEntryLimitedToPaths(t *testing.T) {
+	repo := dirtyTwoFileRepo(t)
+	ctx := context.Background()
+
+	files, err := repo.FetchWorktreeEntry(ctx, EntryWorktree, "a.txt")
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryWorktree): %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "a.txt" {
+		t.Fatalf("worktree files = %+v, want only a.txt", files)
+	}
+
+	files, err = repo.FetchWorktreeEntry(ctx, EntryStaged, "a.txt")
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryStaged): %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("staged files = %+v, want none (only b.txt is staged)", files)
+	}
+}
+
+// TestFetchWorktreeEntryPathspecLimitsUntrackedFiles pins down that the
+// pathspec reaches the untracked-file half of the worktree diff too, not just
+// the tracked `git diff` it's appended to.
+func TestFetchWorktreeEntryPathspecLimitsUntrackedFiles(t *testing.T) {
+	repo := dirtyTwoFileRepo(t)
+	ctx := context.Background()
+
+	files, err := repo.FetchWorktreeEntry(ctx, EntryWorktree, "untracked.txt")
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryWorktree): %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "untracked.txt" {
+		t.Fatalf("files = %+v, want only untracked.txt", files)
+	}
+
+	files, err = repo.FetchWorktreeEntry(ctx, EntryWorktree, "b.txt")
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryWorktree): %v", err)
+	}
+	for _, f := range files {
+		if f.Path == "untracked.txt" {
+			t.Fatalf("files = %+v, want untracked.txt excluded by the b.txt pathspec", files)
+		}
+	}
+}
+
+func TestHasChangesLimitedToPaths(t *testing.T) {
+	repo := dirtyTwoFileRepo(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name  string
+		check func(ctx context.Context, paths ...string) (bool, error)
+		path  string
+		want  bool
+	}{
+		{"staged, path is staged", repo.HasStagedChanges, "b.txt", true},
+		{"staged, path is not staged", repo.HasStagedChanges, "a.txt", false},
+		{"worktree, path is dirty", repo.HasWorktreeChanges, "a.txt", true},
+		{"worktree, path is clean", repo.HasWorktreeChanges, "clean-nonexistent.txt", false},
+		{"worktree, path is untracked", repo.HasWorktreeChanges, "untracked.txt", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			has, err := tt.check(ctx, tt.path)
+			if err != nil {
+				t.Fatalf("check(%q): %v", tt.path, err)
+			}
+			if has != tt.want {
+				t.Errorf("check(%q) = %v, want %v", tt.path, has, tt.want)
+			}
+		})
+	}
+}
