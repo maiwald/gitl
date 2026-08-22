@@ -83,21 +83,31 @@ func renderClippedStyled(content string, width int, cursor bool) string {
 	if width <= 0 {
 		return content
 	}
-	fill := lipgloss.NewStyle()
+	return padRow(content, width, cursor)
+}
+
+// rowFillStyle is the style a row's own background is painted with: plain
+// normally, or the cursor row's background (selectedRowStyle) for the row
+// under the cursor. It's padRow's fill below, and also what a row's literal
+// gap/separator text is rendered in (see rowGap in commititem.go), so a
+// selected row's highlight has no gaps between its fields.
+func rowFillStyle(cursor bool) lipgloss.Style {
 	if cursor {
-		fill = fill.Background(cursorRowBg)
+		return selectedRowStyle
 	}
-	return padRow(content, width, fill)
+	return normalRowStyle
 }
 
 // padRow truncates row to width and pads any remainder with trailing
-// spaces in style. MaxWidth alone (no Width) truncates in place; combining
+// spaces, in the cursor row's background when cursor is set (see
+// rowFillStyle). MaxWidth alone (no Width) truncates in place; combining
 // Width with MaxWidth would run row — which already contains several
 // independently-Rendered, reset-terminated spans — through lipgloss's
 // paragraph reflow, miscounting cell positions across those resets and
 // risking a hard-wrap mid-field, so padding to width is done by hand
 // instead.
-func padRow(row string, width int, style lipgloss.Style) string {
+func padRow(row string, width int, cursor bool) string {
+	style := rowFillStyle(cursor)
 	row = style.MaxWidth(width).Render(row)
 	if pad := width - lipgloss.Width(row); pad > 0 {
 		row += style.Render(strings.Repeat(" ", pad))
@@ -185,11 +195,6 @@ func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lip
 	spans = shiftSpans(spans, expanded)
 	matches = shiftMatches(matches, expanded)
 
-	fill := lipgloss.NewStyle()
-	if cursor {
-		fill = fill.Background(cursorRowBg)
-	}
-
 	ranges := wrapRanges(text, width)
 	rows := make([]string, 0, len(ranges))
 	for _, r := range ranges {
@@ -198,7 +203,7 @@ func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lip
 			rows = append(rows, rendered)
 			continue
 		}
-		rows = append(rows, padRow(rendered, width, fill))
+		rows = append(rows, padRow(rendered, width, cursor))
 	}
 	return rows
 }
@@ -308,7 +313,7 @@ func blankLine(width int, isCursor bool) string {
 	if !isCursor {
 		return ""
 	}
-	return padRow("", width, lipgloss.NewStyle().Background(cursorRowBg))
+	return padRow("", width, true)
 }
 
 // cursorMerged merges the cursor row's background into base when isCursor

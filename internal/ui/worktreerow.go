@@ -53,5 +53,5 @@ func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) st
 	row := leading + titleStyle.Render(title) + gap("  ") +
 		countStyle.Render(nFiles) + gap("  ") + counts
 
-	return padRow(row, width, rowFillStyle(selected))
+	return padRow(row, width, selected)
 }

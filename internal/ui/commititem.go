@@ -117,7 +117,7 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 		row = sha + gap(" ") + when + gap(" ") + author + gap("  ") + subject
 	}
 
-	return padRow(row, width, rowFillStyle(selected))
+	return padRow(row, width, selected)
 }
 
 // rowFieldStyle resolves a row field's base style against dimmed/selected
@@ -135,16 +135,6 @@ func rowFieldStyle(base lipgloss.Style, dimmed, selected bool) lipgloss.Style {
 		base = base.Background(cursorRowBg)
 	}
 	return base
-}
-
-// rowFillStyle is the style used both for a row's literal gap/separator
-// text and as padRow's fill style — normalRowStyle normally, or
-// selectedRowStyle (the cursor background) for a selected row.
-func rowFillStyle(selected bool) lipgloss.Style {
-	if selected {
-		return selectedRowStyle
-	}
-	return normalRowStyle
 }
 
 // rowGap returns a closure rendering a literal separator (spaces between

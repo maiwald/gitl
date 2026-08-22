@@ -206,7 +206,7 @@ func TestRenderCommitRowWideLayoutUsesSingleSpaceGaps(t *testing.T) {
 	author := authorStyle.Render(fmt.Sprintf("%-*s", authorColumnWidth, truncate(c.AuthorName, authorColumnWidth)))
 	subject := normalRowStyle.Render(c.Subject)
 
-	want := padRow(sha+" "+date+" "+clock+" "+author+"  "+subject, width, rowFillStyle(false))
+	want := padRow(sha+" "+date+" "+clock+" "+author+"  "+subject, width, false)
 	if row != want {
 		t.Errorf("row  = %q\nwant = %q", row, want)
 	}
@@ -231,7 +231,7 @@ func TestRenderCommitRowNarrowCollapsesDateAndTime(t *testing.T) {
 		author := authorStyle.Render(fmt.Sprintf("%-*s", narrowAuthorColumnWidth, truncate(abbreviateName(c.AuthorName), narrowAuthorColumnWidth)))
 		subject := normalRowStyle.Render(c.Subject)
 
-		want := padRow(sha+" "+when+" "+author+"  "+subject, width, rowFillStyle(false))
+		want := padRow(sha+" "+when+" "+author+"  "+subject, width, false)
 		if row != want {
 			t.Errorf("row  = %q\nwant = %q", row, want)
 		}
@@ -250,7 +250,7 @@ func TestRenderCommitRowNarrowCollapsesDateAndTime(t *testing.T) {
 		author := authorStyle.Render(fmt.Sprintf("%-*s", narrowAuthorColumnWidth, truncate(abbreviateName(c.AuthorName), narrowAuthorColumnWidth)))
 		subject := normalRowStyle.Render(c.Subject)
 
-		want := padRow(sha+" "+when+" "+author+"  "+subject, width, rowFillStyle(false))
+		want := padRow(sha+" "+when+" "+author+"  "+subject, width, false)
 		if row != want {
 			t.Errorf("row  = %q\nwant = %q", row, want)
 		}
