@@ -12,9 +12,9 @@ import (
 // a non-fatal errMsg must not blank the screen — the list stays visible,
 // and the failure surfaces in the status bar instead.
 func TestNonFatalErrorLeavesListVisible(t *testing.T) {
-	list := NewListModel(fixtureCommits(3))
+	list := NewListModel(fixtureCommits(3), &jumplist{})
 	list.SetSize(80, 10)
-	m := Model{active: viewList, list: list}
+	m := Model{active: viewList, list: list, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 
 	newModel, _ := m.Update(errMsg{err: errors.New("boom"), severity: nonFatal})
@@ -34,7 +34,7 @@ func TestNonFatalErrorLeavesListVisible(t *testing.T) {
 // TestFatalErrorBlanksScreen pins down that a fatal errMsg keeps today's
 // behavior: the whole screen replaced by the error.
 func TestFatalErrorBlanksScreen(t *testing.T) {
-	m := Model{}
+	m := Model{jl: &jumplist{}}
 	m.width, m.height = 80, 24
 
 	newModel, _ := m.Update(errMsg{err: errors.New("boom"), severity: fatal})
@@ -52,9 +52,9 @@ func TestFatalErrorBlanksScreen(t *testing.T) {
 // rule: any successful fetch retires a previously-shown non-fatal error,
 // not just a retry of the same kind of fetch that failed.
 func TestNonFatalErrorClearedByNextSuccessfulLoad(t *testing.T) {
-	list := NewListModel(fixtureCommits(3))
+	list := NewListModel(fixtureCommits(3), &jumplist{})
 	list.SetSize(80, 10)
-	m := Model{active: viewList, list: list}
+	m := Model{active: viewList, list: list, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 
 	newModel, _ := m.Update(errMsg{err: errors.New("boom"), severity: nonFatal})
@@ -74,9 +74,9 @@ func TestNonFatalErrorClearedByNextSuccessfulLoad(t *testing.T) {
 // lastError is the status bar's lowest-priority content, per
 // renderStatusBar's switch order.
 func TestActiveSearchTakesPriorityOverLastErrorInStatusBar(t *testing.T) {
-	list := NewListModel(fixtureCommits(3))
+	list := NewListModel(fixtureCommits(3), &jumplist{})
 	list.SetSize(80, 10)
-	m := Model{active: viewList, list: list}
+	m := Model{active: viewList, list: list, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 	m.lastError = errors.New("boom")
 	m.setSearchDisplay("subject", false)
@@ -107,7 +107,7 @@ func TestStatusBarErrorTextFlattensNewlinesAndRespectsWidth(t *testing.T) {
 // TestModelErrorStateDoesNotPanicOnKeypress's guard, for the newly
 // reachable state of a non-fatal error with the list not yet loaded.
 func TestKeypressOnNonFatalErrorWithEmptyListDoesNotPanic(t *testing.T) {
-	m := Model{lastError: errors.New("boom")}
+	m := Model{lastError: errors.New("boom"), jl: &jumplist{}}
 	m.width, m.height = 80, 24
 	for _, k := range []tea.KeyMsg{
 		{Type: tea.KeyDown}, {Type: tea.KeyUp}, {Type: tea.KeyEnter},
@@ -124,10 +124,10 @@ func TestKeypressOnNonFatalErrorWithEmptyListDoesNotPanic(t *testing.T) {
 // fetch that's still genuinely in flight (which would risk a duplicate
 // AppendCommits and corrupted indices).
 func TestFetchMoreFailureClearsLoadingMoreWithoutUnrelatedSuccess(t *testing.T) {
-	list := NewListModel(fixtureCommits(30))
+	list := NewListModel(fixtureCommits(30), &jumplist{})
 	list.SetTotalCount(100)
 	list.SetSize(80, 5)
-	m := Model{active: viewList, list: list}
+	m := Model{active: viewList, list: list, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 
 	for i := 0; i < 25; i++ {

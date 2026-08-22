@@ -6,59 +6,37 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// TestDetailModelJumpBackReturnsToSeededTop mirrors
-// TestListModelJumpBackReturnsToTopSeed: the jumplist is seeded with an
-// entry at 0 in NewDetailModel, so ctrl-o always reaches the top of the
-// commit even after the cursor got elsewhere via plain j/k, never through
-// an actual jump.
-func TestDetailModelJumpBackReturnsToSeededTop(t *testing.T) {
-	d := fixtureDetailWithFiles(1, 5)
-	m := NewDetailModel(d)
-	m.SetSize(80, 24)
+// DetailModel no longer owns JumpBack/JumpForward traversal or a seeded
+// jumplist of its own — both moved to the root Model's shared jumplist (see
+// jumplist's doc comment in app.go), since popping an entry can require
+// switching the active view. These tests pin down DetailModel's remaining
+// half of the contract: which motions push a jumplist entry (via pushJump,
+// into the shared jl) and which don't. Traversal (JumpBack/JumpForward) and
+// cross-view behavior are covered at the Model level in app_jumplist_test.go.
 
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	if m.cursorLine != 2 {
-		t.Fatalf("cursorLine after 2 Down = %d, want 2", m.cursorLine)
-	}
-
-	if !m.JumpBack() {
-		t.Fatal("JumpBack() = false, want true (seeded entry at 0)")
-	}
-	if m.cursorLine != 0 {
-		t.Fatalf("cursorLine after JumpBack = %d, want 0", m.cursorLine)
-	}
-}
-
-// TestDetailModelSectionJumpPushesJumpUndoneByJumpBack pins down that
-// [ / ] record a jumplist entry, and that JumpBack/JumpForward exactly
-// undo one another.
-func TestDetailModelSectionJumpPushesJumpUndoneByJumpBack(t *testing.T) {
+// TestDetailModelSectionJumpPushesJump pins down that [ / ] record a
+// jumplist entry for the position they moved away from.
+func TestDetailModelSectionJumpPushesJump(t *testing.T) {
+	jl := &jumplist{}
 	d := fixtureDetailWithFiles(2, 20)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, jl)
 	m.SetSize(80, 8)
 
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	from := m.cursorLine
 
+	before := len(jl.back)
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")}) // jump to the stats section
 	if m.cursorLine == from {
 		t.Fatal("cursorLine unchanged after ']', want it to move")
 	}
-
-	if !m.JumpBack() {
-		t.Fatal("JumpBack() = false, want true")
+	if len(jl.back) != before+1 {
+		t.Fatalf("jl.back length = %d after ']', want %d", len(jl.back), before+1)
 	}
-	if m.cursorLine != from {
-		t.Fatalf("cursorLine after JumpBack = %d, want %d (undoing the ']' jump)", m.cursorLine, from)
-	}
-
-	if !m.JumpForward() {
-		t.Fatal("JumpForward() = false, want true")
-	}
-	if m.cursorLine == from {
-		t.Fatal("cursorLine after JumpForward unchanged, want it to redo the ']' jump")
+	last := jl.back[len(jl.back)-1]
+	if last.view != viewDetail || last.commit != d || last.cursorLine != from {
+		t.Fatalf("jl.back top = %+v, want {view: viewDetail, commit: d, cursorLine: %d}", last, from)
 	}
 }
 
@@ -67,67 +45,38 @@ func TestDetailModelSectionJumpPushesJumpUndoneByJumpBack(t *testing.T) {
 // entry — see jumpToMatch's doc comment for why this deliberately departs
 // from vim (only the initial search is jumplisted there).
 func TestDetailModelSearchPushesJumpOnEveryStep(t *testing.T) {
-	m := NewDetailModel(fixtureDetailForSearch())
+	jl := &jumplist{}
+	m := NewDetailModel(fixtureDetailForSearch(), jl)
 	m.SetSize(80, 4)
 
 	m.RunSearch("needle") // jump 1: from cursorLine 0 to the first match
 	afterFirst := m.cursorLine
+	if len(jl.back) != 1 || jl.back[0].cursorLine != 0 {
+		t.Fatalf("jl.back after RunSearch = %+v, want one entry at cursorLine 0", jl.back)
+	}
 
 	m.NextMatch() // jump 2: from the first match to the second
 	afterSecond := m.cursorLine
 	if afterSecond == afterFirst {
 		t.Fatal("cursorLine unchanged after NextMatch, want it to move to the second match")
 	}
-
-	if !m.JumpBack() {
-		t.Fatal("JumpBack() = false, want true")
-	}
-	if m.cursorLine != afterFirst {
-		t.Fatalf("cursorLine after JumpBack = %d, want %d (undoing NextMatch)", m.cursorLine, afterFirst)
-	}
-
-	if !m.JumpBack() {
-		t.Fatal("second JumpBack() = false, want true")
-	}
-	if m.cursorLine != 0 {
-		t.Fatalf("cursorLine after second JumpBack = %d, want 0 (undoing the initial search jump)", m.cursorLine)
+	if len(jl.back) != 2 || jl.back[1].cursorLine != afterFirst {
+		t.Fatalf("jl.back after NextMatch = %+v, want a second entry at cursorLine %d", jl.back, afterFirst)
 	}
 }
 
-// TestDetailModelNewJumpClearsForwardStack mirrors
-// TestListModelNewJumpClearsForwardStack: a fresh jump after a JumpBack
-// discards whatever JumpForward history existed before it.
-func TestDetailModelNewJumpClearsForwardStack(t *testing.T) {
-	d := fixtureDetailWithFiles(2, 20)
-	m := NewDetailModel(d)
-	m.SetSize(80, 8)
-
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")}) // pushes 0
-	m.JumpBack()                                                 // back to 0, pushes onto jumpForward
-
-	if len(m.jumpForward) == 0 {
-		t.Fatal("jumpForward is empty before the fresh jump, test setup is wrong")
-	}
-
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")}) // a fresh jump
-	if len(m.jumpForward) != 0 {
-		t.Fatalf("jumpForward = %v after a fresh jump, want cleared", m.jumpForward)
-	}
-}
-
-// TestDetailModelJumpBackEmptyIsNoop mirrors TestListModelJumpBackEmptyIsNoop.
-func TestDetailModelJumpBackEmptyIsNoop(t *testing.T) {
+// TestDetailModelNoOpJumpDoesNotPushJump pins down that [ / ] at the first/
+// last section (a no-op landing) doesn't record a redundant jumplist entry.
+func TestDetailModelNoOpJumpDoesNotPushJump(t *testing.T) {
+	jl := &jumplist{}
 	d := fixtureDetailWithFiles(1, 5)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, jl)
 	m.SetSize(80, 24)
 
-	if m.JumpForward() {
-		t.Fatal("JumpForward() = true with nothing to redo, want false")
-	}
-
-	m.JumpBack() // consume the seeded entry at 0
-	if m.JumpBack() {
-		t.Fatal("JumpBack() = true with an empty jumpBack stack, want false")
+	before := len(jl.back)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")}) // already at the first (only) section
+	if len(jl.back) != before {
+		t.Fatalf("jl.back length = %d after a no-op '[', want unchanged at %d", len(jl.back), before)
 	}
 }
 
@@ -135,15 +84,16 @@ func TestDetailModelJumpBackEmptyIsNoop(t *testing.T) {
 // (unlike g/G/[/]/search jumps) never record a jumplist entry — matching
 // vim's own distinction between motions and jumps.
 func TestDetailModelPlainMotionDoesNotPushJump(t *testing.T) {
+	jl := &jumplist{}
 	d := fixtureDetailWithFiles(1, 5)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, jl)
 	m.SetSize(80, 24)
 
-	before := len(m.jumpBack)
+	before := len(jl.back)
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if len(m.jumpBack) != before {
-		t.Fatalf("jumpBack length = %d after plain j/k, want unchanged at %d", len(m.jumpBack), before)
+	if len(jl.back) != before {
+		t.Fatalf("jl.back length = %d after plain j/k, want unchanged at %d", len(jl.back), before)
 	}
 }

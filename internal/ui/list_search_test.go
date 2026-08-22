@@ -7,7 +7,7 @@ import (
 )
 
 func TestListModelSearchJumpsToFirstMatchAtOrAfterCursorAndWraps(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
 	m.cursor = 4
@@ -32,7 +32,7 @@ func TestListModelSearchJumpsToFirstMatchAtOrAfterCursorAndWraps(t *testing.T) {
 }
 
 func TestListModelNextPrevMatchCyclesAndWraps(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
 	m.cursor = 0
@@ -54,7 +54,7 @@ func TestListModelNextPrevMatchCyclesAndWraps(t *testing.T) {
 }
 
 func TestListModelSearchReportsNeedsLoadForUnloadedMatch(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(100)
 	m.SetSize(80, 5)
 
@@ -85,7 +85,7 @@ func TestListModelSearchReportsNeedsLoadForUnloadedMatch(t *testing.T) {
 }
 
 func TestListModelSearchNoMatches(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
 
@@ -99,7 +99,7 @@ func TestListModelSearchNoMatches(t *testing.T) {
 }
 
 func TestListModelClearSearchResetsStatus(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
 
@@ -123,7 +123,7 @@ func TestListModelClearSearchResetsStatus(t *testing.T) {
 // activating per-substring highlighting, keeping each field a single,
 // easily comparable span.
 func TestListModelRenderDimsRowsOutsideMatchSet(t *testing.T) {
-	m := NewListModel(fixtureCommits(4))
+	m := NewListModel(fixtureCommits(4), &jumplist{})
 	m.SetTotalCount(4)
 	m.SetSize(120, 6)
 	m.SetSearchDisplay("zzz", false)
@@ -152,7 +152,7 @@ func TestListModelRenderDimsRowsOutsideMatchSet(t *testing.T) {
 // match set with no term (e.g. before any search has run) must not dim
 // every row in the list.
 func TestListModelRenderSkipsDimmingWithoutActiveSearch(t *testing.T) {
-	m := NewListModel(fixtureCommits(2))
+	m := NewListModel(fixtureCommits(2), &jumplist{})
 	m.SetTotalCount(2)
 	m.SetSize(120, 3)
 	m.render()
@@ -164,7 +164,7 @@ func TestListModelRenderSkipsDimmingWithoutActiveSearch(t *testing.T) {
 }
 
 func TestJumpToBottomStillGoesThroughBeginLoadingUpTo(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(100)
 	m.SetSize(80, 5)
 

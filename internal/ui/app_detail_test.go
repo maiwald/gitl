@@ -10,11 +10,11 @@ import (
 )
 
 func TestEnterRequestsDetailAndEscReturnsToSameListState(t *testing.T) {
-	list := NewListModel(fixtureCommits(5))
+	list := NewListModel(fixtureCommits(5), &jumplist{})
 	list.SetSize(80, 3)
 	list.Update(tea.KeyMsg{Type: tea.KeyDown}) // move cursor to index 1
 
-	m := Model{active: viewList, list: list}
+	m := Model{active: viewList, list: list, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 
 	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})

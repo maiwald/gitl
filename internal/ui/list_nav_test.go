@@ -11,7 +11,7 @@ func keyRune(r rune) tea.KeyMsg {
 }
 
 func TestListModelHJKLMovement(t *testing.T) {
-	m := NewListModel(fixtureCommits(5))
+	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetSize(80, 3)
 
 	m.Update(keyRune('j'))
@@ -25,7 +25,7 @@ func TestListModelHJKLMovement(t *testing.T) {
 }
 
 func TestListModelTopAndBottomFullyLoaded(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(10)
 	m.SetSize(80, 4)
 
@@ -45,7 +45,7 @@ func TestListModelTopAndBottomFullyLoaded(t *testing.T) {
 }
 
 func TestListModelHalfPageMovement(t *testing.T) {
-	m := NewListModel(fixtureCommits(20))
+	m := NewListModel(fixtureCommits(20), &jumplist{})
 	m.SetTotalCount(20)
 	m.SetSize(80, 10) // half page = 5
 
@@ -64,7 +64,7 @@ func TestListModelHalfPageMovement(t *testing.T) {
 }
 
 func TestListModelJumpToBottomTriggersFetchWhenIncomplete(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(100) // more commits exist than are loaded
 	m.SetSize(80, 5)
 
@@ -90,7 +90,7 @@ func TestListModelJumpToBottomTriggersFetchWhenIncomplete(t *testing.T) {
 }
 
 func TestListModelLazyLoadTriggersNearEnd(t *testing.T) {
-	m := NewListModel(fixtureCommits(30))
+	m := NewListModel(fixtureCommits(30), &jumplist{})
 	m.SetTotalCount(1000)
 	m.SetSize(80, 5)
 

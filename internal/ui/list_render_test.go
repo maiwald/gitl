@@ -14,7 +14,7 @@ import (
 // ever fails, the incremental path has drifted from renderRow — the single
 // source of truth both paths are supposed to share.
 func TestListModelIncrementalRenderMatchesFullRebuild(t *testing.T) {
-	m := NewListModel(fixtureCommits(30))
+	m := NewListModel(fixtureCommits(30), &jumplist{})
 	m.SetLeadingEntries(fixtureLeadingEntries())
 	m.SetSize(80, 10)
 	m.SetTotalCount(30)
@@ -43,7 +43,7 @@ func TestListModelIncrementalRenderMatchesFullRebuild(t *testing.T) {
 // new rows, patch the old+new cursor rows) once it resolves a pending
 // jump landing inside the newly-appended batch.
 func TestListModelIncrementalRenderMatchesFullRebuildAfterAppendCommits(t *testing.T) {
-	m := NewListModel(fixtureCommits(5))
+	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetSize(80, 3)
 	m.SetTotalCount(10)
 
@@ -71,7 +71,7 @@ func TestListModelIncrementalRenderMatchesFullRebuildAfterAppendCommits(t *testi
 // load the entire remaining history, and every subsequent j/k used to
 // re-render all of it).
 func BenchmarkListCursorMove(b *testing.B) {
-	m := NewListModel(fixtureCommits(20000))
+	m := NewListModel(fixtureCommits(20000), &jumplist{})
 	m.SetSize(80, 40)
 	m.SetTotalCount(20000)
 

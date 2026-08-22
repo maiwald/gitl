@@ -15,14 +15,14 @@ import (
 // same as it does for a real commit (see
 // TestEnterRequestsDetailAndEscReturnsToSameListState in app_detail_test.go).
 func TestEnterOnSyntheticRowOpensDetailSynchronously(t *testing.T) {
-	list := NewListModel(fixtureCommits(3))
+	list := NewListModel(fixtureCommits(3), &jumplist{})
 	list.SetSize(80, 10)
 	list.SetLeadingEntries([]git.WorktreeEntry{
 		{Kind: git.EntryWorktree, Files: []git.File{{Path: "a.txt", Additions: 2}}},
 	})
 	list.Update(tea.KeyMsg{Type: tea.KeyUp}) // move cursor onto the synthetic row
 
-	m := Model{active: viewList, list: list}
+	m := Model{active: viewList, list: list, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 	cursorBefore := m.list.cursor
 
@@ -75,7 +75,7 @@ func TestNewModelSetsQuitOnBackFromStagedTarget(t *testing.T) {
 // in app_detail_test.go).
 func TestQuitOnBackGate(t *testing.T) {
 	t.Run("quits when quitOnBack is set", func(t *testing.T) {
-		m := Model{active: viewDetail, quitOnBack: true}
+		m := Model{active: viewDetail, quitOnBack: true, jl: &jumplist{}}
 		newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 		m = newModel.(Model)
 		if !m.quitting {
@@ -90,7 +90,7 @@ func TestQuitOnBackGate(t *testing.T) {
 	})
 
 	t.Run("returns to list when quitOnBack is unset", func(t *testing.T) {
-		m := Model{active: viewDetail, quitOnBack: false}
+		m := Model{active: viewDetail, quitOnBack: false, jl: &jumplist{}}
 		newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 		m = newModel.(Model)
 		if m.active != viewList {
@@ -111,7 +111,7 @@ func TestQuitOnBackGate(t *testing.T) {
 // empty tree), unlike the plain startup path (see
 // TestRepoOpenedPlainPathErrorsOnNoCommits).
 func TestRepoOpenedStagedPathSkipsNoCommitsError(t *testing.T) {
-	m := Model{start: StartTarget{Staged: true}}
+	m := Model{start: StartTarget{Staged: true}, jl: &jumplist{}}
 	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
 	m = newModel.(Model)
 	if m.err != nil {
@@ -127,7 +127,7 @@ func TestRepoOpenedStagedPathSkipsNoCommitsError(t *testing.T) {
 // worktreeDiff's tracked-file half diffs against the empty tree the same
 // way stagedDiff does, and untracked files don't need a HEAD at all.
 func TestRepoOpenedDiffPathSkipsNoCommitsError(t *testing.T) {
-	m := Model{start: StartTarget{Diff: true}}
+	m := Model{start: StartTarget{Diff: true}, jl: &jumplist{}}
 	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
 	m = newModel.(Model)
 	if m.err != nil {
@@ -139,7 +139,7 @@ func TestRepoOpenedDiffPathSkipsNoCommitsError(t *testing.T) {
 }
 
 func TestRepoOpenedPlainPathErrorsOnNoCommits(t *testing.T) {
-	m := Model{}
+	m := Model{jl: &jumplist{}}
 	newModel, _ := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
 	m = newModel.(Model)
 	if m.err == nil {
@@ -156,7 +156,7 @@ func TestWorktreeEntriesMirroredRegardlessOfArrivalOrder(t *testing.T) {
 	entries := []git.WorktreeEntry{{Kind: git.EntryStaged, Files: []git.File{{Path: "a.txt"}}}}
 
 	t.Run("entries before commits", func(t *testing.T) {
-		m := Model{}
+		m := Model{jl: &jumplist{}}
 		m.width, m.height = 80, 24
 		newModel, _ := m.Update(worktreeEntriesLoadedMsg{entries: entries})
 		m = newModel.(Model)
@@ -168,7 +168,7 @@ func TestWorktreeEntriesMirroredRegardlessOfArrivalOrder(t *testing.T) {
 	})
 
 	t.Run("commits before entries", func(t *testing.T) {
-		m := Model{}
+		m := Model{jl: &jumplist{}}
 		m.width, m.height = 80, 24
 		newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(3), totalCount: 3})
 		m = newModel.(Model)

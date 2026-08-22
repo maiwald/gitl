@@ -22,7 +22,7 @@ func fixtureCommits(n int) []git.Commit {
 }
 
 func TestListModelCursorMovement(t *testing.T) {
-	m := NewListModel(fixtureCommits(5))
+	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetSize(80, 3)
 
 	if c, ok := m.Selected(); !ok || c.Hash != "a" {
@@ -41,7 +41,7 @@ func TestListModelCursorMovement(t *testing.T) {
 }
 
 func TestListModelCursorClampsAtBounds(t *testing.T) {
-	m := NewListModel(fixtureCommits(2))
+	m := NewListModel(fixtureCommits(2), &jumplist{})
 	m.SetSize(80, 3)
 
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
@@ -57,7 +57,7 @@ func TestListModelCursorClampsAtBounds(t *testing.T) {
 }
 
 func TestListModelScrollsToKeepCursorVisible(t *testing.T) {
-	m := NewListModel(fixtureCommits(10))
+	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetSize(80, 3)
 
 	for i := 0; i < 5; i++ {
@@ -75,7 +75,7 @@ func TestListModelScrollsToKeepCursorVisible(t *testing.T) {
 // the target position is already loaded, the cursor moves there right
 // away and no fetch is needed.
 func TestListModelJumpToAlreadyLoaded(t *testing.T) {
-	m := NewListModel(fixtureCommits(5))
+	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetSize(80, 3)
 	m.SetTotalCount(5)
 
@@ -92,7 +92,7 @@ func TestListModelJumpToAlreadyLoaded(t *testing.T) {
 // only moves once AppendCommits brings the target into range — the same
 // pendingCursor mechanism jumpToBottom and search jumps use.
 func TestListModelJumpToDefersUntilLoaded(t *testing.T) {
-	m := NewListModel(fixtureCommits(5))
+	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetSize(80, 3)
 	m.SetTotalCount(10)
 
@@ -123,7 +123,7 @@ func fixtureLeadingEntries() []git.WorktreeEntry {
 // entry, and the cursor clamps at the topmost leading row rather than going
 // negative indefinitely.
 func TestListModelCursorMovesOntoLeadingRowsAndClamps(t *testing.T) {
-	m := NewListModel(fixtureCommits(3))
+	m := NewListModel(fixtureCommits(3), &jumplist{})
 	m.SetLeadingEntries(fixtureLeadingEntries())
 	m.SetSize(80, 10)
 
@@ -154,7 +154,7 @@ func TestListModelCursorMovesOntoLeadingRowsAndClamps(t *testing.T) {
 // all the way to the topmost synthetic row when leading rows are present,
 // not just to commits[0].
 func TestListModelTopKeyLandsOnTopmostLeadingRow(t *testing.T) {
-	m := NewListModel(fixtureCommits(5))
+	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetLeadingEntries(fixtureLeadingEntries())
 	m.SetSize(80, 3)
 
@@ -174,7 +174,7 @@ func TestListModelTopKeyLandsOnTopmostLeadingRow(t *testing.T) {
 // selection untouched — the cursor stays in commit-index space regardless
 // of how many synthetic rows precede it.
 func TestSetLeadingEntriesDoesNotMoveCursorOffCommit(t *testing.T) {
-	m := NewListModel(fixtureCommits(5))
+	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetSize(80, 3)
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -192,7 +192,7 @@ func TestSetLeadingEntriesDoesNotMoveCursorOffCommit(t *testing.T) {
 // match positions are still real commit indices (never offset by
 // len(leading)), so Search/NextMatch land the cursor on the correct commit.
 func TestListModelSearchIndicesUnaffectedByLeadingRows(t *testing.T) {
-	m := NewListModel(fixtureCommits(5))
+	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetLeadingEntries(fixtureLeadingEntries())
 	m.SetSize(80, 3)
 	m.SetTotalCount(5)
@@ -221,7 +221,7 @@ func TestListModelSearchIndicesUnaffectedByLeadingRows(t *testing.T) {
 // regression check: maybeLoadMore's fetchRequest is still keyed to
 // len(commits), never shifted by len(leading).
 func TestListModelLoadMoreSkipLimitUnaffectedByLeadingRows(t *testing.T) {
-	m := NewListModel(fixtureCommits(30))
+	m := NewListModel(fixtureCommits(30), &jumplist{})
 	m.SetLeadingEntries(fixtureLeadingEntries())
 	m.SetTotalCount(100)
 	m.SetSize(80, 5)

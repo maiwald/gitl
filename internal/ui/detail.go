@@ -80,14 +80,12 @@ type DetailModel struct {
 	// reflow, where this is captured before the padding is appended).
 	contentLen int
 
-	// jumpBack and jumpForward mirror ListModel's own jumplist fields (see
-	// that doc comment) — same two-stack browser-back/forward shape, same
-	// jumplistCap, just holding cursorLine positions instead of commit
-	// indices. Seeded with an entry at 0 in NewDetailModel, so ctrl-o can
-	// always get back to the very top of a commit's diff — even if the
-	// cursor got elsewhere via plain j/k first, never through an actual
-	// jump.
-	jumpBack, jumpForward []int
+	// jl is the shared, cross-view jumplist (vim's ctrl-o/ctrl-i) — see its
+	// doc comment in app.go for why it lives on the root Model rather than
+	// here. pushJump below is this model's only interaction with it: actual
+	// JumpBack/JumpForward key handling lives on the root Model instead,
+	// since popping an entry can require switching the active view.
+	jl *jumplist
 }
 
 // sectionKind distinguishes the three kinds of entry that can appear in
@@ -132,13 +130,14 @@ func sectionAt(sections []detailSection, lineIndex int) int {
 	return idx
 }
 
-// NewDetailModel constructs a detail view for the given commit.
-func NewDetailModel(detail *git.CommitDetail) DetailModel {
+// NewDetailModel constructs a detail view for the given commit, sharing jl —
+// the root Model's single cross-view jumplist — for pushJump to record into.
+func NewDetailModel(detail *git.CommitDetail, jl *jumplist) DetailModel {
 	return DetailModel{
 		detail:   detail,
 		leftVP:   viewport.New(0, 0),
 		matchPos: -1,
-		jumpBack: []int{0},
+		jl:       jl,
 	}
 }
 
@@ -547,10 +546,11 @@ func findMessageLineMatches(line, term string, lineIndex int) []MessageMatch {
 // ctrl-u/ctrl-d, and g/G move the line cursor (see cursorLine) rather than
 // scrolling directly — the viewport follows it (setCursor's
 // ensureCursorVisible call), the tig-style relationship ListModel already
-// has between its own cursor and vp.YOffset. [ / ] and g/G/ctrl-o/ctrl-i
-// record a jumplist entry first when they actually move the cursor (see
-// pushJump); plain j/k/ctrl-u/ctrl-d don't, matching vim's own jumplist
-// (only "big" motions are jump-worthy).
+// has between its own cursor and vp.YOffset. [ / ] and g/G record a jumplist
+// entry first when they actually move the cursor (see pushJump); plain
+// j/k/ctrl-u/ctrl-d don't, matching vim's own jumplist (only "big" motions
+// are jump-worthy). ctrl-o/ctrl-i themselves aren't handled here — see the
+// root Model's doJumpBack/doJumpForward.
 func (m *DetailModel) Update(msg tea.KeyMsg) {
 	switch {
 	case key.Matches(msg, DefaultKeyMap.Up):
@@ -569,10 +569,6 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 		m.jumpToSection(-1)
 	case key.Matches(msg, DefaultKeyMap.NextFile):
 		m.jumpToSection(1)
-	case key.Matches(msg, DefaultKeyMap.JumpBack):
-		m.JumpBack()
-	case key.Matches(msg, DefaultKeyMap.JumpForward):
-		m.JumpForward()
 	}
 }
 
@@ -631,37 +627,12 @@ func (m *DetailModel) ensureCursorVisible() {
 	}
 }
 
-// pushJump and JumpBack/JumpForward mirror ListModel's own (see that file's
-// doc comments for the full jumplist contract) — same two-stack shape, same
-// jumplistCap, operating on cursorLine instead of a commit index.
+// pushJump records pos — the cursor line about to be left — onto the shared
+// jumplist (see jl's doc comment), tagged with this model's own *git.
+// CommitDetail so a later cross-view JumpBack/JumpForward can tell which
+// commit/entry to reconstruct.
 func (m *DetailModel) pushJump(pos int) {
-	m.jumpForward = nil
-	m.jumpBack = append(m.jumpBack, pos)
-	if len(m.jumpBack) > jumplistCap {
-		m.jumpBack = m.jumpBack[len(m.jumpBack)-jumplistCap:]
-	}
-}
-
-func (m *DetailModel) JumpBack() bool {
-	if len(m.jumpBack) == 0 {
-		return false
-	}
-	target := m.jumpBack[len(m.jumpBack)-1]
-	m.jumpBack = m.jumpBack[:len(m.jumpBack)-1]
-	m.jumpForward = append(m.jumpForward, m.cursorLine)
-	m.setCursor(target)
-	return true
-}
-
-func (m *DetailModel) JumpForward() bool {
-	if len(m.jumpForward) == 0 {
-		return false
-	}
-	target := m.jumpForward[len(m.jumpForward)-1]
-	m.jumpForward = m.jumpForward[:len(m.jumpForward)-1]
-	m.jumpBack = append(m.jumpBack, m.cursorLine)
-	m.setCursor(target)
-	return true
+	m.jl.push(jumpPos{view: viewDetail, commit: m.detail, cursorLine: pos})
 }
 
 // jumpToSection scrolls the diff panel directly to the section
@@ -707,15 +678,18 @@ func (m *DetailModel) syncHighlightFromScroll() {
 	m.currentSection = sectionAt(m.sections, m.leftVP.YOffset)
 }
 
-// RunSearch finds every occurrence of term across this commit's header and
-// message (the author line and body — see headerLinesFor's doc comment for
-// why this deliberately excludes the hash, unlike list search) and its diff
-// content, message matches first in document order and diff matches after,
-// and jumps to the first one, returning the total match count. Unlike list
-// search this is fully synchronous: the whole commit is already in memory
-// once it's open, so there's no async loading to wait for. See
-// SetSearchDisplay for the term/dismissed display state.
-func (m *DetailModel) RunSearch(term string) int {
+// computeMatches finds every occurrence of term across this commit's header
+// and message (the author line and body — see headerLinesFor's doc comment
+// for why this deliberately excludes the hash, unlike list search) and its
+// diff content, message matches first in document order and diff matches
+// after (see messageMatches's doc comment) — without moving the cursor or
+// marking any match "current" (matchPos stays -1). Used by openDetail/
+// gotoJumpPos when a commit/entry opens (or is jumped back/forward to) with
+// a search already active elsewhere: matches should be visible immediately,
+// but jumping the cursor straight to one would be a surprising way for a
+// view to open — see RunSearch, the jumping counterpart used when the user
+// actually submits "/" while already viewing this commit.
+func (m *DetailModel) computeMatches(term string) {
 	if term == "" {
 		m.messageMatches, m.diffMatches = nil, nil
 	} else {
@@ -724,6 +698,14 @@ func (m *DetailModel) RunSearch(term string) int {
 		m.diffMatches = FindDiffMatches(m.detail.Files, term)
 	}
 	m.matchPos = -1
+}
+
+// RunSearch is computeMatches plus jumping to the first match, returning the
+// total match count. Unlike list search this is fully synchronous: the whole
+// commit is already in memory once it's open, so there's no async loading to
+// wait for. See SetSearchDisplay for the term/dismissed display state.
+func (m *DetailModel) RunSearch(term string) int {
+	m.computeMatches(term)
 	if m.totalMatches() > 0 {
 		m.matchPos = 0
 	}

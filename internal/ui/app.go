@@ -87,6 +87,53 @@ type Model struct {
 	// need term/dismissed threaded through as parameters everywhere.
 	searchTerm      string
 	searchDismissed bool
+
+	// jl is the single, cross-view jumplist backing ctrl-o/ctrl-i (vim's
+	// jumpBack/jumpForward). Shared by pointer with ListModel and
+	// DetailModel — see jumplist's doc comment for why a jump made from
+	// inside either view, or the view transition of opening/leaving a
+	// commit, is recorded onto one shared history instead of two
+	// independent per-view ones.
+	jl *jumplist
+}
+
+// jumpPos identifies one position recorded in the jumplist: either a list
+// cursor position, or a line within a specific commit/entry's detail view
+// (commit, not cursorLine alone, since JumpForward may need to reconstruct a
+// DetailModel for a commit that isn't the currently active one — the exact
+// *git.CommitDetail pointer it was fetched as, reused directly with no
+// re-fetch).
+type jumpPos struct {
+	view       view
+	listCursor int
+	commit     *git.CommitDetail
+	cursorLine int
+}
+
+// jumplist is the shared, cross-view jumplist backing ctrl-o/ctrl-i, matching
+// vim's own semantics where switching buffers (here: list <-> detail) is
+// itself jump-recordable, not just movement within one — see CLAUDE.md's
+// jumplist note. Owned by the root Model and referenced by pointer from both
+// ListModel and DetailModel (constructed with it, see NewListModel/
+// NewDetailModel) so a jump made from inside either view (g/G, [/], a
+// search-match step) pushes onto this one shared stack; JumpBack/JumpForward
+// themselves are handled centrally by the root Model (see doJumpBack/
+// doJumpForward) since popping an entry can require switching the active
+// view, which neither child model can do on its own.
+type jumplist struct {
+	back, forward []jumpPos
+}
+
+// push records pos as a jumplist entry reachable via JumpBack, discarding any
+// forward history from an earlier JumpBack — a fresh jump invalidates
+// whatever "redo" existed before it, matching vim's own jumplist semantics.
+// Capped at jumplistCap entries, matching vim's own default jumplist size.
+func (j *jumplist) push(pos jumpPos) {
+	j.forward = nil
+	j.back = append(j.back, pos)
+	if len(j.back) > jumplistCap {
+		j.back = j.back[len(j.back)-jumplistCap:]
+	}
 }
 
 // pendingSearch tracks the two independent, concurrent git queries a list
@@ -104,7 +151,15 @@ type pendingSearch struct {
 
 // NewModel constructs the initial root model for the given startup target.
 func NewModel(target StartTarget) Model {
-	return Model{start: target, quitOnBack: target.Staged || target.Diff || target.Rev != ""}
+	return Model{
+		start:      target,
+		quitOnBack: target.Staged || target.Diff || target.Rev != "",
+		// Seeded with an entry at the list's top (position 0), so ctrl-o can
+		// always get back there even if the cursor got elsewhere via plain
+		// motion first, never through an actual jump — same reasoning
+		// ListModel/DetailModel's own seed used to carry individually.
+		jl: &jumplist{back: []jumpPos{{view: viewList, listCursor: 0}}},
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -282,7 +337,7 @@ func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 // searchDismissed=false, which would make an already-dismissed search
 // suddenly reappear just because a new commit/entry was opened).
 func (m Model) openDetail(detail *git.CommitDetail) Model {
-	m.detail = NewDetailModel(detail)
+	m.detail = NewDetailModel(detail, m.jl)
 	m.detail.SetSize(m.width, m.contentHeight())
 	m.active = viewDetail
 	if m.searchTerm != "" {
@@ -394,7 +449,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(loadListCmd(msg.repo, fatal), loadWorktreeEntriesCmd(msg.repo))
 	case commitsLoadedMsg:
-		m.list = NewListModel(msg.commits)
+		m.list = NewListModel(msg.commits, m.jl)
 		m.list.SetTotalCount(msg.totalCount)
 		m.list.SetSize(m.width, m.contentHeight())
 		m.list.SetLeadingEntries(m.entries)
@@ -544,10 +599,88 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Handled centrally, ahead of view routing, since popping a jumplist
+	// entry can require switching the active view — neither ListModel nor
+	// DetailModel can do that on its own (see jumplist's doc comment).
+	if key.Matches(msg, DefaultKeyMap.JumpBack) {
+		return m.doJumpBack()
+	}
+	if key.Matches(msg, DefaultKeyMap.JumpForward) {
+		return m.doJumpForward()
+	}
+
 	if m.active == viewDetail {
 		return m.handleDetailViewKey(msg)
 	}
 	return m.handleListViewKey(msg)
+}
+
+// currentJumpPos captures the active view's current position as a jumpPos,
+// for recording onto the opposite stack when doJumpBack/doJumpForward moves
+// away from it.
+func (m Model) currentJumpPos() jumpPos {
+	if m.active == viewDetail {
+		return jumpPos{view: viewDetail, commit: m.detail.detail, cursorLine: m.detail.cursorLine}
+	}
+	return jumpPos{view: viewList, listCursor: m.list.cursor}
+}
+
+// doJumpBack and doJumpForward step through the shared jumplist (see
+// jumplist's doc comment), vim's ctrl-o/ctrl-i: browser-back/forward-style,
+// each pushing the position it leaves onto the other stack so they exactly
+// undo one another. A no-op (nil cmd, unchanged model) when the relevant
+// stack is empty.
+func (m Model) doJumpBack() (tea.Model, tea.Cmd) {
+	if len(m.jl.back) == 0 {
+		return m, nil
+	}
+	target := m.jl.back[len(m.jl.back)-1]
+	m.jl.back = m.jl.back[:len(m.jl.back)-1]
+	m.jl.forward = append(m.jl.forward, m.currentJumpPos())
+	return m.gotoJumpPos(target), nil
+}
+
+func (m Model) doJumpForward() (tea.Model, tea.Cmd) {
+	if len(m.jl.forward) == 0 {
+		return m, nil
+	}
+	target := m.jl.forward[len(m.jl.forward)-1]
+	m.jl.forward = m.jl.forward[:len(m.jl.forward)-1]
+	m.jl.back = append(m.jl.back, m.currentJumpPos())
+	return m.gotoJumpPos(target), nil
+}
+
+// gotoJumpPos applies target, switching the active view if needed. A list
+// target always replays through ListModel.JumpTo, which already handles a
+// not-yet-loaded position by deferring (see pumpPendingJump for the CLI
+// startup path that also uses it) — every jumplist entry was, by
+// construction, the cursor's actual position at some past point, so it was
+// already loaded then and can only have grown available since. A detail
+// target reuses the already-fetched *git.CommitDetail directly (no re-fetch)
+// when it isn't the commit already active, computing search matches the
+// same non-jumping way openDetail does before landing the cursor exactly on
+// cursorLine — see computeMatches's doc comment for why that, not RunSearch,
+// is the right call here: RunSearch's own jump would fight the cursorLine
+// this jump is specifically trying to restore.
+func (m Model) gotoJumpPos(pos jumpPos) Model {
+	if pos.view == viewList {
+		m.active = viewList
+		m.list.JumpTo(pos.listCursor)
+		return m
+	}
+	if m.detail.detail != pos.commit {
+		m.detail = NewDetailModel(pos.commit, m.jl)
+		if m.searchTerm != "" {
+			m.detail.computeMatches(m.searchTerm)
+		}
+		m.detail.SetSize(m.width, m.contentHeight())
+		if m.searchTerm != "" {
+			m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
+		}
+	}
+	m.detail.setCursor(pos.cursorLine)
+	m.active = viewDetail
+	return m
 }
 
 // handleDetailViewKey routes a key press while the detail view is active:
@@ -579,11 +712,16 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, DefaultKeyMap.Enter) {
 		// A synthetic entry's files are already loaded (from startup), so
 		// opening one needs no fetch — unlike a real commit, which is only
-		// ever loaded on demand.
+		// ever loaded on demand. Either way, opening a commit/entry is
+		// itself a jump-worthy transition (see jumplist's doc comment): push
+		// the list position being left so ctrl-o can return to it, even
+		// before the detail view exists yet on the fetchDetailCmd path.
 		if entry, ok := m.list.SelectedEntry(); ok {
+			m.jl.push(jumpPos{view: viewList, listCursor: m.list.cursor})
 			return m.openDetail(git.EntryDetail(entry)), nil
 		}
 		if commit, ok := m.list.Selected(); ok {
+			m.jl.push(jumpPos{view: viewList, listCursor: m.list.cursor})
 			return m, fetchDetailCmd(m.repo, commit.Hash, nonFatal)
 		}
 		return m, nil

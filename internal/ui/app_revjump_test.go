@@ -12,7 +12,7 @@ import (
 // commit-less-looking hasCommits value — the rev path doesn't gate on it
 // the way the plain path does (see TestRepoOpenedPlainPathErrorsOnNoCommits).
 func TestRepoOpenedRevPathDispatchesConcurrentFetches(t *testing.T) {
-	m := Model{start: StartTarget{Rev: "abc123"}}
+	m := Model{start: StartTarget{Rev: "abc123"}, jl: &jumplist{}}
 	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: true})
 	m = newModel.(Model)
 	if cmd == nil {
@@ -29,7 +29,7 @@ func TestRepoOpenedRevPathDispatchesConcurrentFetches(t *testing.T) {
 // position — see pendingJump's doc comment.
 func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 	t.Run("position before commits", func(t *testing.T) {
-		m := Model{start: StartTarget{Rev: "abc"}}
+		m := Model{start: StartTarget{Rev: "abc"}, jl: &jumplist{}}
 		m.width, m.height = 80, 24
 		newModel, _ := m.Update(revPositionMsg{pos: 2, found: true})
 		m = newModel.(Model)
@@ -41,7 +41,7 @@ func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 	})
 
 	t.Run("commits before position", func(t *testing.T) {
-		m := Model{start: StartTarget{Rev: "abc"}}
+		m := Model{start: StartTarget{Rev: "abc"}, jl: &jumplist{}}
 		m.width, m.height = 80, 24
 		newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
 		m = newModel.(Model)
@@ -59,7 +59,7 @@ func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 // wherever it already was, with no error surfaced (the detail view itself
 // still opens from fetchDetailCmd independently).
 func TestRevJumpUnreachableLeavesCursorAtTopWithoutError(t *testing.T) {
-	m := Model{start: StartTarget{Rev: "abc"}}
+	m := Model{start: StartTarget{Rev: "abc"}, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 	newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
 	m = newModel.(Model)

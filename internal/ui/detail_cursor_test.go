@@ -23,7 +23,7 @@ func cursorFillOpen() string {
 // shaStyle span — tig's own default of highlighting the topmost line.
 func TestDetailModelCursorDefaultsToTopLine(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 3)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 24)
 
 	if m.cursorLine != 0 {
@@ -40,7 +40,7 @@ func TestDetailModelCursorDefaultsToTopLine(t *testing.T) {
 // one — not left behind or duplicated.
 func TestDetailModelCursorMovesWithJK(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 3)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 24)
 
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -64,7 +64,7 @@ func TestDetailModelCursorMovesWithJK(t *testing.T) {
 // above line 0 or past the last flattened content line.
 func TestDetailModelCursorClampsAtBounds(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 2)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 24)
 
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
@@ -88,7 +88,7 @@ func TestDetailModelCursorClampsAtBounds(t *testing.T) {
 // TestListModelScrollsToKeepCursorVisible.
 func TestDetailModelCursorScrollFollowsOnSmallViewport(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 20)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 5)
 
 	for i := 0; i < 10; i++ {
@@ -107,7 +107,7 @@ func TestDetailModelCursorScrollFollowsOnSmallViewport(t *testing.T) {
 // halfPageSize behavior.
 func TestDetailModelHalfPageMovesCursor(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 20)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	// leftVP.Height is m.height minus 1 (the sticky file-header row), so
 	// half page here is (10-1)/2 = 4, not simply half of 10.
 	m.SetSize(80, 10)
@@ -132,7 +132,7 @@ func TestDetailModelHalfPageMovesCursor(t *testing.T) {
 // it merges into a header span.
 func TestDetailModelCursorHighlightsDiffLine(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 3)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 24)
 
 	target := m.fileRanges[0].StartLine // the file header row
@@ -149,7 +149,7 @@ func TestDetailModelCursorHighlightsDiffLine(t *testing.T) {
 // instead of leaving it dangling (see cursorLine's doc comment).
 func TestDetailModelCursorSurvivesReflowClampedInRange(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 3)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 24)
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	before := m.cursorLine
@@ -171,7 +171,7 @@ func TestDetailModelCursorSurvivesReflowClampedInRange(t *testing.T) {
 func TestDetailModelBottomStaysWithinRealContentNotPadding(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 30)
 	d.Files[1].Hunks[0].Lines = d.Files[1].Hunks[0].Lines[:2] // short trailing file, triggers padding
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 20) // tall enough that the short file alone can't fill it
 
 	lastEnd := m.fileRanges[len(m.fileRanges)-1].EndLine
@@ -196,7 +196,7 @@ func TestDetailModelBottomStaysWithinRealContentNotPadding(t *testing.T) {
 // independently rendered trailing fill span.
 func TestDetailModelCursorHighlightFillsFullRowWidth(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 3)
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 24)
 	m.Update(tea.KeyMsg{Type: tea.KeyDown}) // onto the short "Author: ..." line
 
@@ -214,7 +214,7 @@ func TestDetailModelCursorHighlightFillsFullRowWidth(t *testing.T) {
 func TestDetailModelCursorHighlightsBlankLine(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 3)
 	d.Body = "line one\n\nline three" // the middle line is blank
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 24)
 
 	// lines: 0 Commit, 1 Author, 2 Date, 3 "", 4 "    line one",
@@ -236,7 +236,7 @@ func TestDetailModelCursorHighlightsStatsRow(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 5)
 	d.Files[0].Additions = 3
 	d.Files[0].Deletions = 1
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 30)
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")}) // jump into the stats block

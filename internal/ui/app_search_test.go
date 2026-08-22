@@ -30,9 +30,10 @@ func fixtureMarkerCommitDetail() *git.CommitDetail {
 }
 
 func newSearchableListModel() Model {
-	list := NewListModel(fixtureCommits(5))
+	jl := &jumplist{}
+	list := NewListModel(fixtureCommits(5), jl)
 	list.SetSize(80, 20)
-	m := Model{active: viewList, list: list, repo: &git.Repo{}}
+	m := Model{active: viewList, list: list, repo: &git.Repo{}, jl: jl}
 	m.width, m.height = 80, 24
 	return m
 }
@@ -41,9 +42,10 @@ func newSearchableListModel() Model {
 // fixtureDetailForSearch (see detail_test.go), which has two "needle"
 // matches across its two files.
 func newSearchableDetailModel() Model {
-	detail := NewDetailModel(fixtureDetailForSearch())
+	jl := &jumplist{}
+	detail := NewDetailModel(fixtureDetailForSearch(), jl)
 	detail.SetSize(80, 4)
-	m := Model{active: viewDetail, detail: detail, repo: &git.Repo{}}
+	m := Model{active: viewDetail, detail: detail, repo: &git.Repo{}, jl: jl}
 	m.width, m.height = 80, 24
 	return m
 }
@@ -473,9 +475,9 @@ func TestNRevivesDismissedDetailSearchAndStatusBar(t *testing.T) {
 // subject) must show the match the moment it's opened, not just once n/N
 // is pressed.
 func TestOpeningCommitWithActiveSearchHighlightsMessageMatch(t *testing.T) {
-	list := NewListModel(fixtureCommits(5))
+	list := NewListModel(fixtureCommits(5), &jumplist{})
 	list.SetSize(80, 20)
-	m := Model{active: viewList, list: list, repo: &git.Repo{}}
+	m := Model{active: viewList, list: list, repo: &git.Repo{}, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 	m.setSearchDisplay("MARKER", false)
 
@@ -495,9 +497,9 @@ func TestOpeningCommitWithActiveSearchHighlightsMessageMatch(t *testing.T) {
 }
 
 func TestOpeningCommitWithDismissedSearchStaysDismissed(t *testing.T) {
-	list := NewListModel(fixtureCommits(5))
+	list := NewListModel(fixtureCommits(5), &jumplist{})
 	list.SetSize(80, 20)
-	m := Model{active: viewList, list: list, repo: &git.Repo{}}
+	m := Model{active: viewList, list: list, repo: &git.Repo{}, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 	m.setSearchDisplay("MARKER", true) // already dismissed in the list
 

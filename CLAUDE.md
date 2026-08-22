@@ -192,19 +192,36 @@ before every commit — don't commit red.
   `Width`+`Background` set on genuinely plain (not pre-ANSI'd) text —
   `renderFileHeader`/hunk headers via `cursorMerged`, `renderClipped` —
   doesn't have this problem and needs no such strip.
-- `ListModel` and `DetailModel` each keep their own jumplist (`jumpBack`/
-  `jumpForward`, vim's ctrl-o/ctrl-i): a two-stack, browser-back/forward
-  shape capped at `jumplistCap`, pushed before `g`/`G`, `[`/`]` (detail
-  view only), and every search-match jump (the *initial* `/` jump and
-  every later `n`/`N` step — unlike vim, which only jumplists the initial
-  search, since a single step here can jump much farther than vim's local
-  from-cursor re-search). Both are seeded with an entry at position 0 at
-  construction, so ctrl-o can always reach the very top even if the
-  cursor got elsewhere via plain motion first, never through an actual
-  jump. `ctrl+i` (not the literal string `"ctrl+i"`) is bound to
-  bubbletea's `"tab"` key string — the two are the same byte (0x09) at
-  the terminal protocol level, and bubbletea's own decoder reports it as
-  tab (see `KeyTab`'s doc comment in bubbletea's `key.go`).
+- `Model` (`app.go`) owns a single cross-view jumplist (`jl *jumplist`,
+  vim's ctrl-o/ctrl-i): a two-stack, browser-back/forward shape capped at
+  `jumplistCap`, holding tagged `jumpPos` entries (a list cursor position,
+  or a `*git.CommitDetail` plus a `cursorLine` within it). `ListModel` and
+  `DetailModel` each hold a pointer to the same shared `jl` and only ever
+  *push* onto it (`pushJump`, before `g`/`G`, `[`/`]` (detail view only),
+  and every search-match jump — the *initial* `/` jump and every later
+  `n`/`N` step, unlike vim, which only jumplists the initial search, since
+  a single step here can jump much farther than vim's local from-cursor
+  re-search); actual JumpBack/JumpForward traversal (`doJumpBack`/
+  `doJumpForward`) lives solely on `Model`, since popping an entry can
+  require switching the active view — something neither child model can
+  do on its own. Opening a commit/entry (Enter) is itself pushed as a jump
+  (in `handleListViewKey`, before the view switches), so ctrl-o from a
+  freshly opened detail view returns to the list position it was opened
+  from, not just to a seeded position within that one commit's diff — this
+  is what makes ctrl-o/ctrl-i correctly cross the list/detail boundary
+  (previously two independent per-view jumplists couldn't). `jl` is seeded
+  with a single entry at the list's position 0 in `NewModel`, so ctrl-o can
+  always reach the very top even before any real jump has happened.
+  `ctrl+i` (not the literal string `"ctrl+i"`) is bound to bubbletea's
+  `"tab"` key string — the two are the same byte (0x09) at the terminal
+  protocol level, and bubbletea's own decoder reports it as tab (see
+  `KeyTab`'s doc comment in bubbletea's `key.go`). Jumping back/forward
+  into a detail view that isn't the currently active one reconstructs it
+  from the entry's stored `*git.CommitDetail` (no re-fetch) via
+  `gotoJumpPos`, which restores search matches with `computeMatches`
+  (compute only, no jump) rather than `RunSearch` — `RunSearch`'s own
+  jump-to-first-match would fight the `cursorLine` this restore is
+  specifically trying to land on.
 
 ## Known limitations (intentional, not bugs)
 

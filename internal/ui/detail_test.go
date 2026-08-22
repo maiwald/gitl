@@ -60,7 +60,7 @@ func fileSectionIndex(sections []detailSection, fileIndex int) int {
 func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 20)
 	d.Body = "message-scroll-marker"
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 8)
 
 	if !strings.Contains(m.leftVP.View(), "message-scroll-marker") {
@@ -94,7 +94,7 @@ func TestDetailModelShowsStatsBlockBeforeDiff(t *testing.T) {
 	d.Files[0].Additions = 3
 	d.Files[0].Deletions = 1
 	d.Files[1].Additions = 10
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 30) // tall enough that the stats block isn't scrolled out of view
 
 	view := m.leftVP.View()
@@ -162,7 +162,7 @@ func fillerLines(n int) []git.DiffLine {
 }
 
 func TestDetailModelSearchFindsAndJumpsToMatch(t *testing.T) {
-	m := NewDetailModel(fixtureDetailForSearch())
+	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
 	m.SetSize(80, 4)
 
 	total := m.RunSearch("needle")
@@ -183,7 +183,7 @@ func TestDetailModelSearchFindsAndJumpsToMatch(t *testing.T) {
 // internal/git.SearchCommitHashes matches for list search (author name OR
 // message).
 func TestDetailModelSearchFindsMessageMatchButIgnoresMetadata(t *testing.T) {
-	m := NewDetailModel(fixtureDetailForSearch())
+	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
 	m.SetSize(80, 4)
 
 	total := m.RunSearch("MARKER")
@@ -352,7 +352,7 @@ func TestDetailModelHeaderColorsAndIndentationRenderInView(t *testing.T) {
 	d := fixtureDetailWithFiles(1, 3)
 	d.AuthorName = "Ada Lovelace"
 	d.Body = "subject line"
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 30)
 	// The cursor defaults to line 0 ("Commit: <hash>"), and the Author line
 	// sits right below it — either would otherwise merge the cursor
@@ -400,7 +400,7 @@ func TestDetailModelRunSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T)
 			}},
 		}},
 	}
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	// A small viewport (well under the total content length, padded by
 	// fillerLines) so SetYOffset actually moves rather than clamping to 0
 	// because everything already fits on screen.
@@ -430,7 +430,7 @@ func TestDetailModelRunSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T)
 }
 
 func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
-	m := NewDetailModel(fixtureDetailForSearch())
+	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
 	m.SetSize(80, 4)
 	m.RunSearch("needle")
 
@@ -460,7 +460,7 @@ func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 }
 
 func TestDetailModelClearSearchRemovesHighlightState(t *testing.T) {
-	m := NewDetailModel(fixtureDetailForSearch())
+	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
 	m.SetSize(80, 4)
 	m.RunSearch("needle")
 
@@ -474,7 +474,7 @@ func TestDetailModelClearSearchRemovesHighlightState(t *testing.T) {
 }
 
 func TestDetailModelHighlightFollowsScroll(t *testing.T) {
-	m := NewDetailModel(fixtureDetailWithFiles(3, 10))
+	m := NewDetailModel(fixtureDetailWithFiles(3, 10), &jumplist{})
 	m.SetSize(80, 8) // small viewport so scrolling moves meaningfully
 
 	if m.currentSection != 0 || m.sections[0].kind != sectionKindCommit {
@@ -498,7 +498,7 @@ func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 // each file's own header while scrolled within its diff — stepping through
 // via jumpToSection the same way [ / ] does.
 func TestDetailModelStickyHeaderShowsSectionTitles(t *testing.T) {
-	m := NewDetailModel(fixtureDetailWithFiles(2, 20))
+	m := NewDetailModel(fixtureDetailWithFiles(2, 20), &jumplist{})
 	m.SetSize(80, 8)
 
 	if !strings.Contains(m.View(), "Commit") {
@@ -529,7 +529,7 @@ func TestDetailModelStickyHeaderShowsSectionTitles(t *testing.T) {
 // the sticky row must keep showing the previous file there instead of
 // repeating what's already visible immediately below it.
 func TestDetailModelStickyHeaderDoesNotDuplicateHeaderWhileScrolling(t *testing.T) {
-	m := NewDetailModel(fixtureDetailWithFiles(2, 20))
+	m := NewDetailModel(fixtureDetailWithFiles(2, 20), &jumplist{})
 	m.SetSize(80, 8)
 
 	target := m.fileRanges[1].StartLine
@@ -561,7 +561,7 @@ func TestDetailModelStickyHeaderDoesNotDuplicateHeaderWhileScrolling(t *testing.
 // stats block, or a file's diff), clamping (not wrapping) at the first/last
 // section.
 func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
-	m := NewDetailModel(fixtureDetailWithFiles(3, 10))
+	m := NewDetailModel(fixtureDetailWithFiles(3, 10), &jumplist{})
 	m.SetSize(80, 8)
 	last := len(m.sections) - 1
 
@@ -600,7 +600,7 @@ func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
 func TestDetailModelNextFileReachesShortTrailingFile(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 30)
 	d.Files[1].Hunks[0].Lines = d.Files[1].Hunks[0].Lines[:2] // short trailing file
-	m := NewDetailModel(d)
+	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 20) // tall enough that the short file alone can't fill it
 
 	target := fileSectionIndex(m.sections, 1)
@@ -621,7 +621,7 @@ func TestDetailModelNextPrevFileNoopWithoutFiles(t *testing.T) {
 			Hash: "merge123", Parents: []string{"p1", "p2"},
 			AuthorName: "A", AuthorDate: time.Now(), Subject: "merge",
 		},
-	})
+	}, &jumplist{})
 	m.SetSize(80, 24)
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
@@ -637,7 +637,7 @@ func TestDetailModelNextPrevFileNoopWithoutFiles(t *testing.T) {
 func TestDetailModelNoStickyHeaderWithoutFiles(t *testing.T) {
 	m := NewDetailModel(&git.CommitDetail{
 		Commit: git.Commit{Hash: "empty123", AuthorName: "A", AuthorDate: time.Now(), Subject: "empty"},
-	})
+	}, &jumplist{})
 	m.SetSize(80, 24)
 
 	if m.leftVP.Height != 24 {
@@ -654,7 +654,7 @@ func TestDetailModelMergeCommitShowsNotice(t *testing.T) {
 			AuthorDate: time.Now(),
 			Subject:    "merge",
 		},
-	})
+	}, &jumplist{})
 	m.SetSize(80, 24)
 
 	if !strings.Contains(m.View(), "Merge commit") {
@@ -665,7 +665,7 @@ func TestDetailModelMergeCommitShowsNotice(t *testing.T) {
 func TestDetailModelEmptyCommitShowsNoChangesNotice(t *testing.T) {
 	m := NewDetailModel(&git.CommitDetail{
 		Commit: git.Commit{Hash: "empty123", AuthorName: "A", AuthorDate: time.Now(), Subject: "empty"},
-	})
+	}, &jumplist{})
 	m.SetSize(80, 24)
 
 	if !strings.Contains(m.View(), "No changes") {
@@ -688,7 +688,7 @@ func fixturePseudoDetail(kind git.EntryKind, files []git.File) *git.CommitDetail
 func TestDetailModelPseudoEntryHeaderHasNoCommitMetadata(t *testing.T) {
 	m := NewDetailModel(fixturePseudoDetail(git.EntryWorktree, []git.File{
 		{Path: "a.txt", Status: git.StatusModified, Additions: 1},
-	}))
+	}), &jumplist{})
 	m.SetSize(80, 24)
 
 	view := m.View()
@@ -706,13 +706,13 @@ func TestDetailModelPseudoEntryHeaderHasNoCommitMetadata(t *testing.T) {
 // empty pseudo entry (nothing staged / nothing uncommitted) shows a message
 // specific to its kind, distinct from a real commit's "No changes" notice.
 func TestDetailModelPseudoEntryNoDiffNoticeIsKindSpecific(t *testing.T) {
-	staged := NewDetailModel(fixturePseudoDetail(git.EntryStaged, nil))
+	staged := NewDetailModel(fixturePseudoDetail(git.EntryStaged, nil), &jumplist{})
 	staged.SetSize(80, 24)
 	if !strings.Contains(staged.View(), "No staged changes") {
 		t.Errorf("View() = %q, want \"No staged changes\"", staged.View())
 	}
 
-	worktree := NewDetailModel(fixturePseudoDetail(git.EntryWorktree, nil))
+	worktree := NewDetailModel(fixturePseudoDetail(git.EntryWorktree, nil), &jumplist{})
 	worktree.SetSize(80, 24)
 	if !strings.Contains(worktree.View(), "No uncommitted changes") {
 		t.Errorf("View() = %q, want \"No uncommitted changes\"", worktree.View())
@@ -733,7 +733,7 @@ func TestDetailModelPseudoEntryMessageSearchFindsNothingButDiffSearchWorks(t *te
 				Lines:  []git.DiffLine{{Op: git.OpAdd, Text: "needle here"}},
 			}},
 		},
-	}))
+	}), &jumplist{})
 	m.SetSize(80, 24)
 
 	// A term appearing in the title ("Staged changes" contains "Staged")

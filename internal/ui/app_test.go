@@ -29,7 +29,7 @@ func TestModelQuitsOnCtrlC(t *testing.T) {
 }
 
 func TestModelShowsErrorMessage(t *testing.T) {
-	m := Model{err: errors.New("this repository has no commits yet")}
+	m := Model{err: errors.New("this repository has no commits yet"), jl: &jumplist{}}
 	if !strings.Contains(m.View(), "this repository has no commits yet") {
 		t.Fatalf("View() = %q, want it to contain the error message", m.View())
 	}
@@ -39,7 +39,7 @@ func TestModelShowsErrorMessage(t *testing.T) {
 // repo/list (as happens when startup fails before commitsLoadedMsg arrives)
 // causing a nil-pointer panic when the user presses keys anyway.
 func TestModelErrorStateDoesNotPanicOnKeypress(t *testing.T) {
-	m := Model{err: errors.New("boom")}
+	m := Model{err: errors.New("boom"), jl: &jumplist{}}
 	for _, k := range []tea.KeyMsg{
 		{Type: tea.KeyDown}, {Type: tea.KeyUp}, {Type: tea.KeyEnter},
 	} {
