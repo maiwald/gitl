@@ -756,21 +756,26 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 	return m.matchPos + 1, total
 }
 
-// jumpToMatch re-renders (so the newly active match gets its distinct
-// style) and scrolls the diff panel to bring it into view, whether the
-// current match is a message match (within the header block) or a diff
-// match. Re-running reflow on every match change — rather than patching
-// just the affected lines — is the same cost already paid on every resize,
-// and it's pure in-memory string work with no I/O.
+// jumpToMatch scrolls the diff panel to the current match, whether it's a
+// message match (within the header block) or a diff match, and re-renders
+// so the newly active match gets its distinct style — that re-render is
+// landOnLine's own reflow, which has to run anyway to bake the cursor
+// highlight into the line being landed on. Re-running reflow at all on a
+// match change (rather than patching just the affected lines) is the same
+// cost already paid on every resize, and it's pure in-memory string work
+// with no I/O — but paying it twice per n/N press isn't, so this reads the
+// match's line out of the *previous* reflow rather than forcing a fresh one
+// first.
 //
-// The match's line isn't known until this first reflow runs (messageMatch-
-// Lines/diffMatchLines are its output), so the landing — jumplist entry
-// included — can only happen after it, via landOnLine, whose second reflow
-// bakes the cursor highlight into the right line. Every step pushes a jump,
-// not just the initial search — see applyCurrentMatch's doc comment in
-// list.go for why that's a deliberate departure from vim.
+// That's sound because messageMatchLines/diffMatchLines depend only on the
+// match set and the wrap width, and every writer of either (SetSearchDisplay,
+// SetSize) ends in a reflow — so they already describe the current matches by
+// the time any of this model's match navigation can reach them.
+//
+// Every step pushes a jump, not just the initial search — see
+// applyCurrentMatch's doc comment in list.go for why that's a deliberate
+// departure from vim.
 func (m *DetailModel) jumpToMatch() {
-	m.reflow()
 	if m.matchPos < 0 {
 		return
 	}
