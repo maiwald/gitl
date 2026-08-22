@@ -21,7 +21,11 @@ type KeyMap struct {
 	// JumpBack and JumpForward step through a view's jumplist (see
 	// ListModel/DetailModel's jumpBack/jumpForward fields) — vim's ctrl+o/
 	// ctrl+i, chosen over other unused bindings so muscle memory carries
-	// over directly.
+	// over directly. JumpForward is bound to "tab", not "ctrl+i": the two
+	// are the same byte (0x09) at the terminal protocol level, and
+	// bubbletea's own key decoder reports it as tab (see its KeyTab
+	// comment, "also ctrl+i") — binding the literal string "ctrl+i" would
+	// never match an actual keypress.
 	JumpBack    key.Binding
 	JumpForward key.Binding
 }
@@ -43,5 +47,5 @@ var DefaultKeyMap = KeyMap{
 	NextMatch:    key.NewBinding(key.WithKeys("n")),
 	PrevMatch:    key.NewBinding(key.WithKeys("N")),
 	JumpBack:     key.NewBinding(key.WithKeys("ctrl+o")),
-	JumpForward:  key.NewBinding(key.WithKeys("ctrl+i")),
+	JumpForward:  key.NewBinding(key.WithKeys("tab")),
 }

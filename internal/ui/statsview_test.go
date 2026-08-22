@@ -10,7 +10,7 @@ import (
 )
 
 func TestStatLinesForEmptyFilesReturnsNil(t *testing.T) {
-	if got := statLinesFor(nil, 80); got != nil {
+	if got := statLinesFor(nil, 80, -1); got != nil {
 		t.Errorf("got %+v, want nil for no files", got)
 	}
 }
@@ -43,7 +43,7 @@ func TestStatLinesForTotalsPluralizationAndOmission(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			total := statLinesFor(tt.files, 80)
+			total := statLinesFor(tt.files, 80, -1)
 			last := total[len(total)-1]
 			if !strings.Contains(last, tt.wantLabel) {
 				t.Errorf("totals line = %q, want it to contain %q", last, tt.wantLabel)
@@ -70,7 +70,7 @@ func TestStatLinesForTotalsRowAlignsWithFiles(t *testing.T) {
 		{Path: "a.txt", Status: git.StatusModified, Additions: 3, Deletions: 1},
 		{Path: "b.txt", Status: git.StatusModified, Additions: 120, Deletions: 30},
 	}
-	lines := statLinesFor(files, 0)
+	lines := statLinesFor(files, 0, -1)
 
 	want := lipgloss.Width(lines[1])
 	last := len(lines) - 1
@@ -92,7 +92,7 @@ func TestStatLinesForStructure(t *testing.T) {
 		{Path: "a.txt", Status: git.StatusModified, Additions: 3, Deletions: 1},
 		{Path: "b.txt", Status: git.StatusAdded, Additions: 10},
 	}
-	lines := statLinesFor(files, 80)
+	lines := statLinesFor(files, 80, -1)
 	if len(lines) != len(files)+3 {
 		t.Fatalf("got %d lines, want %d (header bar + one per file + blank separator + totals)", len(lines), len(files)+3)
 	}
@@ -122,7 +122,7 @@ func TestStatLinesForPerFileCountsOmitZeroClause(t *testing.T) {
 		{Path: "removed.txt", Status: git.StatusDeleted, Deletions: 2},
 		{Path: "both.txt", Status: git.StatusModified, Additions: 1, Deletions: 1},
 	}
-	lines := statLinesFor(files, 80)
+	lines := statLinesFor(files, 80, -1)
 	// lines[0] is the "Files changed" header bar; file lines start at 1.
 
 	if !strings.Contains(lines[1], diffAddStyle.Render("+5")) {
@@ -146,7 +146,7 @@ func TestStatLinesForPerFileCountsOmitZeroClause(t *testing.T) {
 
 func TestStatLinesForBinaryFileShowsBin(t *testing.T) {
 	files := []git.File{{Path: "image.png", Status: git.StatusModified, Binary: true}}
-	lines := statLinesFor(files, 80)
+	lines := statLinesFor(files, 80, -1)
 	if !strings.Contains(lines[1], "Bin") {
 		t.Errorf("binary file line = %q, want it to contain Bin", lines[1])
 	}
@@ -157,7 +157,7 @@ func TestStatLinesForBinaryFileShowsBin(t *testing.T) {
 
 func TestStatLinesForRenameShowsArrow(t *testing.T) {
 	files := []git.File{{OldPath: "old.txt", Path: "new.txt", Status: git.StatusRenamed}}
-	lines := statLinesFor(files, 80)
+	lines := statLinesFor(files, 80, -1)
 	for _, sub := range []string{"old.txt", "->", "new.txt"} {
 		if !strings.Contains(lines[1], sub) {
 			t.Errorf("rename line = %q, want it to contain %q", lines[1], sub)
@@ -168,7 +168,7 @@ func TestStatLinesForRenameShowsArrow(t *testing.T) {
 func TestStatLinesForClipsToWidth(t *testing.T) {
 	files := []git.File{{Path: strings.Repeat("x", 100), Status: git.StatusModified, Additions: 1234}}
 	const width = 20
-	lines := statLinesFor(files, width)
+	lines := statLinesFor(files, width, -1)
 	for i, line := range lines {
 		if got := lipgloss.Width(line); got > width {
 			t.Errorf("lines[%d] rendered width = %d, want <= %d (clipped, not wrapped)", i, got, width)
@@ -188,7 +188,7 @@ func TestStatLinesForClipsToWidth(t *testing.T) {
 func TestStatLinesForClipsToWidthWithoutEmbeddedNewline(t *testing.T) {
 	files := []git.File{{Path: strings.Repeat("x", 100), Status: git.StatusModified, Additions: 1234, Deletions: 5678}}
 	const width = 20
-	lines := statLinesFor(files, width)
+	lines := statLinesFor(files, width, -1)
 	for i, line := range lines {
 		if strings.Contains(line, "\n") {
 			t.Errorf("lines[%d] = %q, want no embedded newline", i, line)
@@ -198,7 +198,7 @@ func TestStatLinesForClipsToWidthWithoutEmbeddedNewline(t *testing.T) {
 
 func TestStatLinesForZeroChangeFileShowsZero(t *testing.T) {
 	files := []git.File{{Path: "mode-only.txt", Status: git.StatusModified}}
-	lines := statLinesFor(files, 80)
+	lines := statLinesFor(files, 80, -1)
 	// The name column's width can grow to fit the totals row's own "N
 	// files changed" label, so the gap before "0" isn't a fixed two
 	// spaces — just check the name is followed by whitespace then "0".
@@ -221,7 +221,7 @@ func TestStatLinesForRightAlignsCounts(t *testing.T) {
 	// each file's meaningful content — with a fixed width, every line
 	// would already be padded to that width regardless of alignment,
 	// making the comparison meaningless.
-	lines := statLinesFor(files, 0)
+	lines := statLinesFor(files, 0, -1)
 
 	w1, w2 := lipgloss.Width(lines[1]), lipgloss.Width(lines[2])
 	if w1 != w2 {

@@ -41,7 +41,7 @@ func fixtureDiffFiles() []git.File {
 
 func TestRenderDiffProducesContiguousRanges(t *testing.T) {
 	files := fixtureDiffFiles()
-	lines, ranges, _ := RenderDiff(files, 80, nil, -1, false)
+	lines, ranges, _ := RenderDiff(files, 80, nil, -1, false, -1)
 
 	if len(ranges) != 2 {
 		t.Fatalf("got %d ranges, want 2", len(ranges))
@@ -86,7 +86,7 @@ func TestRenderDiffWrapsLongLinesAndKeepsRangesContiguous(t *testing.T) {
 		},
 	}
 
-	lines, ranges, _ := RenderDiff(files, 20, nil, -1, false)
+	lines, ranges, _ := RenderDiff(files, 20, nil, -1, false, -1)
 
 	// The long line must have wrapped into more than one rendered row.
 	if ranges[0].EndLine-ranges[0].StartLine <= 3 { // header + hunk header + short line + wrapped long line(s)
@@ -197,7 +197,7 @@ func TestRenderDiffHighlightsMatchesAndMarksActiveOneDistinctly(t *testing.T) {
 		t.Fatalf("got %d matches, want 2", len(matches))
 	}
 
-	lines, _, matchLines := RenderDiff(files, 80, matches, 0, false)
+	lines, _, matchLines := RenderDiff(files, 80, matches, 0, false, -1)
 
 	if !strings.Contains(lines[matchLines[0]], searchActiveMatchStyle.Render("needle")) {
 		t.Errorf("line %d = %q, want the active match styled with searchActiveMatchStyle", matchLines[0], lines[matchLines[0]])
@@ -226,7 +226,7 @@ func TestRenderDiffMatchLinesFallWithinCorrespondingFileRange(t *testing.T) {
 		},
 	}
 	matches := FindDiffMatches(files, "needle")
-	_, ranges, matchLines := RenderDiff(files, 80, matches, -1, false)
+	_, ranges, matchLines := RenderDiff(files, 80, matches, -1, false, -1)
 
 	if len(matches) != 2 || len(matchLines) != 2 {
 		t.Fatalf("got %d matches / %d matchLines, want 2/2", len(matches), len(matchLines))
@@ -243,7 +243,7 @@ func TestRenderFileHeaderShowsRenameArrow(t *testing.T) {
 	files := []git.File{
 		{OldPath: "old.txt", Path: "new.txt", Status: git.StatusRenamed},
 	}
-	lines, _, _ := RenderDiff(files, 80, nil, -1, false)
+	lines, _, _ := RenderDiff(files, 80, nil, -1, false, -1)
 	if len(lines) == 0 {
 		t.Fatal("expected at least one rendered line")
 	}
@@ -405,7 +405,7 @@ func TestRenderDiffAppliesIntralineEmphasisStyles(t *testing.T) {
 			},
 		}},
 	}}
-	lines, _, _ := RenderDiff(files, 0, nil, -1, false)
+	lines, _, _ := RenderDiff(files, 0, nil, -1, false, -1)
 	if len(lines) != 4 { // file header + hunk header + delete + add
 		t.Fatalf("got %d lines, want 4 (file header, hunk header, delete, add)", len(lines))
 	}

@@ -58,6 +58,32 @@ type DetailModel struct {
 
 	messageMatchLines []int // parallel to messageMatches: wrapped-line index within the header block
 	diffMatchLines    []int // parallel to diffMatches: wrapped-line index within the flattened content (offset applied)
+
+	// cursorLine is a tig-style line cursor: an index into the same
+	// flattened content line space leftVP's scroll offset lives in (see
+	// contentLen). Distinct from leftVP.YOffset the way ListModel.cursor is
+	// distinct from vp.YOffset — movement keys move the cursor, and the
+	// viewport follows it (see setCursor's ensureCursorVisible call), not
+	// the reverse. Re-clamped to [0, contentLen-1] at the end of every
+	// reflow, so a resize that changes word-wrapping (and therefore shifts
+	// what each flattened line index means) can't leave it out of bounds —
+	// a known, accepted approximation: the cursor's *position* survives a
+	// resize, but not necessarily its intended *target*, the same tradeoff
+	// jumpBack/jumpForward positions (below) make.
+	cursorLine int
+	// contentLen is reflow's most recent flattened content length, cached
+	// so setCursor/jumpCursor can clamp without threading it through as a
+	// parameter.
+	contentLen int
+
+	// jumpBack and jumpForward mirror ListModel's own jumplist fields (see
+	// that doc comment) — same two-stack browser-back/forward shape, same
+	// jumplistCap, just holding cursorLine positions instead of commit
+	// indices. Seeded with an entry at 0 in NewDetailModel, so ctrl-o can
+	// always get back to the very top of a commit's diff — even if the
+	// cursor got elsewhere via plain j/k first, never through an actual
+	// jump.
+	jumpBack, jumpForward []int
 }
 
 // sectionKind distinguishes the three kinds of entry that can appear in
@@ -108,6 +134,7 @@ func NewDetailModel(detail *git.CommitDetail) DetailModel {
 		detail:   detail,
 		leftVP:   viewport.New(0, 0),
 		matchPos: -1,
+		jumpBack: []int{0},
 	}
 }
 
@@ -118,6 +145,20 @@ func (m *DetailModel) SetSize(width, height int) {
 	m.reflow()
 }
 
+// blankLine renders one of the blank separator rows reflow splices between
+// the header/stats/diff blocks: plain empty when isCursor is false (as
+// before), or a full-width row filled with the cursor background when it's
+// the line the cursor is currently on — these separators live outside
+// renderHeaderBlock/renderDiffBlock/statLinesFor, so they need their own
+// cursor check rather than inheriting one from whichever block they sit
+// between.
+func blankLine(width int, isCursor bool) string {
+	if !isCursor {
+		return ""
+	}
+	return padRow("", width, lipgloss.NewStyle().Background(cursorRowBg))
+}
+
 func (m *DetailModel) reflow() {
 	if m.detail == nil {
 		return
@@ -125,25 +166,28 @@ func (m *DetailModel) reflow() {
 
 	diffWidth := m.width
 
-	diffLines, fileRanges, rawDiffMatchLines := m.renderDiffBlock(diffWidth)
-
 	// The header/message is wrapped the same way diff lines are (each
 	// visual row its own entry) so the line offset applied to fileRanges
 	// below stays exact regardless of terminal width — see the FileRange
-	// convention in diffview.go.
+	// convention in diffview.go. Rendered before the diff block (unlike the
+	// document order it appears in) since offset — needed to translate
+	// m.cursorLine into the diff block's own local line space — depends on
+	// its length.
 	wrappedHeader, messageMatchLines := m.renderHeaderBlock(diffWidth)
-	statLines := statLinesFor(m.detail.Files, diffWidth)
+	statLines := statLinesFor(m.detail.Files, diffWidth, m.cursorLine-len(wrappedHeader)-1)
 	offset := len(wrappedHeader) + 1 + len(statLines)
 	if len(statLines) > 0 {
 		offset++
 	}
 
+	diffLines, fileRanges, rawDiffMatchLines := m.renderDiffBlock(diffWidth, m.cursorLine-offset)
+
 	content := make([]string, 0, len(wrappedHeader)+1+len(statLines)+1+len(diffLines))
 	content = append(content, wrappedHeader...)
-	content = append(content, "")
+	content = append(content, blankLine(diffWidth, m.cursorLine == len(content)))
 	content = append(content, statLines...)
 	if len(statLines) > 0 {
-		content = append(content, "")
+		content = append(content, blankLine(diffWidth, m.cursorLine == len(content)))
 	}
 	content = append(content, diffLines...)
 
@@ -179,7 +223,15 @@ func (m *DetailModel) reflow() {
 			content = append(content, make([]string, need)...)
 		}
 	}
+	m.contentLen = len(content)
 	m.leftVP.SetContent(strings.Join(content, "\n"))
+
+	// A resize can shrink contentLen out from under an already-set
+	// cursorLine (rewrapping changes how many flattened lines the same
+	// content occupies) — clamp it back in range. See cursorLine's doc
+	// comment for why this doesn't try to preserve the cursor's original
+	// target across a rewrap, only its validity.
+	m.cursorLine = clampIndex(m.cursorLine, m.contentLen-1)
 
 	m.syncHighlightFromScroll()
 }
@@ -187,7 +239,10 @@ func (m *DetailModel) reflow() {
 // renderDiffBlock renders this commit's diff (or the noDiffNotice
 // placeholder for a diff-less commit) at width, honoring the current
 // search state so the active diff match, if any, is styled distinctly.
-func (m *DetailModel) renderDiffBlock(width int) (lines []string, fileRanges []FileRange, matchLines []int) {
+// cursorLine is already translated into this block's own local line space
+// (see reflow) — negative or past the end simply selects no line, so
+// callers don't need to guard the call themselves.
+func (m *DetailModel) renderDiffBlock(width int, cursorLine int) (lines []string, fileRanges []FileRange, matchLines []int) {
 	if len(m.detail.Files) == 0 {
 		return []string{noDiffNotice(m.detail)}, nil, nil
 	}
@@ -197,12 +252,16 @@ func (m *DetailModel) renderDiffBlock(width int) (lines []string, fileRanges []F
 			diffActive = idx
 		}
 	}
-	return RenderDiff(m.detail.Files, width, m.diffMatches, diffActive, m.searchDismissed)
+	return RenderDiff(m.detail.Files, width, m.diffMatches, diffActive, m.searchDismissed, cursorLine)
 }
 
 // renderHeaderBlock renders the commit metadata/message block at width,
 // honoring the current search state so the active message match, if any,
-// is styled distinctly.
+// is styled distinctly. m.cursorLine is passed through unadjusted: the
+// header block always starts at flattened line 0, so its local line space
+// already matches m.cursorLine's — a cursor position past the header
+// simply exceeds every header line's range and selects nothing here (see
+// renderHeaderLines).
 func (m *DetailModel) renderHeaderBlock(width int) (wrapped []string, matchLines []int) {
 	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
 	msgActive := -1
@@ -211,7 +270,7 @@ func (m *DetailModel) renderHeaderBlock(width int) (wrapped []string, matchLines
 			msgActive = idx
 		}
 	}
-	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, msgActive, m.searchDismissed)
+	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, msgActive, m.searchDismissed, m.cursorLine)
 }
 
 // buildSections assembles one reflow pass's sticky-header/[ ]-navigation
@@ -323,7 +382,15 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 // RenderDiff's doc comment for why suppressing style doesn't need
 // suppressing position tracking) — spans, unlike matches, are never
 // suppressed by dismissed, since they're not part of search at all.
-func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool) (wrapped []string, matchLines []int) {
+//
+// cursorLine gets the cursor row background merged in wherever it lands,
+// using the same "render once plain to learn the wrapped-row range, then
+// once more with the cursor flag if it's actually in range" two-pass
+// convention RenderDiff/renderDiffLine use, and for the same reason: a
+// logical line's wrapped-row count isn't known until it's been rendered.
+// Skipped entirely in the width<=0 fallback (an edge/test-only path with
+// no wrapping to speak of).
+func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool, cursorLine int) (wrapped []string, matchLines []int) {
 	matchLines = make([]int, len(matches))
 	mi := 0
 	for li, line := range lines {
@@ -338,15 +405,29 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 			matchLines[mi] = lineStart
 			mi++
 		}
-		content := line
-		if len(spans[li]) > 0 || len(lineMatches) > 0 {
-			content = renderLineWithBaseSpans(line, spans[li], lineMatches, lipgloss.NewStyle())
+		render := func(cursor bool) string {
+			if len(spans[li]) > 0 || len(lineMatches) > 0 || cursor {
+				return renderLineWithBaseSpans(line, spans[li], lineMatches, lipgloss.NewStyle(), cursor)
+			}
+			return line
 		}
 		if width <= 0 {
-			wrapped = append(wrapped, content)
+			wrapped = append(wrapped, render(false))
 			continue
 		}
-		wrapped = append(wrapped, strings.Split(lipgloss.NewStyle().Width(width).Render(content), "\n")...)
+		rows := strings.Split(lipgloss.NewStyle().Width(width).Render(render(false)), "\n")
+		if cursorLine >= lineStart && cursorLine < lineStart+len(rows) {
+			rows = strings.Split(lipgloss.NewStyle().Width(width).Render(render(true)), "\n")
+			// Strip the plain padding the wrap above just added, then
+			// re-pad with the cursor background as the fill — see
+			// renderDiffLine's identical step (and its doc comment for why
+			// the strip is necessary, not optional) in diffview.go.
+			fill := lipgloss.NewStyle().Background(cursorRowBg)
+			for i, r := range rows {
+				rows[i] = padRow(strings.TrimRight(r, " "), width, fill)
+			}
+		}
+		wrapped = append(wrapped, rows...)
 	}
 	return wrapped, matchLines
 }
@@ -362,7 +443,14 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 // cover every colored substring there), or a diff line's op color
 // (diffAddStyle/diffDeleteStyle/diffContextStyle) when called from
 // renderDiffLine with no spans at all.
-func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style) string {
+//
+// cursor merges the cursor row's background into whatever style would
+// otherwise apply at each position, except inside a match: a match's own
+// background is already the line's strongest signal, and layering the
+// (much subtler) cursor background on top of it would only mute it for no
+// benefit — so the cursor background applies everywhere on the line
+// *except* a matched span.
+func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, cursor bool) string {
 	bounds := map[int]bool{0: true, len(text): true}
 	for _, s := range spans {
 		bounds[s.start] = true
@@ -386,8 +474,14 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch,
 		}
 		for _, s := range spans {
 			if pos >= s.start && pos < s.end {
+				if cursor {
+					return s.style.Background(cursorRowBg)
+				}
 				return s.style
 			}
+		}
+		if cursor {
+			return base.Background(cursorRowBg)
 		}
 		return base
 	}
@@ -439,40 +533,145 @@ func findMessageLineMatches(line, term string, lineIndex int) []MessageMatch {
 	return out
 }
 
-// Update handles a navigation key press against the diff viewport.
+// Update handles a navigation key press against the diff viewport. j/k,
+// ctrl-u/ctrl-d, and g/G move the line cursor (see cursorLine) rather than
+// scrolling directly — the viewport follows it (setCursor's
+// ensureCursorVisible call), the tig-style relationship ListModel already
+// has between its own cursor and vp.YOffset. [ / ] and g/G/ctrl-o/ctrl-i
+// record a jumplist entry first when they actually move the cursor (see
+// pushJump); plain j/k/ctrl-u/ctrl-d don't, matching vim's own jumplist
+// (only "big" motions are jump-worthy).
 func (m *DetailModel) Update(msg tea.KeyMsg) {
 	switch {
 	case key.Matches(msg, DefaultKeyMap.Up):
-		m.leftVP.ScrollUp(1)
+		m.moveCursor(-1)
 	case key.Matches(msg, DefaultKeyMap.Down):
-		m.leftVP.ScrollDown(1)
+		m.moveCursor(1)
 	case key.Matches(msg, DefaultKeyMap.HalfPageUp):
-		m.leftVP.HalfPageUp()
+		m.moveCursor(-m.halfPageSize())
 	case key.Matches(msg, DefaultKeyMap.HalfPageDown):
-		m.leftVP.HalfPageDown()
+		m.moveCursor(m.halfPageSize())
 	case key.Matches(msg, DefaultKeyMap.Top):
-		m.leftVP.GotoTop()
+		m.jumpCursor(0)
 	case key.Matches(msg, DefaultKeyMap.Bottom):
-		m.leftVP.GotoBottom()
+		m.jumpCursor(m.contentLen - 1)
 	case key.Matches(msg, DefaultKeyMap.PrevFile):
 		m.jumpToSection(-1)
 	case key.Matches(msg, DefaultKeyMap.NextFile):
 		m.jumpToSection(1)
+	case key.Matches(msg, DefaultKeyMap.JumpBack):
+		m.JumpBack()
+	case key.Matches(msg, DefaultKeyMap.JumpForward):
+		m.JumpForward()
 	}
+}
+
+// halfPageSize mirrors ListModel's own halfPageSize: half the viewport's
+// height, floored at 1 so ctrl-u/ctrl-d still move something on a
+// one-or-two-row viewport.
+func (m *DetailModel) halfPageSize() int {
+	h := m.leftVP.Height / 2
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// moveCursor moves the cursor by delta lines without recording a jumplist
+// entry — plain motion, not a jump (see Update's doc comment).
+func (m *DetailModel) moveCursor(delta int) {
+	m.setCursor(m.cursorLine + delta)
+}
+
+// jumpCursor moves the cursor straight to line, recording the jump first
+// (see pushJump) unless line is where the cursor already is — a no-op jump
+// has nothing worth returning to. Used for g/G; [ / ] and search jumps
+// instead go through jumpToSection/jumpToMatch, which land the target at
+// the very top of the viewport rather than merely scrolling it into view
+// (see setCursor vs. those two's direct leftVP.SetYOffset).
+func (m *DetailModel) jumpCursor(line int) {
+	if clamped := clampIndex(line, m.contentLen-1); clamped != m.cursorLine {
+		m.pushJump(m.cursorLine)
+	}
+	m.setCursor(line)
+}
+
+// setCursor moves the cursor to pos (clamped in range), re-renders so the
+// cursor highlight lands on the right line, then scrolls the viewport by
+// the minimum needed to keep the cursor visible — unlike jumpToSection/
+// jumpToMatch, which always land their target at the very top.
+func (m *DetailModel) setCursor(pos int) {
+	m.cursorLine = clampIndex(pos, m.contentLen-1)
+	m.reflow()
+	m.ensureCursorVisible()
 	m.syncHighlightFromScroll()
+}
+
+// ensureCursorVisible scrolls the diff panel so the cursor line stays
+// within the visible viewport, the DetailModel analogue of ListModel's
+// ensureVisible.
+func (m *DetailModel) ensureCursorVisible() {
+	if m.leftVP.Height <= 0 {
+		return
+	}
+	if m.cursorLine < m.leftVP.YOffset {
+		m.leftVP.SetYOffset(m.cursorLine)
+	} else if m.cursorLine >= m.leftVP.YOffset+m.leftVP.Height {
+		m.leftVP.SetYOffset(m.cursorLine - m.leftVP.Height + 1)
+	}
+}
+
+// pushJump and JumpBack/JumpForward mirror ListModel's own (see that file's
+// doc comments for the full jumplist contract) — same two-stack shape, same
+// jumplistCap, operating on cursorLine instead of a commit index.
+func (m *DetailModel) pushJump(pos int) {
+	m.jumpForward = nil
+	m.jumpBack = append(m.jumpBack, pos)
+	if len(m.jumpBack) > jumplistCap {
+		m.jumpBack = m.jumpBack[len(m.jumpBack)-jumplistCap:]
+	}
+}
+
+func (m *DetailModel) JumpBack() bool {
+	if len(m.jumpBack) == 0 {
+		return false
+	}
+	target := m.jumpBack[len(m.jumpBack)-1]
+	m.jumpBack = m.jumpBack[:len(m.jumpBack)-1]
+	m.jumpForward = append(m.jumpForward, m.cursorLine)
+	m.setCursor(target)
+	return true
+}
+
+func (m *DetailModel) JumpForward() bool {
+	if len(m.jumpForward) == 0 {
+		return false
+	}
+	target := m.jumpForward[len(m.jumpForward)-1]
+	m.jumpForward = m.jumpForward[:len(m.jumpForward)-1]
+	m.jumpBack = append(m.jumpBack, m.cursorLine)
+	m.setCursor(target)
+	return true
 }
 
 // jumpToSection scrolls the diff panel directly to the section
 // currentSection+delta away (commit metadata, the stats block, or a diff
 // file — see DetailModel.sections), clamping at the first/last section (no
-// wraparound). A no-op on a diff-less commit, where the commit section is
-// the only one there is.
+// wraparound), and moves the cursor there too. A no-op on a diff-less
+// commit, where the commit section is the only one there is.
 func (m *DetailModel) jumpToSection(delta int) {
 	if len(m.sections) <= 1 {
 		return
 	}
 	target := clampIndex(m.currentSection+delta, len(m.sections)-1)
-	m.leftVP.SetYOffset(sectionContentStart(m.sections[target]))
+	line := sectionContentStart(m.sections[target])
+	if line != m.cursorLine {
+		m.pushJump(m.cursorLine)
+	}
+	m.cursorLine = line
+	m.reflow()
+	m.leftVP.SetYOffset(line)
+	m.syncHighlightFromScroll()
 }
 
 // sectionContentStart returns the scroll position jumpToSection lands on:
@@ -559,16 +758,33 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 // match. Re-running reflow on every match change — rather than patching
 // just the affected lines — is the same cost already paid on every resize,
 // and it's pure in-memory string work with no I/O.
+//
+// The match's line isn't known until this first reflow runs (messageMatch-
+// Lines/diffMatchLines are its output), so a jumplist entry can't be pushed
+// until after it — a second reflow then bakes the cursor highlight into
+// the right line, the same two-reflow cost RunSearch/NextMatch/PrevMatch
+// already pay just for the match highlight to begin with. Every step
+// pushes a jump, not just the initial search — see applyCurrentMatch's
+// doc comment in list.go for why that's a deliberate departure from vim.
 func (m *DetailModel) jumpToMatch() {
 	m.reflow()
 	if m.matchPos < 0 {
 		return
 	}
+	var line int
 	if inMessage, idx := m.matchSegment(); inMessage {
-		m.leftVP.SetYOffset(m.messageMatchLines[idx])
+		line = m.messageMatchLines[idx]
 	} else if idx < len(m.diffMatchLines) {
-		m.leftVP.SetYOffset(m.diffMatchLines[idx])
+		line = m.diffMatchLines[idx]
+	} else {
+		return
 	}
+	if line != m.cursorLine {
+		m.pushJump(m.cursorLine)
+	}
+	m.cursorLine = line
+	m.reflow()
+	m.leftVP.SetYOffset(line)
 	m.syncHighlightFromScroll()
 }
 
@@ -634,7 +850,7 @@ func (m DetailModel) renderStickyHeader() string {
 	case sectionKindStats:
 		return renderClipped(fileHeaderStyle, statsSectionTitle, m.width)
 	case sectionKindFile:
-		return renderFileHeader(m.detail.Files[s.fileIndex], m.width)
+		return renderFileHeader(m.detail.Files[s.fileIndex], m.width, false)
 	default:
 		title := "Commit"
 		if m.detail.IsPseudo() {

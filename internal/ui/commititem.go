@@ -170,13 +170,19 @@ func padRow(row string, width int, style lipgloss.Style) string {
 // renderClippedStyled truncates content that may already contain
 // independently-Render()'d spans (ANSI resets embedded) to width via padRow
 // — see padRow's doc comment for why Width+MaxWidth reflow can't be used
-// here. content is never part of a selectable/highlighted row, so the
-// unstyled fill from a zero-value style pads it with plain spaces.
-func renderClippedStyled(content string, width int) string {
+// here. cursor fills the padding with the cursor row's background instead
+// of plain spaces, for a stats-table row the detail view's cursor is
+// currently on (see statsview.go's renderStatLine); otherwise the fill is
+// unstyled plain spaces.
+func renderClippedStyled(content string, width int, cursor bool) string {
 	if width <= 0 {
 		return content
 	}
-	return padRow(content, width, lipgloss.NewStyle())
+	fill := lipgloss.NewStyle()
+	if cursor {
+		fill = fill.Background(cursorRowBg)
+	}
+	return padRow(content, width, fill)
 }
 
 // RenderCommitList renders commits as plain list rows, one per line, with

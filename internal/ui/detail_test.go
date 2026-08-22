@@ -330,7 +330,7 @@ func TestRenderLineWithBaseSpansMatchWinsOnOverlap(t *testing.T) {
 	matchEnd := matchStart + len("Lovelace")
 	matches := []lineMatch{{start: matchStart, end: matchEnd, active: true}}
 
-	got := renderLineWithBaseSpans(text, spans, matches, lipgloss.NewStyle())
+	got := renderLineWithBaseSpans(text, spans, matches, lipgloss.NewStyle(), false)
 
 	wantMatch := searchActiveMatchStyle.Render("Lovelace")
 	if !strings.Contains(got, wantMatch) {
@@ -354,6 +354,14 @@ func TestDetailModelHeaderColorsAndIndentationRenderInView(t *testing.T) {
 	d.Body = "subject line"
 	m := NewDetailModel(d)
 	m.SetSize(80, 30)
+	// The cursor defaults to line 0 ("Commit: <hash>"), and the Author line
+	// sits right below it — either would otherwise merge the cursor
+	// background into the span this test is checking. Move past both, onto
+	// the blank line separating the metadata from the body; this test is
+	// about base span coloring, not the cursor.
+	for i := 0; i < 3; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
 
 	view := m.leftVP.View()
 	if !strings.Contains(view, shaStyle.Render(d.Hash)) {

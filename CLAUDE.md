@@ -167,6 +167,44 @@ before every commit — don't commit red.
   `app.go`), never by the generic `errMsg` — an unrelated later failure
   must not unlatch a guard some other in-flight fetch still owns. Any new
   async command with its own in-flight state should follow this pattern.
+- `DetailModel.cursorLine` is a tig-style line cursor (index into the same
+  flattened line space `leftVP`'s scroll offset lives in), decoupled from
+  `leftVP.YOffset` the same way `ListModel.cursor` is decoupled from
+  `vp.YOffset` — movement moves the cursor, then the viewport follows it
+  (`setCursor`'s `ensureCursorVisible`), never the reverse. Its highlight
+  is baked into content at `reflow()` time (threaded into `RenderDiff`/
+  `renderHeaderLines`/`statLinesFor` as a line-space coordinate, the same
+  way an active search match is), not spliced onto the rendered viewport
+  afterward.
+- Padding a cursor-highlighted row to full width needs *two* Render()
+  passes to come out fully colored: the first (colorless) `Width()` wrap
+  that produces word-wrapped rows already pads short ones with **plain**
+  spaces, and re-wrapping that padded, already-ANSI'd string in a further
+  `Style.Render()` call to try to recolor it doesn't work — a style
+  wrapped around content that contains its own embedded reset only
+  colors up to that reset, not past it (the same "no facility for
+  splicing a style into an already-ANSI'd string" hazard as search-match
+  highlighting, one layer removed). `renderDiffLine`/`renderHeaderLines`
+  strip that plain padding back off (`strings.TrimRight(row, " ")`)
+  before re-padding through `padRow` with the cursor background as its
+  fill, so the fill becomes a fresh, independently rendered span instead
+  of a doomed re-wrap. A single-`Style.Render()`-call site with
+  `Width`+`Background` set on genuinely plain (not pre-ANSI'd) text —
+  `renderFileHeader`/hunk headers via `cursorMerged`, `renderClipped` —
+  doesn't have this problem and needs no such strip.
+- `ListModel` and `DetailModel` each keep their own jumplist (`jumpBack`/
+  `jumpForward`, vim's ctrl-o/ctrl-i): a two-stack, browser-back/forward
+  shape capped at `jumplistCap`, pushed before `g`/`G`, `[`/`]` (detail
+  view only), and every search-match jump (the *initial* `/` jump and
+  every later `n`/`N` step — unlike vim, which only jumplists the initial
+  search, since a single step here can jump much farther than vim's local
+  from-cursor re-search). Both are seeded with an entry at position 0 at
+  construction, so ctrl-o can always reach the very top even if the
+  cursor got elsewhere via plain motion first, never through an actual
+  jump. `ctrl+i` (not the literal string `"ctrl+i"`) is bound to
+  bubbletea's `"tab"` key string — the two are the same byte (0x09) at
+  the terminal protocol level, and bubbletea's own decoder reports it as
+  tab (see `KeyTab`'s doc comment in bubbletea's `key.go`).
 
 ## Known limitations (intentional, not bugs)
 
@@ -198,3 +236,14 @@ before every commit — don't commit red.
   detail view (via `FetchCommitDetail`, which accepts any git-resolvable
   revision), but `CommitPosition` has no list position to offer, so the
   list is simply left at the top rather than erroring.
+- `DetailModel.cursorLine` and jumplist entries are raw indices into the
+  flattened, already-word-wrapped line space, which shifts on a terminal
+  resize (rewrapping changes how many flattened lines the same content
+  occupies). A resize re-clamps `cursorLine` back in range so it's never
+  dangling, but doesn't try to preserve *which* logical line it was
+  pointing at — same for any jumplist entry recorded before the resize.
+  Also, the cursor highlights a whole logical line's entire wrapped block
+  when it lands on one that word-wrapped into multiple visual rows,
+  rather than just the specific visual row — line-wrapping a single diff/
+  message line to several rows is rare enough in practice not to be worth
+  the bookkeeping a visual-row-exact cursor would need.

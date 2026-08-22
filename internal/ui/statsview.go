@@ -26,7 +26,14 @@ const statsSectionTitle = "Files changed"
 // name — instead of git's own prose summary, so its counts land in the
 // same columns. A blank line separates it from the per-file rows (the same
 // convention detail.go's reflow uses between blocks).
-func statLinesFor(files []git.File, width int) []string {
+//
+// cursorLine, in this block's own local line space (0 = the "Files
+// changed" heading, 1..len(files) the per-file rows, then the blank
+// separator, then the totals row — negative or past the end selects
+// nothing), gets the cursor row background merged into whichever line it
+// lands on, the same treatment RenderDiff/renderHeaderLines give their own
+// content.
+func statLinesFor(files []git.File, width int, cursorLine int) []string {
 	if len(files) == 0 {
 		return nil
 	}
@@ -68,12 +75,12 @@ func statLinesFor(files []git.File, width int) []string {
 	}
 
 	lines := make([]string, 0, len(files)+3)
-	lines = append(lines, renderClipped(fileHeaderStyle, statsSectionTitle, width))
+	lines = append(lines, renderClipped(cursorMerged(fileHeaderStyle, cursorLine == 0), statsSectionTitle, width))
 	for i, f := range files {
-		lines = append(lines, renderStatLine(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], width))
+		lines = append(lines, renderStatLine(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], width, cursorLine == i+1))
 	}
-	lines = append(lines, "")
-	lines = append(lines, renderStatLine(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, width))
+	lines = append(lines, blankLine(width, cursorLine == len(lines)))
+	lines = append(lines, renderStatLine(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, width, cursorLine == len(lines)))
 	return lines
 }
 
@@ -100,21 +107,27 @@ func formatCountParts(additions, deletions int) (add, del string) {
 // columns combined. The default case's content mixes independently-
 // Rendered spans (the styled counts), so it's clipped via
 // renderClippedStyled, not renderClipped — see that helper's doc comment
-// for why.
-func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int) string {
+// for why. cursor merges the cursor row's background across the whole
+// line, the same treatment every other row kind in the detail view gets.
+func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int, cursor bool) string {
 	name := fmt.Sprintf(" %-*s  ", nameWidth, label)
 	combinedWidth := addWidth + 1 + delWidth
 
 	switch {
 	case binary:
-		return renderClipped(lipgloss.NewStyle(), name+padLeft("Bin", combinedWidth), width)
+		return renderClipped(cursorMerged(lipgloss.NewStyle(), cursor), name+padLeft("Bin", combinedWidth), width)
 	case addCount == "" && delCount == "":
-		return renderClipped(lipgloss.NewStyle(), name+padLeft("0", combinedWidth), width)
+		return renderClipped(cursorMerged(lipgloss.NewStyle(), cursor), name+padLeft("0", combinedWidth), width)
 	default:
+		addStyle, delStyle := diffAddStyle, diffDeleteStyle
+		if cursor {
+			addStyle = addStyle.Background(cursorRowBg)
+			delStyle = delStyle.Background(cursorRowBg)
+		}
 		addPad := strings.Repeat(" ", addWidth-len(addCount))
 		delPad := strings.Repeat(" ", delWidth-len(delCount))
-		content := fmt.Sprintf("%s%s%s %s%s", name, addPad, diffAddStyle.Render(addCount), delPad, diffDeleteStyle.Render(delCount))
-		return renderClippedStyled(content, width)
+		content := fmt.Sprintf("%s%s%s %s%s", name, addPad, addStyle.Render(addCount), delPad, delStyle.Render(delCount))
+		return renderClippedStyled(content, width, cursor)
 	}
 }
 
