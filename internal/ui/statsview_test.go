@@ -249,3 +249,34 @@ func TestFormatCountsStyledVisibleWidth(t *testing.T) {
 		}
 	}
 }
+
+// TestStatLineCursorRowHasNoUnhighlightedGap pins down that a stats row the
+// cursor is on carries the cursor background across its *whole* width, not
+// just up to its first independently-rendered span.
+//
+// The row mixes plain text (the file name, the column padding, the space
+// between the two count columns) with pre-rendered "+N"/"-M" spans, and each
+// of those spans ends in an ANSI reset. An outer style wrapped around the
+// finished row therefore stops coloring at the first one — so every plain
+// piece has to carry the background itself. A reset immediately followed by
+// a plain space is exactly the gap that leaves behind.
+func TestStatLineCursorRowHasNoUnhighlightedGap(t *testing.T) {
+	files := []git.File{
+		{Path: "a.txt", Additions: 1},
+		{Path: "b.txt", Additions: 200, Deletions: 30},
+	}
+	reset := lipgloss.NewStyle().Background(cursorRowBg).Render("X")
+	reset = reset[strings.Index(reset, "X")+1:] // the closing escape alone
+
+	// Each per-file row (1, 2) and the totals row, in turn.
+	for _, cursorLine := range []int{1, 2, 4} {
+		lines := statLinesFor(files, 60, cursorLine)
+		row := lines[cursorLine]
+		if strings.Contains(row, reset+" ") {
+			t.Errorf("row %d = %q\nhas a plain space right after a style reset — an unhighlighted gap", cursorLine, row)
+		}
+		if got := lipgloss.Width(row); got != 60 {
+			t.Errorf("row %d width = %d, want 60", cursorLine, got)
+		}
+	}
+}

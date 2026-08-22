@@ -119,14 +119,23 @@ func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int
 	case addCount == "" && delCount == "":
 		return renderClipped(cursorMerged(lipgloss.NewStyle(), cursor), name+padLeft("0", combinedWidth), width)
 	default:
-		addStyle, delStyle := diffAddStyle, diffDeleteStyle
+		addStyle, delStyle, plain := diffAddStyle, diffDeleteStyle, lipgloss.NewStyle()
 		if cursor {
 			addStyle = addStyle.Background(cursorRowBg)
 			delStyle = delStyle.Background(cursorRowBg)
+			// The label, the column padding and the separator between the
+			// two count columns are plain text sitting *between*
+			// independently-Rendered spans, so they need the cursor
+			// background applied here, before rendering. Left plain, they'd
+			// stay unhighlighted: the outer fill renderClippedStyled wraps
+			// the finished row in only reaches the first embedded ANSI reset
+			// (see padRow), which the styled "+N" puts right in the middle of
+			// the row — leaving a visible gap across the rest of it.
+			plain = plain.Background(cursorRowBg)
 		}
 		addPad := strings.Repeat(" ", addWidth-len(addCount))
 		delPad := strings.Repeat(" ", delWidth-len(delCount))
-		content := fmt.Sprintf("%s%s%s %s%s", name, addPad, addStyle.Render(addCount), delPad, delStyle.Render(delCount))
+		content := plain.Render(name+addPad) + addStyle.Render(addCount) + plain.Render(" "+delPad) + delStyle.Render(delCount)
 		return renderClippedStyled(content, width, cursor)
 	}
 }
