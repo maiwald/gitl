@@ -362,11 +362,20 @@ func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 // would be a surprising way for a view to open. n/N reach the first match
 // from here same as any other.
 func (m Model) openDetail(detail *git.CommitDetail) Model {
-	m.detail = NewDetailModel(detail, m.jl)
-	m.detail.SetSize(m.width, m.contentHeight())
-	m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
+	m.detail = m.newDetailModel(detail)
 	m.active = viewDetail
 	return m
+}
+
+// newDetailModel builds a detail view over detail, sized and carrying the
+// shared search state — everything a DetailModel needs before it's shown,
+// wherever it's shown from (a commit opened from the list, a CLI start
+// target, or a jumplist entry being restored).
+func (m Model) newDetailModel(detail *git.CommitDetail) DetailModel {
+	d := NewDetailModel(detail, m.jl)
+	d.SetSize(m.width, m.contentHeight())
+	d.SetSearchDisplay(m.searchTerm, m.searchDismissed)
+	return d
 }
 
 // fetchDetailCmd's severity depends on the caller: fatal from the `<rev>`-
@@ -723,9 +732,7 @@ func (m Model) gotoJumpPos(pos jumpPos) Model {
 		return m
 	}
 	if m.detail.detail != pos.commit {
-		m.detail = NewDetailModel(pos.commit, m.jl)
-		m.detail.SetSize(m.width, m.contentHeight())
-		m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
+		m.detail = m.newDetailModel(pos.commit)
 	}
 	m.detail.setCursor(pos.cursorLine)
 	m.active = viewDetail
