@@ -97,6 +97,12 @@ type Model struct {
 	// need term/dismissed threaded through as parameters everywhere.
 	searchTerm      string
 	searchDismissed bool
+	// listMatches is the canonical copy of the list's match positions for
+	// searchTerm, kept here rather than only inside ListModel because the
+	// list model is rebuilt from scratch when commits arrive — a search
+	// submitted before that (the prompt only needs the repo, not the list)
+	// would otherwise be silently dropped by the replacement.
+	listMatches []int
 
 	// jl is the single, cross-view jumplist backing ctrl-o/ctrl-i (vim's
 	// jumpBack/jumpForward). Shared by pointer with ListModel and
@@ -479,7 +485,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetTotalCount(msg.totalCount)
 		m.list.SetSize(m.width, m.contentHeight())
 		m.list.SetLeadingEntries(m.entries)
-		return m.pumpPendingJump()
+		// The search state can already be set: the prompt is available as
+		// soon as the repo opens, which is a whole fetch before this message.
+		m.list.SetSearchDisplay(m.searchTerm, m.searchDismissed)
+		m, searchCmd := m.applyListMatches(m.listMatches)
+		m, jumpCmd := m.pumpPendingJump()
+		return m, tea.Batch(searchCmd, jumpCmd)
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
 		return m, nil
@@ -567,8 +578,18 @@ func (m Model) pumpPendingSearch() (Model, tea.Cmd) {
 		}
 	}
 
-	needsLoad, target := m.list.Search(matches)
-	if needsLoad {
+	return m.applyListMatches(matches)
+}
+
+// applyListMatches installs a resolved search's match positions on the list
+// and jumps to the first match, dispatching a targeted fetch when that match
+// isn't loaded yet. matches is also kept here as the canonical copy, so a
+// list model built later (see commitsLoadedMsg) can be handed the same set
+// rather than losing the search.
+func (m Model) applyListMatches(matches []int) (Model, tea.Cmd) {
+	m.listMatches = matches
+	m.list.SetMatches(matches)
+	if needsLoad, target := m.list.jumpToFirstMatch(); needsLoad {
 		if req, ok := m.list.RequestLoadUpTo(target); ok {
 			return m, fetchMoreCmd(m.repo, req)
 		}
@@ -792,7 +813,6 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 
 	if term == "" {
 		m.setSearchDisplay("", false)
-		m.list.ClearSearch()
 		return m, nil
 	}
 
@@ -807,8 +827,14 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 // setSearchDisplay is the sole writer of the canonical search term/
 // dismissed state, pushing both down to each view's own display mirror so
 // highlighting and the status bar stay consistent no matter which view is
-// active when the change happens or which view later becomes active.
+// active when the change happens or which view later becomes active. A
+// changed term retires the previous term's list matches here for the same
+// reason each view drops its own: a match set must never outlive the term it
+// describes.
 func (m *Model) setSearchDisplay(term string, dismissed bool) {
+	if term != m.searchTerm {
+		m.listMatches = nil
+	}
 	m.searchTerm = term
 	m.searchDismissed = dismissed
 	m.list.SetSearchDisplay(term, dismissed)

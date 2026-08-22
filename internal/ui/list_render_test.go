@@ -19,7 +19,7 @@ func TestListModelIncrementalRenderMatchesFullRebuild(t *testing.T) {
 	m.SetSize(80, 10)
 	m.SetTotalCount(30)
 	m.SetSearchDisplay("subject", false)
-	m.Search([]int{5, 10, 20})
+	runListSearch(&m, []int{5, 10, 20})
 
 	for _, key := range []tea.KeyMsg{
 		{Type: tea.KeyDown}, {Type: tea.KeyDown}, {Type: tea.KeyUp},

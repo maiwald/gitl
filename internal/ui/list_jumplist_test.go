@@ -45,8 +45,8 @@ func TestListModelEveryMatchStepPushesJump(t *testing.T) {
 	m.SetTotalCount(5)
 	m.SetSize(80, 3)
 
-	m.Search([]int{1, 3}) // cursor -> 1, pushes jump from 0
-	m.NextMatch()         // cursor -> 3, pushes jump from 1
+	runListSearch(&m, []int{1, 3}) // cursor -> 1, pushes jump from 0
+	m.NextMatch()                  // cursor -> 3, pushes jump from 1
 
 	if len(jl.back) != 2 {
 		t.Fatalf("jl.back length = %d after Search+NextMatch, want 2", len(jl.back))

@@ -197,7 +197,7 @@ func TestListModelSearchIndicesUnaffectedByLeadingRows(t *testing.T) {
 	m.SetSize(80, 3)
 	m.SetTotalCount(5)
 
-	needsLoad, target := m.Search([]int{2, 4})
+	needsLoad, target := runListSearch(&m, []int{2, 4})
 	if needsLoad {
 		t.Fatal("Search: needsLoad = true, want false (already loaded)")
 	}

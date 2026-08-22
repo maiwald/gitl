@@ -6,13 +6,21 @@ import (
 	"testing"
 )
 
+// runListSearch applies a resolved search the way the root Model does when
+// the list is the active view: install the matches, then jump to the first
+// one (see pumpPendingSearch in app.go).
+func runListSearch(m *ListModel, matches []int) (needsLoad bool, target int) {
+	m.SetMatches(matches)
+	return m.jumpToFirstMatch()
+}
+
 func TestListModelSearchJumpsToFirstMatchAtOrAfterCursorAndWraps(t *testing.T) {
 	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
 	m.cursor = 4
 
-	needsLoad, target := m.Search([]int{1, 6, 8})
+	needsLoad, target := runListSearch(&m, []int{1, 6, 8})
 	if needsLoad {
 		t.Fatal("needsLoad = true for an already-loaded match, want false")
 	}
@@ -25,7 +33,7 @@ func TestListModelSearchJumpsToFirstMatchAtOrAfterCursorAndWraps(t *testing.T) {
 
 	// All matches before the cursor: wraps to the first.
 	m.cursor = 9
-	_, target = m.Search([]int{1, 6, 8})
+	_, target = runListSearch(&m, []int{1, 6, 8})
 	if target != 1 {
 		t.Fatalf("target = %d, want 1 (wrap to first match)", target)
 	}
@@ -37,7 +45,7 @@ func TestListModelNextPrevMatchCyclesAndWraps(t *testing.T) {
 	m.SetSize(80, 5)
 	m.cursor = 0
 
-	m.Search([]int{2, 5, 8})
+	runListSearch(&m, []int{2, 5, 8})
 
 	if _, target := m.NextMatch(); target != 5 {
 		t.Fatalf("target after NextMatch = %d, want 5", target)
@@ -58,7 +66,7 @@ func TestListModelSearchReportsNeedsLoadForUnloadedMatch(t *testing.T) {
 	m.SetTotalCount(100)
 	m.SetSize(80, 5)
 
-	needsLoad, target := m.Search([]int{50})
+	needsLoad, target := runListSearch(&m, []int{50})
 	if !needsLoad {
 		t.Fatal("needsLoad = false for a match beyond the loaded range, want true")
 	}
@@ -89,7 +97,7 @@ func TestListModelSearchNoMatches(t *testing.T) {
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
 
-	needsLoad, _ := m.Search(nil)
+	needsLoad, _ := runListSearch(&m, nil)
 	if needsLoad {
 		t.Fatal("needsLoad = true with no matches, want false")
 	}
@@ -98,19 +106,24 @@ func TestListModelSearchNoMatches(t *testing.T) {
 	}
 }
 
-func TestListModelClearSearchResetsStatus(t *testing.T) {
+// TestListModelMatchesDroppedOnTermChange pins down that a match set never
+// outlives the term it was computed for — including the empty term, which is
+// how clearing a search is expressed. Rows must not stay dimmed against a
+// match set that no longer describes them.
+func TestListModelMatchesDroppedOnTermChange(t *testing.T) {
 	m := NewListModel(fixtureCommits(10), &jumplist{})
 	m.SetTotalCount(10)
 	m.SetSize(80, 5)
+	m.SetSearchDisplay("needle", false)
+	runListSearch(&m, []int{2, 5})
 
-	m.Search([]int{2, 5})
-	m.ClearSearch()
+	m.SetSearchDisplay("", false)
 
 	if pos, total := m.MatchPosition(); pos != 0 || total != 0 {
-		t.Fatalf("MatchPosition after ClearSearch = (%d, %d), want (0, 0)", pos, total)
+		t.Fatalf("MatchPosition after clearing the term = (%d, %d), want (0, 0)", pos, total)
 	}
 	if _, target := m.NextMatch(); target != 0 {
-		t.Fatalf("NextMatch after ClearSearch should be a no-op, target = %d", target)
+		t.Fatalf("NextMatch after clearing the term should be a no-op, target = %d", target)
 	}
 }
 
@@ -127,7 +140,7 @@ func TestListModelRenderDimsRowsOutsideMatchSet(t *testing.T) {
 	m.SetTotalCount(4)
 	m.SetSize(120, 6)
 	m.SetSearchDisplay("zzz", false)
-	m.Search([]int{1})
+	runListSearch(&m, []int{1})
 	m.cursor = 3 // keep the selected row away from both rows under test
 	m.render()
 

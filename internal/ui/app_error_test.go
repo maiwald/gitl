@@ -80,7 +80,7 @@ func TestActiveSearchTakesPriorityOverLastErrorInStatusBar(t *testing.T) {
 	m.width, m.height = 80, 24
 	m.lastError = errors.New("boom")
 	m.setSearchDisplay("subject", false)
-	m.list.Search([]int{0})
+	runListSearch(&m.list, []int{0})
 
 	bar := m.renderStatusBar()
 	if strings.Contains(bar, "boom") {

@@ -73,6 +73,33 @@ func submitListSearch(t *testing.T, m Model, term string) Model {
 	return m
 }
 
+// TestSearchSubmittedBeforeCommitsSurvivesTheListSwap pins down that a
+// search started before the commits arrive isn't lost when commitsLoadedMsg
+// replaces the list model wholesale. The prompt only needs the repo to be
+// open, which happens a whole fetch earlier, so this window is reachable by
+// simply typing "/" fast enough at startup.
+func TestSearchSubmittedBeforeCommitsSurvivesTheListSwap(t *testing.T) {
+	m := NewModel(StartTarget{})
+	m.repo = &git.Repo{}
+	m.width, m.height = 80, 24
+
+	m = submitListSearch(t, m, "x")
+	newModel, _ := m.Update(allHashesLoadedMsg{term: "x", hashes: fixtureHashOrder})
+	m = newModel.(Model)
+	newModel, _ = m.Update(searchHashesLoadedMsg{term: "x", hashes: map[string]bool{"c": true}})
+	m = newModel.(Model)
+
+	newModel, _ = m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
+	m = newModel.(Model)
+
+	if pos, total := m.list.MatchPosition(); pos != 1 || total != 1 {
+		t.Fatalf("list MatchPosition after the commits arrived = (%d, %d), want (1, 1)", pos, total)
+	}
+	if m.list.displayTerm != "x" {
+		t.Fatalf("list displayTerm = %q, want %q", m.list.displayTerm, "x")
+	}
+}
+
 func TestSlashOpensPromptAndTypingUpdatesSearchInput(t *testing.T) {
 	m := newSearchableListModel()
 

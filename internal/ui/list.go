@@ -352,23 +352,30 @@ func (m *ListModel) ensureVisible() {
 	m.vp.YOffset = max(m.vp.YOffset, 0)
 }
 
-// Search records matches (absolute commit positions, ascending, as computed
-// by the caller from a git-provided hash set) and jumps to the first match
-// at or after the cursor, wrapping to the first match if none qualify. It
-// reports needsLoad=true when that position isn't loaded yet, in which
-// case the caller should dispatch a fetch via RequestLoadUpTo(target); the
-// jump completes automatically once AppendCommits delivers it. See
-// SetSearchDisplay for how the search term itself gets here.
-func (m *ListModel) Search(matches []int) (needsLoad bool, target int) {
+// SetMatches records matches (absolute commit positions, ascending, as
+// computed by the caller from a git-provided hash set) without moving the
+// cursor. Split from jumpToFirstMatch below so a search submitted from the
+// detail view can still light up this view's rows without also dragging its
+// cursor somewhere the user isn't looking. See SetSearchDisplay for how the
+// search term itself gets here.
+func (m *ListModel) SetMatches(matches []int) {
 	m.matches = matches
 	m.matchPos = -1
 	m.pendingCursor = -1
-	if len(matches) == 0 {
-		m.render()
+	m.render()
+}
+
+// jumpToFirstMatch jumps to the first match at or after the cursor, wrapping
+// to the first match if none qualify. It reports needsLoad=true when that
+// position isn't loaded yet, in which case the caller should dispatch a
+// fetch via RequestLoadUpTo(target); the jump completes automatically once
+// AppendCommits delivers it.
+func (m *ListModel) jumpToFirstMatch() (needsLoad bool, target int) {
+	if len(m.matches) == 0 {
 		return false, 0
 	}
 	m.matchPos = 0 // wrap to the first match if none qualify at/after the cursor
-	for i, idx := range matches {
+	for i, idx := range m.matches {
 		if idx >= m.cursor {
 			m.matchPos = i
 			break
@@ -440,21 +447,18 @@ func (m *ListModel) jumpOrDefer(target int) (needsLoad bool) {
 	return false
 }
 
-// ClearSearch discards the active search's matches. The term/dismissed
-// display state is cleared separately via SetSearchDisplay.
-func (m *ListModel) ClearSearch() {
-	m.matches = nil
-	m.matchPos = -1
-	m.pendingCursor = -1
-	m.render()
-}
-
 // SetSearchDisplay updates the term to highlight and whether highlighting
 // is currently dismissed, then re-renders. The root Model calls this
 // whenever the shared search state changes — see the doc comment on the
-// displayTerm/searchDismissed fields.
+// displayTerm/searchDismissed fields. A changed term drops the previous
+// term's matches, which is what keeps rows from being dimmed against a match
+// set that no longer describes them; the new term's matches arrive later,
+// via SetMatches, since finding them takes a git query.
 func (m *ListModel) SetSearchDisplay(term string, dismissed bool) {
-	m.displayTerm = term
+	if term != m.displayTerm {
+		m.displayTerm = term
+		m.matches, m.matchPos = nil, -1
+	}
 	m.searchDismissed = dismissed
 	m.render()
 }
