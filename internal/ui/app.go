@@ -71,23 +71,26 @@ type Model struct {
 
 	// pendingJump is a CLI-requested list position (`gitl <rev>`) not yet
 	// applied, either because the list doesn't exist yet or because
-	// resolveRevPositionCmd hasn't returned yet — the same
-	// "independent concurrent halves, apply once both are in" shape as
-	// pendingSearch, resolved by pumpPendingJump.
+	// resolveRevPositionCmd hasn't returned yet — two independent halves
+	// that can land in either order, joined by pumpPendingJump.
 	pendingJump *int
 
 	searchPromptOpen bool
 	searchInput      textinput.Model
-	pendingSearch    *pendingSearch
+	// searchingTerm is the term whose list queries are currently in flight,
+	// empty when none are: it identifies which results are still wanted (a
+	// superseded or cleared search's are discarded) and drives the status
+	// bar's "searching…" report.
+	searchingTerm string
 	// allHashes is the full reachable commit-hash history in log order,
 	// fetched once on the first search and reused for every later one —
 	// gitl has no refresh mechanism (see CLAUDE.md's "Known limitations"),
 	// so this can't go stale during a run, and refetching it via a git
 	// subprocess on every search submission would be wasted I/O on a large
-	// repo. haveAllHashes distinguishes "not fetched yet" from "fetched an
-	// empty/unborn history".
-	allHashes     []string
-	haveAllHashes bool
+	// repo. Nil means "not fetched yet": a genuinely empty history would be
+	// indistinguishable, but a run with no commits either fails at startup
+	// or has no list to search (see StartTarget.opensList).
+	allHashes []string
 
 	// searchTerm and searchDismissed are the single, canonical search state
 	// shared by both views — see setSearchDisplay, the only place that
@@ -150,19 +153,6 @@ func (j *jumplist) push(pos jumpPos) {
 	if len(j.back) > jumplistCap {
 		j.back = j.back[len(j.back)-jumplistCap:]
 	}
-}
-
-// pendingSearch tracks the two independent, concurrent git queries a list
-// search needs before it can compute match positions: which commits match
-// (by hash), and the full hash order (to map a matched hash to a position).
-// Whichever message arrives first is recorded and pumpPendingSearch is
-// re-tried; the search only resolves once both are in.
-type pendingSearch struct {
-	term         string
-	matchSet     map[string]bool
-	haveMatchSet bool
-	order        []string
-	haveOrder    bool
 }
 
 // NewModel constructs the initial root model for the given startup target.
@@ -402,30 +392,63 @@ func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind) tea.Cmd {
 	})
 }
 
-type searchHashesLoadedMsg struct {
-	term   string
-	hashes map[string]bool
+// searchLoadedMsg carries everything a list search needs to place its
+// matches: which commits match term (by hash), and the full hash order to
+// resolve those hashes to positions in the list.
+type searchLoadedMsg struct {
+	term    string
+	matches map[string]bool
+	order   []string
 }
 
-type allHashesLoadedMsg struct {
-	term   string
-	hashes []string
+// searchFailedMsg reports a failed list search. Like moreCommitsFailedMsg it
+// bypasses errMsg on purpose: clearing searchingTerm has to be tied to this
+// search's own failure, so an unrelated error can't leave the status bar
+// reporting a search that's still genuinely running — or stop reporting one
+// that is.
+type searchFailedMsg struct {
+	term string
+	err  error
 }
 
-func searchHashesCmd(repo *git.Repo, term string) tea.Cmd {
-	return runCmd(nonFatal, func(ctx context.Context) (map[string]bool, error) {
-		return repo.SearchCommitHashes(ctx, term)
-	}, func(hashes map[string]bool) tea.Msg {
-		return searchHashesLoadedMsg{term: term, hashes: hashes}
-	})
+// searchCmd runs the queries a list search needs. They're two independent
+// git reads, so they overlap in one command the same way loadListCmd's do,
+// rather than racing back as two messages the model has to reassemble. The
+// hash order is only queried the first time — it can't change during a run
+// (see allHashes), so later searches are handed the cached one.
+func searchCmd(repo *git.Repo, term string, order []string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		msg := searchLoadedMsg{term: term, order: order}
+		var err error
+		if order != nil {
+			msg.matches, err = repo.SearchCommitHashes(ctx, term)
+		} else {
+			err = concurrent.RunConcurrently(
+				func() (err error) { msg.matches, err = repo.SearchCommitHashes(ctx, term); return },
+				func() (err error) { msg.order, err = repo.AllCommitHashes(ctx); return },
+			)
+		}
+		if err != nil {
+			return searchFailedMsg{term: term, err: err}
+		}
+		return msg
+	}
 }
 
-func allHashesCmd(repo *git.Repo, term string) tea.Cmd {
-	return runCmd(nonFatal, func(ctx context.Context) ([]string, error) {
-		return repo.AllCommitHashes(ctx)
-	}, func(hashes []string) tea.Msg {
-		return allHashesLoadedMsg{term: term, hashes: hashes}
-	})
+// matchPositions maps a search's matched hashes to their positions in order,
+// ascending. Hash matches (HashesMatching, an in-memory filter over the same
+// order) are unioned in here rather than queried separately — see its doc
+// comment in internal/git.
+func matchPositions(order []string, matched map[string]bool, term string) []int {
+	byHash := git.HashesMatching(order, term)
+	positions := make([]int, 0, len(matched)+len(byHash))
+	for i, h := range order {
+		if matched[h] || byHash[h] {
+			positions = append(positions, i)
+		}
+	}
+	return positions
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -435,7 +458,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// future new success case can't forget it.
 	switch msg.(type) {
 	case commitsLoadedMsg, moreCommitsLoadedMsg, commitDetailLoadedMsg,
-		worktreeEntriesLoadedMsg, searchHashesLoadedMsg, allHashesLoadedMsg:
+		worktreeEntriesLoadedMsg, searchLoadedMsg:
 		m.lastError = nil
 	}
 
@@ -524,21 +547,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.pumpPendingJump()
 	case commitDetailLoadedMsg:
 		return m.openDetail(msg.detail), nil
-	case searchHashesLoadedMsg:
-		if m.pendingSearch != nil && m.pendingSearch.term == msg.term {
-			m.pendingSearch.matchSet = msg.hashes
-			m.pendingSearch.haveMatchSet = true
-			return m.pumpPendingSearch()
+	case searchLoadedMsg:
+		// Worth caching even from a search that's since been superseded: the
+		// order is invariant, and it's the expensive half of the query.
+		m.allHashes = msg.order
+		if msg.term != m.searchingTerm {
+			return m, nil
 		}
-		return m, nil
-	case allHashesLoadedMsg:
-		m.allHashes = msg.hashes
-		m.haveAllHashes = true
-		if m.pendingSearch != nil && m.pendingSearch.term == msg.term {
-			m.pendingSearch.order = msg.hashes
-			m.pendingSearch.haveOrder = true
-			return m.pumpPendingSearch()
+		m.searchingTerm = ""
+		return m.applyListMatches(matchPositions(msg.order, msg.matches, msg.term))
+	case searchFailedMsg:
+		if msg.term == m.searchingTerm {
+			m.searchingTerm = ""
 		}
+		m.lastError = msg.err
 		return m, nil
 	case errMsg:
 		if msg.severity == fatal {
@@ -553,41 +575,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// startListSearch kicks off the git queries a list search needs (which
-// commits match, and the full hash order to place them). The hash order is
-// invariant for the process's lifetime, so it's only fetched on the first
-// search — see allHashes's doc comment — and reused directly here on every
-// later one instead of being requeried concurrently with the match query.
+// startListSearch kicks off the git queries a list search needs, recording
+// the term so their results can be recognized as still wanted when they
+// arrive.
 func (m Model) startListSearch(term string) (Model, tea.Cmd) {
-	m.pendingSearch = &pendingSearch{term: term}
-	if m.haveAllHashes {
-		m.pendingSearch.order = m.allHashes
-		m.pendingSearch.haveOrder = true
-		return m, searchHashesCmd(m.repo, term)
-	}
-	return m, tea.Batch(searchHashesCmd(m.repo, term), allHashesCmd(m.repo, term))
-}
-
-// pumpPendingSearch finalizes a list search once both halves of
-// pendingSearch have arrived, computing match positions and applying them
-// to the list (which may itself require a targeted fetch, dispatched here,
-// to bring the first relevant match into the loaded range).
-func (m Model) pumpPendingSearch() (Model, tea.Cmd) {
-	p := m.pendingSearch
-	if p == nil || !p.haveMatchSet || !p.haveOrder {
-		return m, nil
-	}
-	m.pendingSearch = nil
-
-	hashMatches := git.HashesMatching(p.order, p.term)
-	matches := make([]int, 0, len(p.matchSet)+len(hashMatches))
-	for i, h := range p.order {
-		if p.matchSet[h] || hashMatches[h] {
-			matches = append(matches, i)
-		}
-	}
-
-	return m.applyListMatches(matches)
+	m.searchingTerm = term
+	return m, searchCmd(m.repo, term, m.allHashes)
 }
 
 // applyListMatches installs a resolved search's match positions on the list,
@@ -856,12 +849,12 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 func (m *Model) setSearchDisplay(term string, dismissed bool) {
 	if term != m.searchTerm {
 		m.listMatches = nil
-		// Whatever queries are in flight are for the term being replaced.
-		// Dropping the pending search discards their results when they land
-		// (see pumpPendingSearch) and stops the status bar from reporting a
-		// search the user has already moved on from. A new search for the new
-		// term, if there is one, installs its own immediately after.
-		m.pendingSearch = nil
+		// Whatever queries are in flight are for the term being replaced:
+		// forgetting the term they belong to discards their results when
+		// they land (see searchLoadedMsg) and stops the status bar from
+		// reporting a search the user has already moved on from. A new
+		// search, if there is one, records its own immediately after.
+		m.searchingTerm = ""
 	}
 	m.searchTerm = term
 	m.searchDismissed = dismissed
@@ -955,8 +948,8 @@ func (m Model) renderStatusBar() string {
 	switch {
 	case m.searchPromptOpen:
 		content = m.searchInput.View()
-	case m.pendingSearch != nil:
-		content = fmt.Sprintf("/%s  searching…", m.pendingSearch.term)
+	case m.searchingTerm != "":
+		content = fmt.Sprintf("/%s  searching…", m.searchingTerm)
 	case m.searchTerm != "" && !m.searchDismissed:
 		var pos, total int
 		if m.active == viewDetail {

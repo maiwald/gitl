@@ -127,10 +127,7 @@ func TestSearchMatchThenOpenThenJumpBackReturnsToMatch(t *testing.T) {
 	m := newSearchableListModel()
 	m = submitSearchPrompt(t, m, "x")
 
-	newModel, _ := m.Update(allHashesLoadedMsg{term: "x", hashes: fixtureHashOrder})
-	m = newModel.(Model)
-	newModel, _ = m.Update(searchHashesLoadedMsg{term: "x", hashes: map[string]bool{"c": true}})
-	m = newModel.(Model)
+	m = resolveSearch(m, "x", map[string]bool{"c": true})
 
 	c, _ := m.list.Selected()
 	if c.Hash != "c" {

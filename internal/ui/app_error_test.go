@@ -147,3 +147,26 @@ func TestFetchMoreFailureClearsLoadingMoreWithoutUnrelatedSuccess(t *testing.T) 
 		t.Fatal("expected lastError to be set")
 	}
 }
+
+// TestSearchFailureClearsTheInFlightReport is
+// TestFetchMoreFailureClearsLoadingMoreWithoutUnrelatedSuccess's counterpart
+// for search: a failed query has to retire its own "searching…" report via
+// its own message, or the status bar keeps announcing a search that will
+// never come back.
+func TestSearchFailureClearsTheInFlightReport(t *testing.T) {
+	m := newSearchableListModel()
+	m = submitSearchPrompt(t, m, "Author")
+
+	newModel, _ := m.Update(searchFailedMsg{term: "Author", err: errors.New("boom")})
+	m = newModel.(Model)
+
+	if m.searchingTerm != "" {
+		t.Fatalf("searchingTerm = %q, want it cleared by the search's own failure", m.searchingTerm)
+	}
+	if m.lastError == nil {
+		t.Fatal("expected lastError to be set")
+	}
+	if strings.Contains(m.View(), "searching") {
+		t.Fatalf("status bar = %q, want no report of a search that failed", m.renderStatusBar())
+	}
+}

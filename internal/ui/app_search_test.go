@@ -52,10 +52,9 @@ func newSearchableDetailModel() Model {
 
 // submitSearchPrompt drives the prompt (open, type, Enter) to submit term,
 // without invoking the real command it returns (which would shell out to
-// git) — tests instead feed in hand-built searchHashesLoadedMsg/
-// allHashesLoadedMsg messages to control results. The list queries it
-// asserts on are dispatched whichever view is active, since one term matches
-// against both (see submitSearch).
+// git) — tests instead hand the result back via resolveSearch. The list
+// queries it asserts on are dispatched whichever view is active, since one
+// term matches against both (see submitSearch).
 func submitSearchPrompt(t *testing.T, m Model, term string) Model {
 	t.Helper()
 	newModel, _ := m.Update(keyRune('/'))
@@ -69,10 +68,17 @@ func submitSearchPrompt(t *testing.T, m Model, term string) Model {
 	if cmd == nil {
 		t.Fatal("expected a command dispatching the position-finding queries")
 	}
-	if m.pendingSearch == nil || m.pendingSearch.term != term {
-		t.Fatalf("pendingSearch = %+v, want a pending search for %q", m.pendingSearch, term)
+	if m.searchingTerm != term {
+		t.Fatalf("searchingTerm = %q, want %q in flight", m.searchingTerm, term)
 	}
 	return m
+}
+
+// resolveSearch feeds back the result the queries submitSearchPrompt
+// dispatched would have produced, over fixtureHashOrder's hash order.
+func resolveSearch(m Model, term string, matchedHashes map[string]bool) Model {
+	newModel, _ := m.Update(searchLoadedMsg{term: term, matches: matchedHashes, order: fixtureHashOrder})
+	return newModel.(Model)
 }
 
 // TestSearchFromDetailViewAlsoMatchesTheList pins down the "one term, both
@@ -94,10 +100,7 @@ func TestSearchFromDetailViewAlsoMatchesTheList(t *testing.T) {
 		t.Fatalf("detail MatchPosition = (%d, %d), want (1, 2) — the active view jumps to its first match", pos, total)
 	}
 
-	newModel, _ := m.Update(allHashesLoadedMsg{term: "needle", hashes: fixtureHashOrder})
-	m = newModel.(Model)
-	newModel, _ = m.Update(searchHashesLoadedMsg{term: "needle", hashes: map[string]bool{"c": true}})
-	m = newModel.(Model)
+	m = resolveSearch(m, "needle", map[string]bool{"c": true})
 
 	if _, total := m.list.MatchPosition(); total != 1 {
 		t.Fatalf("list match total = %d, want 1 (the list matches the same term)", total)
@@ -118,12 +121,9 @@ func TestSearchSubmittedBeforeCommitsSurvivesTheListSwap(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m = submitSearchPrompt(t, m, "x")
-	newModel, _ := m.Update(allHashesLoadedMsg{term: "x", hashes: fixtureHashOrder})
-	m = newModel.(Model)
-	newModel, _ = m.Update(searchHashesLoadedMsg{term: "x", hashes: map[string]bool{"c": true}})
-	m = newModel.(Model)
+	m = resolveSearch(m, "x", map[string]bool{"c": true})
 
-	newModel, _ = m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
+	newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
 	m = newModel.(Model)
 
 	if pos, total := m.list.MatchPosition(); pos != 1 || total != 1 {
@@ -230,15 +230,12 @@ func TestBackspaceOnNonEmptyPromptDeletesInsteadOfCancelling(t *testing.T) {
 func TestEnterOnEmptyQueryClearsActiveSearch(t *testing.T) {
 	m := newSearchableListModel()
 	m = submitSearchPrompt(t, m, "Author")
-	newModel, _ := m.Update(allHashesLoadedMsg{term: "Author", hashes: fixtureHashOrder})
-	m = newModel.(Model)
-	newModel, _ = m.Update(searchHashesLoadedMsg{term: "Author", hashes: map[string]bool{"a": true}})
-	m = newModel.(Model)
+	m = resolveSearch(m, "Author", map[string]bool{"a": true})
 	if !m.hasActiveSearch() {
 		t.Fatal("search should be active before submitting an empty query")
 	}
 
-	newModel, _ = m.Update(keyRune('/'))
+	newModel, _ := m.Update(keyRune('/'))
 	m = newModel.(Model)
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(Model)
@@ -265,10 +262,7 @@ func TestClearingSearchCancelsTheInFlightQueries(t *testing.T) {
 		t.Fatalf("status bar = %q, want no report of a search that was cleared", m.View())
 	}
 
-	newModel, _ = m.Update(allHashesLoadedMsg{term: "Author", hashes: fixtureHashOrder})
-	m = newModel.(Model)
-	newModel, _ = m.Update(searchHashesLoadedMsg{term: "Author", hashes: map[string]bool{"c": true}})
-	m = newModel.(Model)
+	m = resolveSearch(m, "Author", map[string]bool{"c": true})
 
 	if _, total := m.list.MatchPosition(); total != 0 {
 		t.Fatalf("list match total = %d after a cleared search's results landed, want 0", total)
@@ -278,39 +272,21 @@ func TestClearingSearchCancelsTheInFlightQueries(t *testing.T) {
 	}
 }
 
-func TestListSearchResolvesRegardlessOfMessageOrder(t *testing.T) {
-	for _, order := range []string{"hashesFirst", "orderFirst"} {
-		t.Run(order, func(t *testing.T) {
-			m := newSearchableListModel()
-			m = submitSearchPrompt(t, m, "x")
+func TestListSearchResolvesAndSelectsTheFirstMatch(t *testing.T) {
+	m := newSearchableListModel()
+	m = submitSearchPrompt(t, m, "x")
 
-			hashesMsg := searchHashesLoadedMsg{term: "x", hashes: map[string]bool{"c": true}}
-			orderMsg := allHashesLoadedMsg{term: "x", hashes: fixtureHashOrder}
+	m = resolveSearch(m, "x", map[string]bool{"c": true})
 
-			var first, second tea.Msg = hashesMsg, orderMsg
-			if order == "orderFirst" {
-				first, second = orderMsg, hashesMsg
-			}
-
-			newModel, _ := m.Update(first)
-			m = newModel.(Model)
-			if m.pendingSearch == nil {
-				t.Fatal("pendingSearch resolved too early, before both queries arrived")
-			}
-
-			newModel, _ = m.Update(second)
-			m = newModel.(Model)
-			if m.pendingSearch != nil {
-				t.Fatal("pendingSearch should be resolved once both queries have arrived")
-			}
-			pos, total := m.list.MatchPosition()
-			if !m.hasActiveSearch() || m.searchTerm != "x" || total != 1 || pos != 1 {
-				t.Fatalf("term=%q pos=%d total=%d active=%v, want (\"x\", 1, 1, true)", m.searchTerm, pos, total, m.hasActiveSearch())
-			}
-			if c, ok := m.list.Selected(); !ok || c.Hash != "c" {
-				t.Fatalf("selection = %+v, ok=%v, want the matched commit (hash c)", c, ok)
-			}
-		})
+	if m.searchingTerm != "" {
+		t.Fatalf("searchingTerm = %q, want empty once the search resolved", m.searchingTerm)
+	}
+	pos, total := m.list.MatchPosition()
+	if !m.hasActiveSearch() || m.searchTerm != "x" || total != 1 || pos != 1 {
+		t.Fatalf("term=%q pos=%d total=%d active=%v, want (\"x\", 1, 1, true)", m.searchTerm, pos, total, m.hasActiveSearch())
+	}
+	if c, ok := m.list.Selected(); !ok || c.Hash != "c" {
+		t.Fatalf("selection = %+v, ok=%v, want the matched commit (hash c)", c, ok)
 	}
 }
 
@@ -321,20 +297,20 @@ func TestListSearchIgnoresStaleResultFromSupersededSearch(t *testing.T) {
 	// Start a second search before the first one's queries return.
 	m = submitSearchPrompt(t, m, "second")
 
-	newModel, _ := m.Update(searchHashesLoadedMsg{term: "first", hashes: map[string]bool{"a": true}})
-	m = newModel.(Model)
-	if m.pendingSearch == nil || m.pendingSearch.term != "second" {
-		t.Fatalf("a stale result for the superseded search must not affect the current pendingSearch, got %+v", m.pendingSearch)
+	m = resolveSearch(m, "first", map[string]bool{"a": true})
+
+	if m.searchingTerm != "second" {
+		t.Fatalf("searchingTerm = %q, want the superseding search still in flight", m.searchingTerm)
+	}
+	if _, total := m.list.MatchPosition(); total != 0 {
+		t.Fatalf("list match total = %d, want 0 — a superseded search's result must not be applied", total)
 	}
 }
 
 func TestNAndShiftNCycleListMatchesEndToEnd(t *testing.T) {
 	m := newSearchableListModel()
 	m = submitSearchPrompt(t, m, "Author")
-	newModel, _ := m.Update(allHashesLoadedMsg{term: "Author", hashes: fixtureHashOrder})
-	m = newModel.(Model)
-	newModel, _ = m.Update(searchHashesLoadedMsg{term: "Author", hashes: map[string]bool{"a": true, "b": true}})
-	m = newModel.(Model)
+	m = resolveSearch(m, "Author", map[string]bool{"a": true, "b": true})
 
 	_, total := m.list.MatchPosition()
 	if !m.hasActiveSearch() || m.searchTerm != "Author" || total != 2 {
@@ -344,7 +320,7 @@ func TestNAndShiftNCycleListMatchesEndToEnd(t *testing.T) {
 		t.Fatalf("initial match = %+v, ok=%v, want hash a", c, ok)
 	}
 
-	newModel, _ = m.Update(keyRune('n'))
+	newModel, _ := m.Update(keyRune('n'))
 	m = newModel.(Model)
 	if c, ok := m.list.Selected(); !ok || c.Hash != "b" {
 		t.Fatalf("after n: selection = %+v, ok=%v, want hash b", c, ok)
@@ -427,10 +403,7 @@ func TestStatusBarShowsDetailSearchPosition(t *testing.T) {
 func TestStatusBarShowsNoMatches(t *testing.T) {
 	m := newSearchableListModel()
 	m = submitSearchPrompt(t, m, "nomatch")
-	newModel, _ := m.Update(allHashesLoadedMsg{term: "nomatch", hashes: fixtureHashOrder})
-	m = newModel.(Model)
-	newModel, _ = m.Update(searchHashesLoadedMsg{term: "nomatch", hashes: map[string]bool{}})
-	m = newModel.(Model)
+	m = resolveSearch(m, "nomatch", map[string]bool{})
 
 	bar := m.renderStatusBar()
 	if !strings.Contains(bar, "no matches") {
@@ -439,15 +412,11 @@ func TestStatusBarShowsNoMatches(t *testing.T) {
 }
 
 // activeListSearch submits term as a list search and resolves it with the
-// given match set, the same two-message resolution
-// TestNAndShiftNCycleListMatchesEndToEnd drives manually.
+// given match set — the submit-then-resolve pair
+// TestListSearchResolvesAndSelectsTheFirstMatch drives step by step.
 func activeListSearch(t *testing.T, m Model, term string, matchedHashes map[string]bool) Model {
 	t.Helper()
-	m = submitSearchPrompt(t, m, term)
-	newModel, _ := m.Update(allHashesLoadedMsg{term: term, hashes: fixtureHashOrder})
-	m = newModel.(Model)
-	newModel, _ = m.Update(searchHashesLoadedMsg{term: term, hashes: matchedHashes})
-	return newModel.(Model)
+	return resolveSearch(submitSearchPrompt(t, m, term), term, matchedHashes)
 }
 
 func TestEscOnActiveListSearchDismissesWithoutQuitting(t *testing.T) {
