@@ -108,9 +108,24 @@ func rowFillStyle(cursor bool) lipgloss.Style {
 // instead.
 func padRow(row string, width int, cursor bool) string {
 	style := rowFillStyle(cursor)
-	row = style.MaxWidth(width).Render(row)
-	if pad := width - lipgloss.Width(row); pad > 0 {
-		row += style.Render(strings.Repeat(" ", pad))
+	// A plain fill contributes nothing but the truncation itself, so a row
+	// already within width comes back from that Render byte-for-byte
+	// unchanged — skip it, and pad with plain spaces for the same reason.
+	// The cursor's fill does carry a style, so its row is always rendered.
+	// (This is the hot path: a reflow pads every line of the commit.)
+	plain := !cursor
+	w := lipgloss.Width(row)
+	if !plain || w > width {
+		row = style.MaxWidth(width).Render(row)
+		w = lipgloss.Width(row)
+	}
+	if pad := width - w; pad > 0 {
+		spaces := strings.Repeat(" ", pad)
+		if plain {
+			row += spaces
+		} else {
+			row += style.Render(spaces)
+		}
 	}
 	return row
 }
