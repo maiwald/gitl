@@ -356,24 +356,20 @@ func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 // openDetail installs detail as the active view, mirroring the shared
 // search state into it so an already-active search keeps working across
 // commits/entries (a freshly constructed DetailModel otherwise defaults to
-// searchDismissed=false, which would make an already-dismissed search
-// suddenly reappear just because a new commit/entry was opened). Unlike a
-// "/" search submitted while already viewing this commit (RunSearch, which
-// jumps straight to the first match), opening a commit/entry only computes
-// and highlights matches — the cursor stays at the natural top of the view,
+// an empty term and searchDismissed=false, which would drop the
+// highlighting, or make an already-dismissed search suddenly reappear, just
+// because a new commit/entry was opened). Unlike a "/" search submitted
+// while already viewing this commit (which jumps straight to the first
+// match, see submitSearch), opening a commit/entry only computes and
+// highlights matches — the cursor stays at the natural top of the view,
 // since jumping straight past the commit metadata into the diff/message
 // would be a surprising way for a view to open. n/N reach the first match
 // from here same as any other.
 func (m Model) openDetail(detail *git.CommitDetail) Model {
 	m.detail = NewDetailModel(detail, m.jl)
-	if m.searchTerm != "" {
-		m.detail.computeMatches(m.searchTerm)
-	}
 	m.detail.SetSize(m.width, m.contentHeight())
+	m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
 	m.active = viewDetail
-	if m.searchTerm != "" {
-		m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
-	}
 	return m
 }
 
@@ -689,9 +685,8 @@ func (m Model) doJumpForward() (tea.Model, tea.Cmd) {
 // target reuses the already-fetched *git.CommitDetail directly (no re-fetch)
 // when it isn't the commit already active, computing search matches the
 // same non-jumping way openDetail does before landing the cursor exactly on
-// cursorLine — see computeMatches's doc comment for why that, not RunSearch,
-// is the right call here: RunSearch's own jump would fight the cursorLine
-// this jump is specifically trying to restore.
+// cursorLine — SetSearchDisplay computes matches without moving the cursor
+// precisely so a restore like this one lands where it means to.
 func (m Model) gotoJumpPos(pos jumpPos) Model {
 	if pos.view == viewList {
 		m.active = viewList
@@ -700,13 +695,8 @@ func (m Model) gotoJumpPos(pos jumpPos) Model {
 	}
 	if m.detail.detail != pos.commit {
 		m.detail = NewDetailModel(pos.commit, m.jl)
-		if m.searchTerm != "" {
-			m.detail.computeMatches(m.searchTerm)
-		}
 		m.detail.SetSize(m.width, m.contentHeight())
-		if m.searchTerm != "" {
-			m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
-		}
+		m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
 	}
 	m.detail.setCursor(pos.cursorLine)
 	m.active = viewDetail
@@ -803,13 +793,12 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	if term == "" {
 		m.setSearchDisplay("", false)
 		m.list.ClearSearch()
-		m.detail.ClearSearch()
 		return m, nil
 	}
 
 	m.setSearchDisplay(term, false)
 	if m.active == viewDetail {
-		m.detail.RunSearch(term)
+		m.detail.jumpToFirstMatch()
 		return m, nil
 	}
 	return m.startListSearch(term)

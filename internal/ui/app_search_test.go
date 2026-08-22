@@ -290,7 +290,7 @@ func TestSlashSearchesDetailViewContentSynchronously(t *testing.T) {
 func TestNAndShiftNCycleDetailMatchesEndToEnd(t *testing.T) {
 	m := newSearchableDetailModel()
 	m.setSearchDisplay("needle", false)
-	m.detail.RunSearch("needle")
+	runDetailSearch(&m.detail, "needle")
 
 	newModel, _ := m.Update(keyRune('n'))
 	m = newModel.(Model)
@@ -308,7 +308,7 @@ func TestNAndShiftNCycleDetailMatchesEndToEnd(t *testing.T) {
 func TestEnterOnEmptyQueryClearsDetailSearch(t *testing.T) {
 	m := newSearchableDetailModel()
 	m.setSearchDisplay("needle", false)
-	m.detail.RunSearch("needle")
+	runDetailSearch(&m.detail, "needle")
 
 	newModel, _ := m.Update(keyRune('/'))
 	m = newModel.(Model)
@@ -323,7 +323,7 @@ func TestEnterOnEmptyQueryClearsDetailSearch(t *testing.T) {
 func TestStatusBarShowsDetailSearchPosition(t *testing.T) {
 	m := newSearchableDetailModel()
 	m.setSearchDisplay("needle", false)
-	m.detail.RunSearch("needle")
+	runDetailSearch(&m.detail, "needle")
 
 	bar := m.renderStatusBar()
 	if !strings.Contains(bar, "needle") || !strings.Contains(bar, "1/2") {
@@ -419,7 +419,7 @@ func TestNRevivesDismissedListSearchAndStatusBar(t *testing.T) {
 func TestEscOnActiveDetailSearchDismissesWithoutGoingBack(t *testing.T) {
 	m := newSearchableDetailModel()
 	m.setSearchDisplay("needle", false)
-	m.detail.RunSearch("needle")
+	runDetailSearch(&m.detail, "needle")
 
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newModel.(Model)
@@ -435,7 +435,7 @@ func TestEscOnActiveDetailSearchDismissesWithoutGoingBack(t *testing.T) {
 func TestSecondEscOnDismissedDetailSearchGoesBackToList(t *testing.T) {
 	m := newSearchableDetailModel()
 	m.setSearchDisplay("needle", false)
-	m.detail.RunSearch("needle")
+	runDetailSearch(&m.detail, "needle")
 
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // dismiss
 	m = newModel.(Model)
@@ -453,7 +453,7 @@ func TestSecondEscOnDismissedDetailSearchGoesBackToList(t *testing.T) {
 func TestNRevivesDismissedDetailSearchAndStatusBar(t *testing.T) {
 	m := newSearchableDetailModel()
 	m.setSearchDisplay("needle", false)
-	m.detail.RunSearch("needle")
+	runDetailSearch(&m.detail, "needle")
 
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newModel.(Model)

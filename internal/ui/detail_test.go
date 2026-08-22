@@ -11,6 +11,16 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
+// runDetailSearch submits term the way the root Model does when "/" is
+// entered from inside an open commit — install the term (which computes the
+// matches, see SetSearchDisplay) and jump to the first one — and reports how
+// many matches it found.
+func runDetailSearch(m *DetailModel, term string) int {
+	m.SetSearchDisplay(term, false)
+	m.jumpToFirstMatch()
+	return m.totalMatches()
+}
+
 // fixtureDetailWithFiles builds a CommitDetail with nFiles files, each
 // containing a single hunk with linesPerFile context lines, so diff length
 // per file is precisely controlled for deterministic scroll-sync tests.
@@ -165,12 +175,12 @@ func TestDetailModelSearchFindsAndJumpsToMatch(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
 	m.SetSize(80, 4)
 
-	total := m.RunSearch("needle")
+	total := runDetailSearch(&m, "needle")
 	if total != 2 {
-		t.Fatalf("RunSearch returned %d matches, want 2", total)
+		t.Fatalf("detail search found %d matches, want 2", total)
 	}
 	if m.leftVP.YOffset != m.diffMatchLines[0] {
-		t.Fatalf("YOffset = %d after RunSearch, want %d (first match's line)", m.leftVP.YOffset, m.diffMatchLines[0])
+		t.Fatalf("YOffset = %d after the search, want %d (first match's line)", m.leftVP.YOffset, m.diffMatchLines[0])
 	}
 	if want := fileSectionIndex(m.sections, 0); m.currentSection != want {
 		t.Fatalf("currentSection = %d after jumping to the first match, want %d (a.txt)", m.currentSection, want)
@@ -186,9 +196,9 @@ func TestDetailModelSearchFindsMessageMatchButIgnoresMetadata(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
 	m.SetSize(80, 4)
 
-	total := m.RunSearch("MARKER")
+	total := runDetailSearch(&m, "MARKER")
 	if total != 1 {
-		t.Fatalf("RunSearch(\"MARKER\") returned %d matches, want 1 (the body match; the subject field itself isn't scanned)", total)
+		t.Fatalf("search(\"MARKER\") found %d matches, want 1 (the body match; the subject field itself isn't scanned)", total)
 	}
 	// The sole match is also the current (n/N) match, so it renders with
 	// searchActiveMatchStyle rather than the plain searchMatchStyle.
@@ -196,9 +206,9 @@ func TestDetailModelSearchFindsMessageMatchButIgnoresMetadata(t *testing.T) {
 		t.Fatalf("leftVP content = %q, want the message match visibly highlighted", m.leftVP.View())
 	}
 
-	total = m.RunSearch(m.detail.Hash)
+	total = runDetailSearch(&m, m.detail.Hash)
 	if total != 0 {
-		t.Fatalf("RunSearch(hash) returned %d matches, want 0 (the commit-hash metadata line isn't searched)", total)
+		t.Fatalf("search(hash) found %d matches, want 0 (the commit-hash metadata line isn't searched)", total)
 	}
 }
 
@@ -375,11 +385,11 @@ func TestDetailModelHeaderColorsAndIndentationRenderInView(t *testing.T) {
 	}
 }
 
-// TestDetailModelRunSearchOrdersMessageMatchesBeforeDiffMatches pins down
+// TestDetailModelSearchOrdersMessageMatchesBeforeDiffMatches pins down
 // the combined n/N traversal order: message matches (document order) come
 // before diff matches (file/hunk/line order), so n/N sweeps a commit the
 // way you'd read it top to bottom.
-func TestDetailModelRunSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T) {
+func TestDetailModelSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T) {
 	d := &git.CommitDetail{
 		Commit: git.Commit{
 			Hash:       "abc123",
@@ -406,15 +416,15 @@ func TestDetailModelRunSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T)
 	// because everything already fits on screen.
 	m.SetSize(80, 4)
 
-	total := m.RunSearch("dual")
+	total := runDetailSearch(&m, "dual")
 	if total != 2 {
-		t.Fatalf("RunSearch returned %d matches, want 2 (one message, one diff)", total)
+		t.Fatalf("detail search found %d matches, want 2 (one message, one diff)", total)
 	}
 	if len(m.messageMatches) != 1 || len(m.diffMatches) != 1 {
 		t.Fatalf("messageMatches=%d diffMatches=%d, want 1 and 1", len(m.messageMatches), len(m.diffMatches))
 	}
 	if m.leftVP.YOffset != m.messageMatchLines[0] {
-		t.Fatalf("YOffset after RunSearch = %d, want %d (the message match, visited first)", m.leftVP.YOffset, m.messageMatchLines[0])
+		t.Fatalf("YOffset after the search = %d, want %d (the message match, visited first)", m.leftVP.YOffset, m.messageMatchLines[0])
 	}
 	if m.fileRanges[0].StartLine <= m.leftVP.YOffset {
 		t.Fatalf("expected the message match's line (%d) to precede the first file's content (starts at %d)", m.leftVP.YOffset, m.fileRanges[0].StartLine)
@@ -432,7 +442,7 @@ func TestDetailModelRunSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T)
 func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
 	m.SetSize(80, 4)
-	m.RunSearch("needle")
+	runDetailSearch(&m, "needle")
 
 	pos, total := m.NextMatch()
 	if pos != 2 || total != 2 {
@@ -459,17 +469,36 @@ func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 	}
 }
 
-func TestDetailModelClearSearchRemovesHighlightState(t *testing.T) {
+// TestDetailModelEmptyTermRemovesHighlightState pins down that clearing the
+// search is just the term going empty — there's no separate "clear" step for
+// matches to be forgotten by.
+func TestDetailModelEmptyTermRemovesHighlightState(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
 	m.SetSize(80, 4)
-	m.RunSearch("needle")
+	runDetailSearch(&m, "needle")
 
-	m.ClearSearch()
+	m.SetSearchDisplay("", false)
 	if pos, total := m.MatchPosition(); pos != 0 || total != 0 {
-		t.Fatalf("MatchPosition after ClearSearch = (%d, %d), want (0, 0)", pos, total)
+		t.Fatalf("MatchPosition after clearing the term = (%d, %d), want (0, 0)", pos, total)
 	}
 	if _, total := m.NextMatch(); total != 0 {
-		t.Fatalf("NextMatch after ClearSearch should be a no-op, total = %d", total)
+		t.Fatalf("NextMatch after clearing the term should be a no-op, total = %d", total)
+	}
+}
+
+// TestDetailModelMatchesFollowTermChange pins down that a match set never
+// outlives the term it was computed for: the root Model pushes a new term
+// down here even when some other view was the one the user searched from
+// (see setSearchDisplay in app.go), and the matches must follow it rather
+// than stay behind under the new term's label.
+func TestDetailModelMatchesFollowTermChange(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
+	m.SetSize(80, 4)
+	runDetailSearch(&m, "needle")
+
+	m.SetSearchDisplay("MARKER", false)
+	if _, total := m.MatchPosition(); total != 1 {
+		t.Fatalf("total matches after the term changed = %d, want 1 (MARKER's, not needle's 2)", total)
 	}
 }
 
@@ -797,11 +826,11 @@ func TestDetailModelPseudoEntryMessageSearchFindsNothingButDiffSearchWorks(t *te
 	// A term appearing in the title ("Staged changes" contains "Staged")
 	// must not be found via message search, since a pseudo entry's title
 	// isn't a searchable message region.
-	if total := m.RunSearch("Staged"); total != 0 {
-		t.Fatalf(`RunSearch("Staged") = %d, want 0 (the title isn't a searchable message region)`, total)
+	if total := runDetailSearch(&m, "Staged"); total != 0 {
+		t.Fatalf(`search("Staged") = %d, want 0 (the title isn't a searchable message region)`, total)
 	}
 
-	if total := m.RunSearch("needle"); total != 1 {
-		t.Fatalf(`RunSearch("needle") = %d, want 1 (diff search still works)`, total)
+	if total := runDetailSearch(&m, "needle"); total != 1 {
+		t.Fatalf(`search("needle") = %d, want 1 (diff search still works)`, total)
 	}
 }

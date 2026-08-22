@@ -40,7 +40,7 @@ func TestDetailModelSectionJumpPushesJump(t *testing.T) {
 	}
 }
 
-// TestDetailModelSearchPushesJumpOnEveryStep pins down that RunSearch's
+// TestDetailModelSearchPushesJumpOnEveryStep pins down that a submitted search's
 // initial jump and every subsequent NextMatch step each record a jumplist
 // entry — see jumpToMatch's doc comment for why this deliberately departs
 // from vim (only the initial search is jumplisted there).
@@ -49,10 +49,10 @@ func TestDetailModelSearchPushesJumpOnEveryStep(t *testing.T) {
 	m := NewDetailModel(fixtureDetailForSearch(), jl)
 	m.SetSize(80, 4)
 
-	m.RunSearch("needle") // jump 1: from cursorLine 0 to the first match
+	runDetailSearch(&m, "needle") // jump 1: from cursorLine 0 to the first match
 	afterFirst := m.cursorLine
 	if len(jl.back) != 1 || jl.back[0].cursorLine != 0 {
-		t.Fatalf("jl.back after RunSearch = %+v, want one entry at cursorLine 0", jl.back)
+		t.Fatalf("jl.back after the search = %+v, want one entry at cursorLine 0", jl.back)
 	}
 
 	m.NextMatch() // jump 2: from the first match to the second

@@ -39,13 +39,14 @@ type DetailModel struct {
 
 	width, height int
 
-	// searchDismissed mirrors the root Model's canonical search-dismissed
-	// state (searchDismissed in app.go), pushed down via SetSearchDisplay —
-	// see the comment on ListModel's displayTerm/searchDismissed fields for
-	// why a local mirror exists at all. Unlike ListModel, DetailModel has no
-	// use for the term itself: RunSearch already computed messageMatches/
-	// diffMatches synchronously from it, so only dismissed state is needed
-	// here.
+	// displayTerm and searchDismissed mirror the root Model's canonical search
+	// state (searchTerm/searchDismissed in app.go), pushed down via
+	// SetSearchDisplay — see the comment on ListModel's own copies for why a
+	// local mirror exists at all. displayTerm is what messageMatches/
+	// diffMatches below were computed from: SetSearchDisplay recomputes them
+	// whenever it changes, which is the one place that keeps a match set from
+	// outliving the term it belongs to.
+	displayTerm     string
 	searchDismissed bool
 
 	// messageMatches and diffMatches together form one ordered sequence
@@ -732,14 +733,13 @@ func (m *DetailModel) syncHighlightFromScroll() {
 // for why this deliberately excludes the hash, unlike list search) and its
 // diff content, message matches first in document order and diff matches
 // after (see messageMatches's doc comment) — without moving the cursor or
-// marking any match "current" (matchPos stays -1). Used by openDetail/
-// gotoJumpPos when a commit/entry opens (or is jumped back/forward to) with
-// a search already active elsewhere: matches should be visible immediately,
-// but jumping the cursor straight to one would be a surprising way for a
-// view to open — see RunSearch, the jumping counterpart used when the user
-// actually submits "/" while already viewing this commit.
+// marking any match "current" (matchPos stays -1). Called only from
+// SetSearchDisplay, which owns the term this is keyed to; jumping to a match
+// is jumpToFirstMatch's separate job, since a view that opens (or is jumped
+// back to) with a search already active should highlight without landing the
+// cursor in the middle of a diff.
 func (m *DetailModel) computeMatches(term string) {
-	if term == "" {
+	if term == "" || m.detail == nil {
 		m.messageMatches, m.diffMatches = nil, nil
 	} else {
 		lines, authorLine, bodyStart, _ := headerLinesFor(m.detail)
@@ -749,17 +749,16 @@ func (m *DetailModel) computeMatches(term string) {
 	m.matchPos = -1
 }
 
-// RunSearch is computeMatches plus jumping to the first match, returning the
-// total match count. Unlike list search this is fully synchronous: the whole
-// commit is already in memory once it's open, so there's no async loading to
-// wait for. See SetSearchDisplay for the term/dismissed display state.
-func (m *DetailModel) RunSearch(term string) int {
-	m.computeMatches(term)
+// jumpToFirstMatch selects the first match and scrolls to it — the jumping
+// half of submitting "/" while already viewing this commit, the compute half
+// being SetSearchDisplay's. Unlike list search this is fully synchronous: the
+// whole commit is already in memory once it's open, so there's no async
+// loading to wait for.
+func (m *DetailModel) jumpToFirstMatch() {
 	if m.totalMatches() > 0 {
 		m.matchPos = 0
 	}
 	m.jumpToMatch()
-	return m.totalMatches()
 }
 
 func (m DetailModel) totalMatches() int { return len(m.messageMatches) + len(m.diffMatches) }
@@ -803,8 +802,8 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 // The match's line isn't known until this first reflow runs (messageMatch-
 // Lines/diffMatchLines are its output), so a jumplist entry can't be pushed
 // until after it — a second reflow then bakes the cursor highlight into
-// the right line, the same two-reflow cost RunSearch/NextMatch/PrevMatch
-// already pay just for the match highlight to begin with. Every step
+// the right line, the same two-reflow cost jumpToFirstMatch/NextMatch/
+// PrevMatch already pay just for the match highlight to begin with. Every step
 // pushes a jump, not just the initial search — see applyCurrentMatch's
 // doc comment in list.go for why that's a deliberate departure from vim.
 func (m *DetailModel) jumpToMatch() {
@@ -829,20 +828,18 @@ func (m *DetailModel) jumpToMatch() {
 	m.syncHighlightFromScroll()
 }
 
-// ClearSearch discards the active search's matches. The term/dismissed
-// display state is cleared separately via SetSearchDisplay.
-func (m *DetailModel) ClearSearch() {
-	m.messageMatches, m.diffMatches = nil, nil
-	m.matchPos = -1
-	m.reflow()
-}
-
-// SetSearchDisplay updates whether highlighting is currently dismissed and
-// re-renders. term is accepted (unused) only to match ListModel's
-// SetSearchDisplay signature, since app.go calls both uniformly — matches
-// here were already computed by RunSearch, so DetailModel has no use for
-// the term itself.
+// SetSearchDisplay installs the term to highlight and whether highlighting is
+// currently dismissed, then re-renders. A changed term recomputes this
+// commit's matches (synchronously — everything it needs is already in
+// memory), which is what keeps them from outliving the term they were found
+// for: the root Model pushes every search-state change down here, including
+// ones made while some *other* view was active. Clearing the search is just
+// the term going empty.
 func (m *DetailModel) SetSearchDisplay(term string, dismissed bool) {
+	if term != m.displayTerm {
+		m.displayTerm = term
+		m.computeMatches(term)
+	}
 	m.searchDismissed = dismissed
 	m.reflow()
 }
