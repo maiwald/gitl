@@ -243,7 +243,7 @@ func (m *DetailModel) reflow() {
 	// content occupies) — clamp it back in range. See cursorLine's doc
 	// comment for why this doesn't try to preserve the cursor's original
 	// target across a rewrap, only its validity.
-	m.cursorLine = clampIndex(m.cursorLine, m.contentLen-1)
+	m.cursorLine = clamp(m.cursorLine, 0, m.contentLen-1)
 
 	m.syncHighlightFromScroll()
 }
@@ -564,9 +564,9 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 	case key.Matches(msg, DefaultKeyMap.Down):
 		m.moveCursor(1)
 	case key.Matches(msg, DefaultKeyMap.HalfPageUp):
-		m.moveCursor(-m.halfPageSize())
+		m.moveCursor(-halfPage(m.leftVP.Height))
 	case key.Matches(msg, DefaultKeyMap.HalfPageDown):
-		m.moveCursor(m.halfPageSize())
+		m.moveCursor(halfPage(m.leftVP.Height))
 	case key.Matches(msg, DefaultKeyMap.Top):
 		m.jumpCursor(0)
 	case key.Matches(msg, DefaultKeyMap.Bottom):
@@ -582,17 +582,6 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 	}
 }
 
-// halfPageSize mirrors ListModel's own halfPageSize: half the viewport's
-// height, floored at 1 so ctrl-u/ctrl-d still move something on a
-// one-or-two-row viewport.
-func (m *DetailModel) halfPageSize() int {
-	h := m.leftVP.Height / 2
-	if h < 1 {
-		h = 1
-	}
-	return h
-}
-
 // moveCursor moves the cursor by delta lines without recording a jumplist
 // entry — plain motion, not a jump (see Update's doc comment).
 func (m *DetailModel) moveCursor(delta int) {
@@ -606,7 +595,7 @@ func (m *DetailModel) moveCursor(delta int) {
 // the very top of the viewport rather than merely scrolling it into view
 // (see setCursor vs. those two's direct leftVP.SetYOffset).
 func (m *DetailModel) jumpCursor(line int) {
-	if clamped := clampIndex(line, m.contentLen-1); clamped != m.cursorLine {
+	if clamped := clamp(line, 0, m.contentLen-1); clamped != m.cursorLine {
 		m.pushJump(m.cursorLine)
 	}
 	m.setCursor(line)
@@ -617,7 +606,7 @@ func (m *DetailModel) jumpCursor(line int) {
 // the minimum needed to keep the cursor visible — unlike jumpToSection/
 // jumpToMatch, which always land their target at the very top.
 func (m *DetailModel) setCursor(pos int) {
-	m.cursorLine = clampIndex(pos, m.contentLen-1)
+	m.cursorLine = clamp(pos, 0, m.contentLen-1)
 	m.reflow()
 	m.ensureCursorVisible()
 	m.syncHighlightFromScroll()
@@ -654,7 +643,7 @@ func (m *DetailModel) jumpToSection(delta int) {
 	if len(m.sections) <= 1 {
 		return
 	}
-	target := clampIndex(m.currentSection+delta, len(m.sections)-1)
+	target := clamp(m.currentSection+delta, 0, len(m.sections)-1)
 	m.landOnLine(sectionContentStart(m.sections[target]))
 }
 
@@ -800,12 +789,11 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 // and it's pure in-memory string work with no I/O.
 //
 // The match's line isn't known until this first reflow runs (messageMatch-
-// Lines/diffMatchLines are its output), so a jumplist entry can't be pushed
-// until after it — a second reflow then bakes the cursor highlight into
-// the right line, the same two-reflow cost jumpToFirstMatch/NextMatch/
-// PrevMatch already pay just for the match highlight to begin with. Every step
-// pushes a jump, not just the initial search — see applyCurrentMatch's
-// doc comment in list.go for why that's a deliberate departure from vim.
+// Lines/diffMatchLines are its output), so the landing — jumplist entry
+// included — can only happen after it, via landOnLine, whose second reflow
+// bakes the cursor highlight into the right line. Every step pushes a jump,
+// not just the initial search — see applyCurrentMatch's doc comment in
+// list.go for why that's a deliberate departure from vim.
 func (m *DetailModel) jumpToMatch() {
 	m.reflow()
 	if m.matchPos < 0 {
@@ -819,13 +807,7 @@ func (m *DetailModel) jumpToMatch() {
 	} else {
 		return
 	}
-	if line != m.cursorLine {
-		m.pushJump(m.cursorLine)
-	}
-	m.cursorLine = line
-	m.reflow()
-	m.leftVP.SetYOffset(line)
-	m.syncHighlightFromScroll()
+	m.landOnLine(line)
 }
 
 // SetSearchDisplay installs the term to highlight and whether highlighting is

@@ -103,8 +103,8 @@ func TestDetailModelCursorScrollFollowsOnSmallViewport(t *testing.T) {
 }
 
 // TestDetailModelHalfPageMovesCursor pins down that ctrl-d/ctrl-u move the
-// cursor by half the viewport's height, mirroring ListModel's own
-// halfPageSize behavior.
+// cursor by half the viewport's height, the shared halfPage step the list
+// view moves its own cursor by.
 func TestDetailModelHalfPageMovesCursor(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 20)
 	m := NewDetailModel(d, &jumplist{})

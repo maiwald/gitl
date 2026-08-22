@@ -214,9 +214,9 @@ func (m *ListModel) Update(msg tea.KeyMsg) (fetchRequest, bool) {
 	case key.Matches(msg, DefaultKeyMap.Down):
 		m.moveCursor(1)
 	case key.Matches(msg, DefaultKeyMap.HalfPageUp):
-		m.moveCursor(-m.halfPageSize())
+		m.moveCursor(-halfPage(m.vp.Height))
 	case key.Matches(msg, DefaultKeyMap.HalfPageDown):
-		m.moveCursor(m.halfPageSize())
+		m.moveCursor(halfPage(m.vp.Height))
 	case key.Matches(msg, DefaultKeyMap.Top):
 		m.jumpCursor(m.topIndex())
 	case key.Matches(msg, DefaultKeyMap.Bottom):
@@ -244,34 +244,20 @@ func (m *ListModel) pushJump(pos int) {
 	m.jl.push(jumpPos{view: viewList, listCursor: pos})
 }
 
-func (m *ListModel) halfPageSize() int {
-	h := m.vp.Height / 2
-	if h < 1 {
-		h = 1
-	}
-	return h
+// halfPage is how far ctrl-u/ctrl-d move in a viewport of the given height:
+// half a screen, floored at 1 so they still move something on a one- or
+// two-row viewport. Shared with DetailModel, whose cursor pages the same way.
+func halfPage(height int) int {
+	return max(height/2, 1)
 }
 
 func (m *ListModel) moveCursor(delta int) {
-	m.setCursor(clampBetween(m.cursor+delta, m.topIndex(), m.lastIndex()))
+	m.setCursor(clamp(m.cursor+delta, m.topIndex(), m.lastIndex()))
 }
 
-// clampIndex constrains next to the valid index range [0, max], as used by
-// [/] section movement in DetailModel (which has no synthetic-row concept
-// and so always clamps at 0).
-func clampIndex(next, max int) int {
-	return clampBetween(next, 0, max)
-}
-
-// clampBetween constrains next to the valid range [min, max].
-func clampBetween(next, min, max int) int {
-	if next < min {
-		return min
-	}
-	if next > max {
-		return max
-	}
-	return next
+// clamp constrains v to the range [lo, hi].
+func clamp(v, lo, hi int) int {
+	return min(max(v, lo), hi)
 }
 
 // matchPosition reports pos as a 1-based position within total, or (0, 0)
