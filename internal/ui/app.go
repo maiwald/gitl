@@ -28,10 +28,17 @@ const (
 // StartTarget describes what gitl was asked to open on startup: nothing
 // (the plain list), the staged-changes entry, or the working-tree (unstaged)
 // entry. Built by main.go from the command line.
+//
+// Paths is the optional pathspec limiting that startup diff, the way `git
+// diff -- <path>...` limits its own. It applies to the startup detail view
+// only, never to the commit list behind it or to a commit later opened from
+// there: nothing about the list is path-filtered, so a filtered detail view
+// reached from it would be answering a question the list never asked.
 type StartTarget struct {
 	Rev    string
 	Staged bool
 	Diff   bool
+	Paths  []string
 }
 
 // opensDetail reports whether gitl was asked to open straight into a detail
@@ -386,10 +393,12 @@ func (m Model) newDetailModel(detail *git.CommitDetail) DetailModel {
 // fetchDetailCmd's severity depends on the caller: fatal from the `<rev>`-
 // jump startup dispatch (the detail view is that path's whole payload),
 // nonFatal from Enter on a real commit in the list (which stays up if this
-// one fetch fails).
-func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity) tea.Cmd {
+// one fetch fails). paths is only ever the CLI's own pathspec, from that
+// same startup dispatch — see StartTarget.Paths for why a commit opened
+// from the list is never filtered.
+func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity, paths ...string) tea.Cmd {
 	return runCmd(severity, func(ctx context.Context) (*git.CommitDetail, error) {
-		return repo.FetchCommitDetail(ctx, hash)
+		return repo.FetchCommitDetail(ctx, hash, paths...)
 	}, func(d *git.CommitDetail) tea.Msg { return commitDetailLoadedMsg{detail: d} })
 }
 
@@ -398,11 +407,12 @@ func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity) tea.Cmd {
 // row from) and opens it the same way any other detail view opens, via
 // commitDetailLoadedMsg. severity is hardcoded fatal since that startup
 // path has no list to fall back to.
-func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind) tea.Cmd {
+func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind, paths []string) tea.Cmd {
 	return runCmd(fatal, func(ctx context.Context) ([]git.File, error) {
-		return repo.FetchWorktreeEntry(ctx, kind)
+		return repo.FetchWorktreeEntry(ctx, kind, paths...)
 	}, func(files []git.File) tea.Msg {
-		return commitDetailLoadedMsg{detail: git.EntryDetail(git.WorktreeEntry{Kind: kind, Files: files})}
+		entry := git.WorktreeEntry{Kind: kind, Files: files, Paths: paths}
+		return commitDetailLoadedMsg{detail: git.EntryDetail(entry)}
 	})
 }
 
@@ -493,10 +503,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// diff the index against yet, but FetchWorktreeEntry already
 			// treats that as the empty tree, same as `git diff --cached`
 			// itself does.
-			return m, fetchEntryDetailCmd(msg.repo, git.EntryStaged)
+			return m, fetchEntryDetailCmd(msg.repo, git.EntryStaged, m.start.Paths)
 		}
 		if m.start.Diff {
-			return m, fetchEntryDetailCmd(msg.repo, git.EntryWorktree)
+			return m, fetchEntryDetailCmd(msg.repo, git.EntryWorktree, m.start.Paths)
 		}
 		if m.start.Rev != "" {
 			// fetchDetailCmd passes the raw revision straight to `git log -1`
@@ -506,7 +516,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// resolveRevPositionCmd/pumpPendingJump. Severity split: see
 			// fetchDetailCmd's doc comment.
 			return m, tea.Batch(
-				fetchDetailCmd(msg.repo, m.start.Rev, fatal),
+				fetchDetailCmd(msg.repo, m.start.Rev, fatal, m.start.Paths...),
 				loadListCmd(msg.repo, nonFatal),
 				loadWorktreeEntriesCmd(msg.repo),
 				resolveRevPositionCmd(msg.repo, m.start.Rev),

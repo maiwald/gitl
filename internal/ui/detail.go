@@ -743,15 +743,25 @@ func (m DetailModel) MatchPosition() (pos, total int) {
 	return matchPosition(m.matchPos, m.totalMatches())
 }
 
+// noDiffNotice explains an empty diff. A view opened with a CLI pathspec
+// (see StartTarget.Paths) names it, so "nothing here" can't be misread as
+// "nothing anywhere" when the rest of the diff was simply filtered out.
 func noDiffNotice(d *git.CommitDetail) string {
+	paths, scope := strings.Join(d.Paths, ", "), ""
+	if paths != "" {
+		scope = " in " + paths
+	}
 	switch d.Kind {
 	case git.EntryStaged:
-		return binaryNoticeStyle.Render("No staged changes.")
+		return binaryNoticeStyle.Render("No staged changes" + scope + ".")
 	case git.EntryWorktree:
-		return binaryNoticeStyle.Render("No uncommitted changes.")
+		return binaryNoticeStyle.Render("No uncommitted changes" + scope + ".")
 	}
 	if d.IsMerge() {
 		return binaryNoticeStyle.Render("Merge commit: diff not shown (viewing merge diffs isn't supported yet).")
+	}
+	if paths != "" {
+		return binaryNoticeStyle.Render("No changes to " + paths + " in this commit.")
 	}
 	return binaryNoticeStyle.Render("No changes in this commit.")
 }

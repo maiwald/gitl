@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	xterm "github.com/charmbracelet/x/term"
@@ -20,98 +22,80 @@ import (
 const fallbackListWidth = 120
 
 func main() {
-	flag.Usage = printUsage
-	n := flag.Int("n", 0, "print the N most recent commits non-interactively and exit")
-	staged := flag.Bool("staged", false, "open the staged changes (index vs HEAD) directly; q exits")
-	diff := flag.Bool("diff", false, "open the working tree changes (index vs working tree) directly; q exits")
-	version := flag.Bool("version", false, "print the version and exit")
-	flag.Parse()
+	// ContinueOnError rather than ExitOnError so a bad argument *combination*
+	// (which the FlagSet knows nothing about) can be reported from the same
+	// place as a bad flag. The FlagSet keeps printing its own parse failures
+	// and usage, so those arrive here already reported — see errFlagParse.
+	fs := flag.NewFlagSet("gitl", flag.ContinueOnError)
+	fs.Usage = func() { printUsage(fs) }
+	opts, err := parseArgs(fs, os.Args[1:])
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// -h/--help: the usage text is the requested output, not an error.
+			return
+		}
+		if !errors.Is(err, errFlagParse) {
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
+		os.Exit(2)
+	}
 
-	if *version {
+	if opts.version {
 		fmt.Println("gitl " + versionString())
 		return
 	}
 
-	args := flag.Args()
-	if len(args) > 1 {
-		fmt.Fprintln(os.Stderr, "error: expected at most one revision argument")
-		os.Exit(2)
-	}
-	var rev string
-	if len(args) == 1 {
-		rev = args[0]
-	}
-
-	if *staged && *diff {
-		fmt.Fprintln(os.Stderr, "error: --staged and --diff are mutually exclusive")
-		os.Exit(2)
-	}
-	if (*staged || *diff) && rev != "" {
-		fmt.Fprintln(os.Stderr, "error: --staged/--diff and a revision argument are mutually exclusive")
-		os.Exit(2)
-	}
-	if *n > 0 && (*staged || *diff || rev != "") {
-		fmt.Fprintln(os.Stderr, "error: -n cannot be combined with --staged, --diff, or a revision argument")
-		os.Exit(2)
-	}
-
-	if *n > 0 {
-		if err := printCommits(*n); err != nil {
+	if opts.count > 0 {
+		if err := printCommits(opts.count); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	if *staged {
-		hasStaged, err := checkHasChanges((*git.Repo).HasStagedChanges)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-		if !hasStaged {
-			fmt.Fprintln(os.Stderr, "no staged changes")
-			return
-		}
+	target := opts.target
+	if target.Staged && !hasChanges((*git.Repo).HasStagedChanges, target.Paths, "no staged changes") {
+		return
 	}
-	if *diff {
-		hasWorktreeChanges, err := checkHasChanges((*git.Repo).HasWorktreeChanges)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-		if !hasWorktreeChanges {
-			fmt.Fprintln(os.Stderr, "no working tree changes")
-			return
-		}
+	if target.Diff && !hasChanges((*git.Repo).HasWorktreeChanges, target.Paths, "no working tree changes") {
+		return
 	}
 
-	p := tea.NewProgram(ui.NewModel(ui.StartTarget{Rev: rev, Staged: *staged, Diff: *diff}), tea.WithAltScreen())
+	p := tea.NewProgram(ui.NewModel(target), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		exitWithError(err)
 	}
 }
 
-// printUsage is installed as flag.Usage, so -h/--help (and flag-parse
-// errors) print gitl's own synopsis instead of just the flag list.
-func printUsage() {
+// exitWithError reports a failure that leaves gitl nothing to show and exits
+// nonzero — every runtime (as opposed to command-line) failure in main.
+func exitWithError(err error) {
+	fmt.Fprintln(os.Stderr, "error:", err)
+	os.Exit(1)
+}
+
+// printUsage is installed as fs.Usage, so -h/--help (and flag-parse errors)
+// print gitl's own synopsis instead of just the flag list.
+func printUsage(fs *flag.FlagSet) {
 	fmt.Fprint(os.Stderr, `gitl - a terminal UI for browsing git history
 
 Usage:
-  gitl                open the commit list for the current repository
-  gitl <rev>          open a commit's detail view directly (sha, branch,
-                       tag, HEAD~2, ...); q/Esc quits outright
-  gitl --staged       open the staged changes (index vs HEAD) directly;
-                       q/Esc quits outright
-  gitl --diff         open the working tree changes (index vs working
-                       tree) directly; q/Esc quits outright
-  gitl -n <count>     print the N most recent commits and exit
-  gitl --version      print the version and exit
+  gitl                       open the commit list for the current repository
+  gitl <rev> [<path>...]     open a commit's detail view directly (sha,
+                              branch, tag, HEAD~2, ...); q/Esc quits outright
+  gitl --staged [<path>...]  open the staged changes (index vs HEAD)
+                              directly; q/Esc quits outright
+  gitl --diff [<path>...]    open the working tree changes (index vs working
+                              tree) directly; q/Esc quits outright
+  gitl -n <count>            print the N most recent commits and exit
+  gitl --version             print the version and exit
+
+Paths limit the diff that opens to those files, like git's own. Use -- to
+separate them from a revision explicitly (gitl <rev> -- <path>...).
 
 Flags:
 `)
-	flag.PrintDefaults()
+	fs.PrintDefaults()
 }
 
 // versionString reports the module version go install embedded (a tag like
@@ -133,17 +117,32 @@ func openCWDRepo(ctx context.Context) (*git.Repo, error) {
 	return git.OpenRepo(ctx, ".")
 }
 
-// checkHasChanges is a pre-flight for --staged/--diff, so an empty
+// hasChanges is the pre-flight for --staged/--diff, so an empty
 // index/worktree prints a one-line message and exits instead of flashing an
 // alt-screen TUI just to immediately say there's nothing to show. check is
-// passed as a method expression, e.g. (*git.Repo).HasStagedChanges.
-func checkHasChanges(check func(*git.Repo, context.Context, ...string) (bool, error)) (bool, error) {
+// passed as a method expression, e.g. (*git.Repo).HasStagedChanges, and is
+// asked only about paths when the command line gave any — so `gitl --diff
+// untouched.go` reports "no working tree changes in untouched.go" rather
+// than opening an empty view. Reporting the emptiness (emptyMsg, widened to
+// name those paths) is part of the answer, so a false return means "already
+// explained, nothing to open".
+func hasChanges(check func(*git.Repo, context.Context, ...string) (bool, error), paths []string, emptyMsg string) bool {
 	ctx := context.Background()
 	repo, err := openCWDRepo(ctx)
 	if err != nil {
-		return false, err
+		exitWithError(err)
 	}
-	return check(repo, ctx)
+	has, err := check(repo, ctx, paths...)
+	if err != nil {
+		exitWithError(err)
+	}
+	if !has {
+		if len(paths) > 0 {
+			emptyMsg += " in " + strings.Join(paths, ", ")
+		}
+		fmt.Fprintln(os.Stderr, emptyMsg)
+	}
+	return has
 }
 
 func printCommits(n int) error {

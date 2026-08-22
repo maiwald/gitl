@@ -806,6 +806,42 @@ func TestDetailModelPseudoEntryNoDiffNoticeIsKindSpecific(t *testing.T) {
 	}
 }
 
+// TestDetailModelNoDiffNoticeNamesThePathspec pins down that a view opened
+// with a CLI pathspec says so when it comes out empty, so "nothing here"
+// can't be read as "nothing anywhere" — see StartTarget.Paths.
+func TestDetailModelNoDiffNoticeNamesThePathspec(t *testing.T) {
+	tests := []struct {
+		name   string
+		detail *git.CommitDetail
+		want   string
+	}{
+		{
+			"staged entry",
+			&git.CommitDetail{Kind: git.EntryStaged, Paths: []string{"a.txt"}},
+			"No staged changes in a.txt.",
+		},
+		{
+			"worktree entry",
+			&git.CommitDetail{Kind: git.EntryWorktree, Paths: []string{"a.txt", "b.txt"}},
+			"No uncommitted changes in a.txt, b.txt.",
+		},
+		{
+			"commit",
+			&git.CommitDetail{Paths: []string{"a.txt"}},
+			"No changes to a.txt in this commit.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewDetailModel(tt.detail, &jumplist{})
+			m.SetSize(80, 24)
+			if !strings.Contains(m.View(), tt.want) {
+				t.Errorf("View() = %q, want it to contain %q", m.View(), tt.want)
+			}
+		})
+	}
+}
+
 // TestDetailModelPseudoEntryMessageSearchFindsNothingButDiffSearchWorks pins
 // down FindMessageMatches' authorLine=-1 guard (a pseudo entry has no
 // author/message region to search) alongside diff search, which still works
