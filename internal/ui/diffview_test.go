@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/maiwald/gitl/internal/git"
 )
 
@@ -41,7 +42,7 @@ func fixtureDiffFiles() []git.File {
 
 func TestRenderDiffProducesContiguousRanges(t *testing.T) {
 	files := fixtureDiffFiles()
-	lines, ranges, _ := RenderDiff(files, 80, nil, -1, false, -1)
+	lines, ranges, _, _ := RenderDiff(files, 80, nil, -1, false, -1)
 
 	if len(ranges) != 2 {
 		t.Fatalf("got %d ranges, want 2", len(ranges))
@@ -86,7 +87,7 @@ func TestRenderDiffWrapsLongLinesAndKeepsRangesContiguous(t *testing.T) {
 		},
 	}
 
-	lines, ranges, _ := RenderDiff(files, 20, nil, -1, false, -1)
+	lines, ranges, _, _ := RenderDiff(files, 20, nil, -1, false, -1)
 
 	// The long line must have wrapped into more than one rendered row.
 	if ranges[0].EndLine-ranges[0].StartLine <= 3 { // header + hunk header + short line + wrapped long line(s)
@@ -255,7 +256,7 @@ func TestRenderDiffHighlightsMatchesAndMarksActiveOneDistinctly(t *testing.T) {
 		t.Fatalf("got %d matches, want 2", len(matches))
 	}
 
-	lines, _, matchLines := RenderDiff(files, 80, matches, 0, false, -1)
+	lines, _, matchLines, _ := RenderDiff(files, 80, matches, 0, false, -1)
 
 	if !strings.Contains(lines[matchLines[0]], searchActiveMatchStyle.Render("needle")) {
 		t.Errorf("line %d = %q, want the active match styled with searchActiveMatchStyle", matchLines[0], lines[matchLines[0]])
@@ -284,7 +285,7 @@ func TestRenderDiffMatchLinesFallWithinCorrespondingFileRange(t *testing.T) {
 		},
 	}
 	matches := FindDiffMatches(files, "needle")
-	_, ranges, matchLines := RenderDiff(files, 80, matches, -1, false, -1)
+	_, ranges, matchLines, _ := RenderDiff(files, 80, matches, -1, false, -1)
 
 	if len(matches) != 2 || len(matchLines) != 2 {
 		t.Fatalf("got %d matches / %d matchLines, want 2/2", len(matches), len(matchLines))
@@ -301,7 +302,7 @@ func TestRenderFileHeaderShowsRenameArrow(t *testing.T) {
 	files := []git.File{
 		{OldPath: "old.txt", Path: "new.txt", Status: git.StatusRenamed},
 	}
-	lines, _, _ := RenderDiff(files, 80, nil, -1, false, -1)
+	lines, _, _, _ := RenderDiff(files, 80, nil, -1, false, -1)
 	if len(lines) == 0 {
 		t.Fatal("expected at least one rendered line")
 	}
@@ -463,7 +464,7 @@ func TestRenderDiffAppliesIntralineEmphasisStyles(t *testing.T) {
 			},
 		}},
 	}}
-	lines, _, _ := RenderDiff(files, 0, nil, -1, false, -1)
+	lines, _, _, _ := RenderDiff(files, 0, nil, -1, false, -1)
 	if len(lines) != 4 { // file header + hunk header + delete + add
 		t.Fatalf("got %d lines, want 4 (file header, hunk header, delete, add)", len(lines))
 	}
@@ -473,5 +474,78 @@ func TestRenderDiffAppliesIntralineEmphasisStyles(t *testing.T) {
 	}
 	if !strings.Contains(addLine, diffAddEmphStyle.Render("QUX")) {
 		t.Errorf("add line = %q, want it to contain the emphasized changed word", addLine)
+	}
+}
+
+// TestRenderDiffLineCursorRowCountMatchesPlain pins down that a line's
+// wrapped height doesn't depend on whether the cursor is on it. RenderDiff
+// renders each line plain to learn how many rows it occupies and only then
+// re-renders it with the cursor flag, so a mismatch would corrupt every line
+// index below it (FileRanges, match positions, the cursor's own bound).
+//
+// The specific failure this guards against: lipgloss's wrapper only breaks
+// at a space while the style in effect has no background, so baking the
+// cursor background in before wrapping turned the whole line into one
+// unbreakable word — see wrapRanges in render.go.
+func TestRenderDiffLineCursorRowCountMatchesPlain(t *testing.T) {
+	const width = 40
+	tests := []struct {
+		name string
+		text string
+	}{
+		{"wraps on a space", "func checkHasChanges(check func(*git.Repo, context.Context) (bool, error)) (bool, error) {"},
+		{"tab-indented", "\tif err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {"},
+		{"one long unbreakable word", strings.Repeat("a", width*2+1)},
+		{"exactly one row wide", strings.Repeat("a", width-1)},
+		{"short", "short"},
+		{"empty", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			line := git.DiffLine{Op: git.OpDelete, Text: tt.text}
+			plain := renderDiffLine(line, width, nil, nil, false)
+			cursor := renderDiffLine(line, width, nil, nil, true)
+			if len(plain) != len(cursor) {
+				t.Fatalf("plain wrapped to %d rows, cursor to %d — they must agree", len(plain), len(cursor))
+			}
+			for i, row := range cursor {
+				if got := lipgloss.Width(row); got != width {
+					t.Errorf("cursor row %d width = %d, want %d (rows are padded to full width)", i, got, width)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderDiffRowsNeverEmbedNewlines pins down that every row RenderDiff
+// returns is exactly one display line. A hunk header carrying a long
+// function context, or a long file path, is *truncated* to width, never
+// wrapped: callers treat each returned row as one entry in the flattened
+// line space, so a row that quietly renders as two display lines shifts
+// every line below it out of step with the cursor, FileRanges and scroll
+// positions that index into it — the diff then scrolls past what the cursor
+// can reach. See renderClipped's Inline in render.go.
+func TestRenderDiffRowsNeverEmbedNewlines(t *testing.T) {
+	const width = 60
+	files := []git.File{{
+		Path:   strings.Repeat("deeply/nested/", 8) + "file.go",
+		Status: git.StatusModified,
+		Hunks: []git.Hunk{{
+			Header: "@@ -140,7 +140,7 @@ func checkHasChanges(check func(*git.Repo, context.Context) (bool, error)) (bool, error) {",
+			Lines:  []git.DiffLine{{Op: git.OpContext, Text: "x"}},
+		}},
+	}}
+
+	for _, cursorLine := range []int{-1, 0, 1, 2} {
+		lines, ranges, _, _ := RenderDiff(files, width, nil, -1, false, cursorLine)
+		for i, row := range lines {
+			if strings.Contains(row, "\n") {
+				t.Errorf("cursorLine %d: row %d spans %d display lines: %q",
+					cursorLine, i, strings.Count(row, "\n")+1, row)
+			}
+		}
+		if last := ranges[len(ranges)-1].EndLine; last != len(lines) {
+			t.Errorf("cursorLine %d: last range ends at %d, want %d", cursorLine, last, len(lines))
+		}
 	}
 }

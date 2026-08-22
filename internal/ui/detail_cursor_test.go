@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/maiwald/gitl/internal/git"
 )
 
 // cursorFillOpen is the raw SGR escape prefix a cursor-background-filled
@@ -247,5 +248,123 @@ func TestDetailModelCursorHighlightsStatsRow(t *testing.T) {
 	row := strings.SplitN(m.leftVP.View(), "\n", 2)[0]
 	if !strings.Contains(row, cursorFillOpen()) {
 		t.Fatalf("stats header row = %q, want it to show the cursor background", row)
+	}
+}
+
+// longWrappingLine is wider than any width these tests render at, and
+// contains spaces and a hyphen — the two things lipgloss's wrapper treats as
+// break opportunities — so wrapping it is a real word-wrap decision, not a
+// hard break in the middle of an unbreakable run.
+const longWrappingLine = "func checkHasChanges(check func(*git.Repo, context.Context, ...string) (bool, error)) (bool, error) {"
+
+// fixtureDetailWithLongLines is a one-file commit whose diff lines all
+// word-wrap at any reasonable width.
+func fixtureDetailWithLongLines() *git.CommitDetail {
+	return &git.CommitDetail{
+		Commit: git.Commit{Hash: strings.Repeat("a", 40), Subject: "subject"},
+		Body:   "subject\n\n" + longWrappingLine,
+		Files: []git.File{{
+			Path: "main.go", Status: git.StatusModified, Additions: 1, Deletions: 1,
+			Hunks: []git.Hunk{{
+				Header: "@@ -1,3 +1,3 @@",
+				Lines: []git.DiffLine{
+					{Op: git.OpContext, Text: "context"},
+					{Op: git.OpDelete, Text: longWrappingLine},
+					{Op: git.OpAdd, Text: longWrappingLine + " // added"},
+				},
+			}},
+		}},
+	}
+}
+
+// TestDetailModelContentLengthIsCursorIndependent pins down that moving the
+// cursor never changes how many flattened lines the content occupies.
+//
+// It used to: the cursor row's background was baked into a line *before* it
+// was word-wrapped, and lipgloss's wrapper stops treating spaces as word
+// boundaries once a background is in effect, so a wrapped line under the
+// cursor re-wrapped as one unbreakable word and landed on a different number
+// of rows than the same line without it (see wrapRanges). Since contentLen
+// is what bounds the cursor, that let the cursor walk past the last line the
+// viewport can actually scroll to, and shifted every line index below it.
+func TestDetailModelContentLengthIsCursorIndependent(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithLongLines(), &jumplist{})
+	m.SetSize(60, 12)
+
+	want := m.contentLen
+	for i := 0; i < want+5; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		if m.contentLen != want {
+			t.Fatalf("contentLen = %d after moving the cursor to line %d, want a constant %d",
+				m.contentLen, m.cursorLine, want)
+		}
+	}
+	// The cursor rests on the *start* of the last logical line, which is a
+	// row or two above the last flattened line when that line wrapped.
+	if wantLast := m.blockStart(want - 1); m.cursorLine != wantLast {
+		t.Fatalf("cursorLine = %d after running past the end, want %d (the last logical line's start)",
+			m.cursorLine, wantLast)
+	}
+}
+
+// TestDetailModelCursorMovesWholeWrappedLines pins down that j/k step one
+// *logical* line at a time, not one visual row: a line that word-wrapped to
+// several rows is highlighted as one block, so stepping through its rows
+// individually would make the first press look like it did nothing.
+func TestDetailModelCursorMovesWholeWrappedLines(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithLongLines(), &jumplist{})
+	m.SetSize(60, 24)
+
+	// Walk down the whole view; every stop must be a logical line's start,
+	// and each press must actually move.
+	seen := map[int]bool{}
+	for prev := -1; m.cursorLine != prev; {
+		prev = m.cursorLine
+		if !m.lineStarts[m.cursorLine] {
+			t.Fatalf("cursor stopped at line %d, which continues a wrapped line", m.cursorLine)
+		}
+		if seen[m.cursorLine] {
+			t.Fatalf("cursor revisited line %d", m.cursorLine)
+		}
+		seen[m.cursorLine] = true
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	// Some line in this fixture really did wrap, otherwise the walk above
+	// proves nothing.
+	if len(seen) == m.contentLen {
+		t.Fatalf("no line wrapped at width 60 — the fixture no longer exercises wrapping")
+	}
+
+	// And back up: k from the line below a wrapped one lands on that line's
+	// start, not on its last row.
+	for m.cursorLine > 0 {
+		before := m.cursorLine
+		m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		if m.cursorLine >= before {
+			t.Fatalf("Up from line %d did not move (now %d)", before, m.cursorLine)
+		}
+		if !m.lineStarts[m.cursorLine] {
+			t.Fatalf("Up stopped at line %d, which continues a wrapped line", m.cursorLine)
+		}
+	}
+}
+
+// TestDetailModelWrappedCursorBlockIsFullyVisible pins down that moving onto
+// a wrapped line scrolls far enough for *all* of its rows to be on screen —
+// the highlight covers the whole block, so a half-shown block reads as the
+// viewport having stopped short.
+func TestDetailModelWrappedCursorBlockIsFullyVisible(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithLongLines(), &jumplist{})
+	m.SetSize(60, 8)
+
+	for prev := -1; m.cursorLine != prev; {
+		prev = m.cursorLine
+		last := m.blockEnd(m.cursorLine) - 1
+		if last >= m.leftVP.YOffset+m.leftVP.Height {
+			t.Fatalf("cursor block [%d,%d] runs past the visible range [%d,%d)",
+				m.cursorLine, last, m.leftVP.YOffset, m.leftVP.YOffset+m.leftVP.Height)
+		}
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 }

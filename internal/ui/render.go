@@ -55,11 +55,21 @@ func stepMatchPos(pos, delta, total int) int {
 // renderClipped renders text in a single line, truncated (not wrapped) to
 // width. It skips the width constraint entirely when width isn't positive,
 // since lipgloss's Width/MaxWidth degenerate at zero.
+//
+// Inline is what makes "single line" true: Width on its own word-wraps, so
+// text longer than width (a hunk header carrying a long function context, a
+// deeply nested file path) would come back as several lines inside what
+// every caller counts as one entry in the flattened line space — silently
+// shifting every display row below it out of step with the line indices the
+// cursor, FileRanges and scroll positions all use. MaxWidth still truncates,
+// and Width still pads the row out (Inline only suppresses padding set via
+// Padding, not the alignment fill), so a cursor-merged style still colors
+// the full row.
 func renderClipped(style lipgloss.Style, text string, width int) string {
 	if width <= 0 {
 		return style.Render(text)
 	}
-	return style.Width(width).MaxWidth(width).Render(text)
+	return style.Inline(true).Width(width).MaxWidth(width).Render(text)
 }
 
 // renderClippedStyled truncates content that may already contain
@@ -93,6 +103,162 @@ func padRow(row string, width int, style lipgloss.Style) string {
 		row += style.Render(strings.Repeat(" ", pad))
 	}
 	return row
+}
+
+// lipglossTabWidth mirrors lipgloss's own default tab handling (Render
+// replaces each tab with this many spaces before wrapping). wrapRanges
+// applies the same expansion up front so its byte offsets describe the text
+// lipgloss would actually lay out, rather than a pre-expansion one whose
+// columns no longer line up.
+const lipglossTabWidth = 4
+
+// expandTabs replaces tabs with lipglossTabWidth spaces, also returning a
+// map from each byte offset in text to its offset in the result (nil when
+// there was nothing to expand, i.e. the identity map), so span and match
+// offsets computed against the original text can follow it.
+func expandTabs(text string) (string, []int) {
+	if !strings.Contains(text, "\t") {
+		return text, nil
+	}
+	var b strings.Builder
+	offsets := make([]int, len(text)+1)
+	for i := 0; i < len(text); i++ {
+		offsets[i] = b.Len()
+		if text[i] == '\t' {
+			b.WriteString(strings.Repeat(" ", lipglossTabWidth))
+			continue
+		}
+		b.WriteByte(text[i])
+	}
+	offsets[len(text)] = b.Len()
+	return b.String(), offsets
+}
+
+// wrapRanges word-wraps plain (ANSI-free) text to width the way lipgloss
+// would, returning each resulting visual row as a byte range into text.
+//
+// The wrap has to be computed on plain text, never on an already-styled
+// string: lipgloss's wrapper only treats a space as a word boundary while
+// the style in effect is "blank", and a background color isn't — so the same
+// line carrying the cursor row's background wraps as one unbreakable word,
+// landing on a different number of rows than the identical line without it.
+// Since a logical line's row count defines the flattened line space the
+// cursor, FileRanges and match positions all index into, that difference
+// isn't cosmetic: it desyncs the whole view.
+//
+// Ranges exclude the spaces the wrapper consumed at a break (and the
+// padding it adds to short rows) — every caller re-pads to width itself.
+func wrapRanges(text string, width int) [][2]int {
+	if width <= 0 || text == "" {
+		return [][2]int{{0, len(text)}}
+	}
+	rows := strings.Split(lipgloss.NewStyle().Width(width).Render(text), "\n")
+	ranges := make([][2]int, 0, len(rows))
+	pos := 0
+	for _, row := range rows {
+		row = strings.TrimRight(row, " ")
+		// The wrapper drops the run of spaces it broke at, so skip whatever
+		// separated this row from the previous one.
+		for pos < len(text) && text[pos] == ' ' && !strings.HasPrefix(text[pos:], row) {
+			pos++
+		}
+		end := min(pos+len(row), len(text))
+		ranges = append(ranges, [2]int{pos, end})
+		pos = end
+	}
+	return ranges
+}
+
+// wrapStyledRows word-wraps text to width and styles each visual row
+// separately — spans and matches clipped and rebased to that row, the cursor
+// background merged in per span (renderLineWithBaseSpans), then padded to
+// full width so the fill is a freshly rendered span rather than a doomed
+// re-wrap of an already-ANSI'd string (see padRow).
+//
+// Wrapping first and styling second is what keeps a cursor row's wrapped
+// height identical to the same line's without it — see wrapRanges. It also
+// means no caller needs to strip lipgloss's plain padding back off before
+// re-padding, since nothing was padded before styling ran.
+func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, width int, cursor bool) []string {
+	text, offsets := expandTabs(text)
+	spans = shiftSpans(spans, offsets)
+	matches = shiftMatches(matches, offsets)
+
+	fill := lipgloss.NewStyle()
+	if cursor {
+		fill = fill.Background(cursorRowBg)
+	}
+
+	ranges := wrapRanges(text, width)
+	rows := make([]string, 0, len(ranges))
+	for _, r := range ranges {
+		rendered := renderLineWithBaseSpans(text[r[0]:r[1]], clipSpans(spans, r), clipMatches(matches, r), base, cursor)
+		if width <= 0 {
+			rows = append(rows, rendered)
+			continue
+		}
+		rows = append(rows, padRow(rendered, width, fill))
+	}
+	return rows
+}
+
+// shiftSpans and shiftMatches move offsets computed against pre-tab-expansion
+// text onto the expanded text (see expandTabs); a nil map means the text had
+// no tabs and the offsets already line up.
+func shiftSpans(spans []baseSpan, offsets []int) []baseSpan {
+	if offsets == nil || len(spans) == 0 {
+		return spans
+	}
+	shifted := make([]baseSpan, len(spans))
+	for i, s := range spans {
+		shifted[i] = baseSpan{start: offsets[s.start], end: offsets[s.end], style: s.style}
+	}
+	return shifted
+}
+
+func shiftMatches(matches []lineMatch, offsets []int) []lineMatch {
+	if offsets == nil || len(matches) == 0 {
+		return matches
+	}
+	shifted := make([]lineMatch, len(matches))
+	for i, m := range matches {
+		shifted[i] = lineMatch{start: offsets[m.start], end: offsets[m.end], active: m.active}
+	}
+	return shifted
+}
+
+// clipSpans and clipMatches narrow spans/matches to the byte range r covers
+// and rebase them onto it, so a span or search hit that straddles a wrap
+// boundary keeps styling both of the rows it lands on. Spans/matches outside
+// r are dropped.
+func clipSpans(spans []baseSpan, r [2]int) []baseSpan {
+	var clipped []baseSpan
+	for _, s := range spans {
+		if start, end, ok := clipRange(s.start, s.end, r); ok {
+			clipped = append(clipped, baseSpan{start: start, end: end, style: s.style})
+		}
+	}
+	return clipped
+}
+
+func clipMatches(matches []lineMatch, r [2]int) []lineMatch {
+	var clipped []lineMatch
+	for _, m := range matches {
+		if start, end, ok := clipRange(m.start, m.end, r); ok {
+			clipped = append(clipped, lineMatch{start: start, end: end, active: m.active})
+		}
+	}
+	return clipped
+}
+
+// clipRange intersects [start,end) with r and rebases the result onto r's
+// own start, reporting false when the two don't overlap at all.
+func clipRange(start, end int, r [2]int) (int, int, bool) {
+	start, end = max(start, r[0]), min(end, r[1])
+	if start >= end {
+		return 0, 0, false
+	}
+	return start - r[0], end - r[0], true
 }
 
 // padLeft right-aligns s within width, left-padding with spaces. It's a

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"strings"
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
@@ -43,11 +42,27 @@ type FileRange struct {
 // dismissed match still lands correctly once n/N revives it. It's
 // parallel to matches: the flattened line index where each match's line
 // starts (enough to bring it into view).
-func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool, cursorLine int) ([]string, []FileRange, []int) {
+//
+// starts is parallel to the returned lines: true where a line begins a
+// logical diff line, false on the continuation rows a wrapped one spilled
+// into, so the cursor can move a whole wrapped line at a time (see
+// DetailModel.blockEnd) instead of stepping through rows the highlight
+// covers as one block anyway.
+func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool, cursorLine int) ([]string, []FileRange, []int, []bool) {
 	var lines []string
+	var starts []bool
 	ranges := make([]FileRange, 0, len(files))
 	matchLines := make([]int, len(matches))
 	mi := 0
+
+	// appendBlock adds one logical line's rendered rows: the first begins the
+	// block, any further ones continue it.
+	appendBlock := func(rows ...string) {
+		lines = append(lines, rows...)
+		for i := range rows {
+			starts = append(starts, i == 0)
+		}
+	}
 
 	for fi, f := range files {
 		start := len(lines)
@@ -63,14 +78,14 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 			matchLines[mi] = fileHeaderRow
 			mi++
 		}
-		lines = append(lines, renderFileHeader(f, width, cursorLine == fileHeaderRow, headerMatches))
+		appendBlock(renderFileHeader(f, width, cursorLine == fileHeaderRow, headerMatches))
 		if f.Binary {
 			binaryRow := len(lines)
-			lines = append(lines, renderClipped(cursorMerged(binaryNoticeStyle, cursorLine == binaryRow), "Binary file, diff not shown", width))
+			appendBlock(renderClipped(cursorMerged(binaryNoticeStyle, cursorLine == binaryRow), "Binary file, diff not shown", width))
 		}
 		for hi, h := range f.Hunks {
 			hunkHeaderRow := len(lines)
-			lines = append(lines, renderClipped(cursorMerged(hunkHeaderStyle, cursorLine == hunkHeaderRow), h.Header, width))
+			appendBlock(renderClipped(cursorMerged(hunkHeaderStyle, cursorLine == hunkHeaderRow), h.Header, width))
 			hunkSpans := intralineSpans(h)
 			for li, l := range h.Lines {
 				lineStart := len(lines)
@@ -88,12 +103,12 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 				if cursorLine >= lineStart && cursorLine < lineStart+len(rendered) {
 					rendered = renderDiffLine(l, width, hunkSpans[li], lineMatches, true)
 				}
-				lines = append(lines, rendered...)
+				appendBlock(rendered...)
 			}
 		}
 		ranges = append(ranges, FileRange{FileIndex: fi, StartLine: start, EndLine: len(lines)})
 	}
-	return lines, ranges, matchLines
+	return lines, ranges, matchLines, starts
 }
 
 // DiffMatchKind distinguishes a DiffMatch found in a file's own displayed
@@ -216,51 +231,15 @@ func renderDiffLine(l git.DiffLine, width int, spans []baseSpan, matches []lineM
 	style, prefix := diffLineStyle(l.Op)
 	text := prefix + l.Text
 
-	var content string
-	if len(spans) == 0 && len(matches) == 0 && !cursor {
-		content = style.Render(text)
-	} else {
-		shiftedMatches := make([]lineMatch, len(matches))
-		for i, m := range matches {
-			shiftedMatches[i] = lineMatch{start: len(prefix) + m.start, end: len(prefix) + m.end, active: m.active}
-		}
-		shiftedSpans := make([]baseSpan, len(spans))
-		for i, s := range spans {
-			shiftedSpans[i] = baseSpan{start: len(prefix) + s.start, end: len(prefix) + s.end, style: s.style}
-		}
-		content = renderLineWithBaseSpans(text, shiftedSpans, shiftedMatches, style, cursor)
+	shiftedMatches := make([]lineMatch, len(matches))
+	for i, m := range matches {
+		shiftedMatches[i] = lineMatch{start: len(prefix) + m.start, end: len(prefix) + m.end, active: m.active}
 	}
-
-	if width <= 0 {
-		return []string{content}
+	shiftedSpans := make([]baseSpan, len(spans))
+	for i, s := range spans {
+		shiftedSpans[i] = baseSpan{start: len(prefix) + s.start, end: len(prefix) + s.end, style: s.style}
 	}
-	// The outer wrap is colorless: content is already fully styled (base
-	// color plus any highlight spans), and wrapping it through a further
-	// *colored* style here would risk that color clobbering the inner
-	// spans — the same nested-style convention used in commititem.go,
-	// where an already-styled row is wrapped by a colorless outer style.
-	rows := strings.Split(lipgloss.NewStyle().Width(width).Render(content), "\n")
-	if cursor {
-		// The wrap above pads short rows with plain (uncolored) spaces, so
-		// a line shorter than width — or entirely empty, like the blank
-		// lines separating sections — would otherwise show the cursor
-		// background only behind its own text, not across the row. Strip
-		// that plain padding back off before handing the row to padRow: if
-		// left in place, padRow finds the row already at width (nothing
-		// left for its own pad step to add) and only wraps the *existing*
-		// plain padding in an outer Render() call — which doesn't reliably
-		// recolor it, since the row already contains its own embedded
-		// reset partway through (see CLAUDE.md's "no facility for
-		// splicing a style into an already-ANSI'd string" rule; this is
-		// that same hazard one layer removed). Stripped first, padRow's
-		// own pad step re-adds the same width as a fresh, independently
-		// rendered, correctly colored span.
-		fill := lipgloss.NewStyle().Background(cursorRowBg)
-		for i, r := range rows {
-			rows[i] = padRow(strings.TrimRight(r, " "), width, fill)
-		}
-	}
-	return rows
+	return wrapStyledRows(text, shiftedSpans, shiftedMatches, style, width, cursor)
 }
 
 func diffLineStyle(op git.LineOp) (lipgloss.Style, string) {

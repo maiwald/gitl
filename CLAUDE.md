@@ -195,22 +195,36 @@ before every commit — don't commit red.
   `renderHeaderLines`/`statLinesFor` as a line-space coordinate, the same
   way an active search match is), not spliced onto the rendered viewport
   afterward.
-- Padding a cursor-highlighted row to full width needs *two* Render()
-  passes to come out fully colored: the first (colorless) `Width()` wrap
-  that produces word-wrapped rows already pads short ones with **plain**
-  spaces, and re-wrapping that padded, already-ANSI'd string in a further
-  `Style.Render()` call to try to recolor it doesn't work — a style
-  wrapped around content that contains its own embedded reset only
-  colors up to that reset, not past it (the same "no facility for
-  splicing a style into an already-ANSI'd string" hazard as search-match
-  highlighting, one layer removed). `renderDiffLine`/`renderHeaderLines`
-  strip that plain padding back off (`strings.TrimRight(row, " ")`)
-  before re-padding through `padRow` with the cursor background as its
-  fill, so the fill becomes a fresh, independently rendered span instead
-  of a doomed re-wrap. A single-`Style.Render()`-call site with
-  `Width`+`Background` set on genuinely plain (not pre-ANSI'd) text —
-  `renderFileHeader`/hunk headers via `cursorMerged`, `renderClipped` —
-  doesn't have this problem and needs no such strip.
+- Word-wrapping happens on **plain text**, before any styling
+  (`wrapRanges`/`wrapStyledRows` in `render.go`, used by `renderDiffLine`
+  and `renderHeaderLines`): the wrap is computed as byte ranges into the
+  unstyled line, and each resulting row is styled and padded separately
+  (spans/matches clipped and rebased onto it). This is an invariant, not a
+  preference — lipgloss's wrapper (`cellbuf.Wrap`) only treats a space as a
+  word boundary while the style in effect has *no background*, so wrapping a
+  line that already carries the cursor row's background turns it into one
+  unbreakable word and lands it on a different number of rows than the same
+  line without it. Since `RenderDiff`/`renderHeaderLines` render each line
+  plain to learn its row count and only then re-render it with the cursor
+  flag, a mismatch there silently shifts every line index below it
+  (`FileRange`s, match positions, `cursorLine`'s own bound). Wrapping first
+  also removes the need to strip lipgloss's plain padding back off before
+  re-padding: nothing is padded until after styling.
+- Every entry in the flattened content is exactly **one display line**.
+  `renderClipped` sets `Inline(true)` alongside `Width`/`MaxWidth` for
+  precisely this reason: `Width` alone word-wraps, so an over-long hunk
+  header (git puts the enclosing function on it) or file path would come
+  back as two display lines inside what the model counts as one, and the
+  viewport would then scroll further than the cursor can reach. Anything new
+  that produces a content row must truncate, never wrap — or return its rows
+  separately, the way `wrapStyledRows` does.
+- The detail cursor moves by **logical line, not visual row**: `reflow`
+  records `DetailModel.lineStarts` (parallel to the content, false on the
+  continuation rows of a wrapped line, fed by `RenderDiff`'s and
+  `renderHeaderLines`' own `starts` returns), `setCursor` snaps whatever it's
+  given back to `blockStart`, and downward motion is floored at `blockEnd`.
+  The highlight covers a wrapped line's whole block, so stepping row by row
+  through it would make presses look like dead keys.
 - A CLI pathspec (`gitl --diff <path>...`, `gitl <rev> [--] <path>...`)
   reaches git as its own `-- <path>...` tail (`pathspecArgs` in
   `internal/git/diff.go`) and is scoped to the **startup target only**
@@ -352,8 +366,7 @@ before every commit — don't commit red.
   occupies). A resize re-clamps `cursorLine` back in range so it's never
   dangling, but doesn't try to preserve *which* logical line it was
   pointing at — same for any jumplist entry recorded before the resize.
-  Also, the cursor highlights a whole logical line's entire wrapped block
-  when it lands on one that word-wrapped into multiple visual rows,
-  rather than just the specific visual row — line-wrapping a single diff/
-  message line to several rows is rare enough in practice not to be worth
-  the bookkeeping a visual-row-exact cursor would need.
+  (A restored index is at least snapped back to a logical line's start, see
+  `setCursor`, so it can't land mid-block.) The cursor also highlights a
+  wrapped line's whole block rather than the one visual row within it —
+  deliberate, and what makes moving by logical line the natural step.

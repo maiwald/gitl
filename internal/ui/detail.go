@@ -82,6 +82,13 @@ type DetailModel struct {
 	// viewport — the cursor has no business visiting that padding (see
 	// reflow, where this is captured before the padding is appended).
 	contentLen int
+	// lineStarts is parallel to that content: true where a flattened line
+	// begins a logical line, false on the continuation rows a word-wrapped
+	// one spilled into. The cursor only ever rests on a start (setCursor
+	// snaps), and moves a whole logical line at a time — a wrapped line is
+	// highlighted as one block, so stepping row by row through it would
+	// leave presses looking like they did nothing.
+	lineStarts []bool
 
 	// jl is the shared, cross-view jumplist (vim's ctrl-o/ctrl-i) — see its
 	// doc comment in app.go for why it lives on the root Model rather than
@@ -165,14 +172,14 @@ func (m *DetailModel) reflow() {
 	// document order it appears in) since offset — needed to translate
 	// m.cursorLine into the diff block's own local line space — depends on
 	// its length.
-	wrappedHeader, messageMatchLines := m.renderHeaderBlock(diffWidth)
+	wrappedHeader, messageMatchLines, headerStarts := m.renderHeaderBlock(diffWidth)
 	statLines := statLinesFor(m.detail.Files, diffWidth, m.cursorLine-len(wrappedHeader)-1)
 	offset := len(wrappedHeader) + 1 + len(statLines)
 	if len(statLines) > 0 {
 		offset++
 	}
 
-	diffLines, fileRanges, rawDiffMatchLines := m.renderDiffBlock(diffWidth, m.cursorLine-offset)
+	diffLines, fileRanges, rawDiffMatchLines, diffStarts := m.renderDiffBlock(diffWidth, m.cursorLine-offset)
 
 	content := make([]string, 0, len(wrappedHeader)+1+len(statLines)+1+len(diffLines))
 	content = append(content, wrappedHeader...)
@@ -182,6 +189,20 @@ func (m *DetailModel) reflow() {
 		content = append(content, blankLine(diffWidth, m.cursorLine == len(content)))
 	}
 	content = append(content, diffLines...)
+
+	// Every row a block other than the header/diff contributes is a logical
+	// line of its own: the separators are one row each, and a stats row is
+	// clipped to width rather than wrapped (see renderClipped).
+	m.lineStarts = make([]bool, 0, len(content))
+	m.lineStarts = append(m.lineStarts, headerStarts...)
+	m.lineStarts = append(m.lineStarts, true)
+	for range statLines {
+		m.lineStarts = append(m.lineStarts, true)
+	}
+	if len(statLines) > 0 {
+		m.lineStarts = append(m.lineStarts, true)
+	}
+	m.lineStarts = append(m.lineStarts, diffStarts...)
 
 	m.fileRanges = make([]FileRange, len(fileRanges))
 	for i, r := range fileRanges {
@@ -240,9 +261,9 @@ func (m *DetailModel) reflow() {
 // cursorLine is already translated into this block's own local line space
 // (see reflow) — negative or past the end simply selects no line, so
 // callers don't need to guard the call themselves.
-func (m *DetailModel) renderDiffBlock(width int, cursorLine int) (lines []string, fileRanges []FileRange, matchLines []int) {
+func (m *DetailModel) renderDiffBlock(width int, cursorLine int) (lines []string, fileRanges []FileRange, matchLines []int, starts []bool) {
 	if len(m.detail.Files) == 0 {
-		return []string{noDiffNotice(m.detail)}, nil, nil
+		return []string{noDiffNotice(m.detail)}, nil, nil, []bool{true}
 	}
 	diffActive := -1
 	if !m.searchDismissed {
@@ -260,7 +281,7 @@ func (m *DetailModel) renderDiffBlock(width int, cursorLine int) (lines []string
 // already matches m.cursorLine's — a cursor position past the header
 // simply exceeds every header line's range and selects nothing here (see
 // renderHeaderLines).
-func (m *DetailModel) renderHeaderBlock(width int) (wrapped []string, matchLines []int) {
+func (m *DetailModel) renderHeaderBlock(width int) (wrapped []string, matchLines []int, starts []bool) {
 	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
 	msgActive := -1
 	if !m.searchDismissed {
@@ -358,27 +379,25 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 	return lines, authorLine, bodyStart, spans
 }
 
-// renderHeaderLines word-wraps each logical header/message line to width,
-// applying base coloring (spans, from headerLinesFor) and search-match
-// highlighting together first — styling the plain pre-wrap text via
-// renderLineWithBaseSpans so both survive wrapping (see CLAUDE.md's "style
-// plain-text spans before any .Render() call" rule) — then wrapping the
-// already-styled line via lipgloss, splitting on the resulting newlines
-// exactly like RenderDiff/renderDiffLine do. matchLines is parallel to
-// matches: the wrapped-line index each match's logical line starts at,
-// computed from the full matches list regardless of dismissed (see
-// RenderDiff's doc comment for why suppressing style doesn't need
+// renderHeaderLines word-wraps each logical header/message line to width via
+// wrapStyledRows, which applies base coloring (spans, from headerLinesFor)
+// and search-match highlighting per wrapped row — the wrap itself decided on
+// the plain text, exactly like RenderDiff/renderDiffLine. matchLines is
+// parallel to matches: the wrapped-line index each match's logical line
+// starts at, computed from the full matches list regardless of dismissed
+// (see RenderDiff's doc comment for why suppressing style doesn't need
 // suppressing position tracking) — spans, unlike matches, are never
-// suppressed by dismissed, since they're not part of search at all.
+// suppressed by dismissed, since they're not part of search at all. starts
+// marks which of the wrapped rows begin a logical line, exactly like
+// RenderDiff's own.
 //
 // cursorLine gets the cursor row background merged in wherever it lands,
 // using the same "render once plain to learn the wrapped-row range, then
 // once more with the cursor flag if it's actually in range" two-pass
-// convention RenderDiff/renderDiffLine use, and for the same reason: a
-// logical line's wrapped-row count isn't known until it's been rendered.
-// Skipped entirely in the width<=0 fallback (an edge/test-only path with
-// no wrapping to speak of).
-func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool, cursorLine int) (wrapped []string, matchLines []int) {
+// convention RenderDiff/renderDiffLine use: the two passes now always
+// produce the same row count (see wrapRanges), so the range learned from
+// the first still describes the second.
+func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool, cursorLine int) (wrapped []string, matchLines []int, starts []bool) {
 	matchLines = make([]int, len(matches))
 	mi := 0
 	for li, line := range lines {
@@ -393,31 +412,19 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 			matchLines[mi] = lineStart
 			mi++
 		}
-		render := func(cursor bool) string {
-			if len(spans[li]) > 0 || len(lineMatches) > 0 || cursor {
-				return renderLineWithBaseSpans(line, spans[li], lineMatches, lipgloss.NewStyle(), cursor)
-			}
-			return line
+		render := func(cursor bool) []string {
+			return wrapStyledRows(line, spans[li], lineMatches, lipgloss.NewStyle(), width, cursor)
 		}
-		if width <= 0 {
-			wrapped = append(wrapped, render(false))
-			continue
-		}
-		rows := strings.Split(lipgloss.NewStyle().Width(width).Render(render(false)), "\n")
+		rows := render(false)
 		if cursorLine >= lineStart && cursorLine < lineStart+len(rows) {
-			rows = strings.Split(lipgloss.NewStyle().Width(width).Render(render(true)), "\n")
-			// Strip the plain padding the wrap above just added, then
-			// re-pad with the cursor background as the fill — see
-			// renderDiffLine's identical step (and its doc comment for why
-			// the strip is necessary, not optional) in diffview.go.
-			fill := lipgloss.NewStyle().Background(cursorRowBg)
-			for i, r := range rows {
-				rows[i] = padRow(strings.TrimRight(r, " "), width, fill)
-			}
+			rows = render(true)
 		}
 		wrapped = append(wrapped, rows...)
+		for i := range rows {
+			starts = append(starts, i == 0)
+		}
 	}
-	return wrapped, matchLines
+	return wrapped, matchLines, starts
 }
 
 // MessageMatch identifies one case-insensitive occurrence of a search term
@@ -495,8 +502,42 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 
 // moveCursor moves the cursor by delta lines without recording a jumplist
 // entry — plain motion, not a jump (see Update's doc comment).
+//
+// Downward motion never lands short of the next logical line: setCursor
+// snaps back to the start of whatever block it's given, so a plain j inside
+// a line that wrapped to several rows would otherwise snap right back where
+// it started and look like a dead key.
 func (m *DetailModel) moveCursor(delta int) {
-	m.setCursor(m.cursorLine + delta)
+	pos := m.cursorLine + delta
+	if delta > 0 {
+		pos = max(pos, m.blockEnd(m.cursorLine))
+	}
+	m.setCursor(pos)
+}
+
+// blockStart returns the first flattened line of the logical line pos falls
+// in; blockEnd returns one past its last. Both fall back to pos itself when
+// there's no line-start map yet (a model that hasn't reflowed), so movement
+// still degrades to plain per-row stepping rather than getting stuck.
+func (m *DetailModel) blockStart(pos int) int {
+	if pos < 0 || pos >= len(m.lineStarts) {
+		return pos
+	}
+	for pos > 0 && !m.lineStarts[pos] {
+		pos--
+	}
+	return pos
+}
+
+func (m *DetailModel) blockEnd(pos int) int {
+	if pos < 0 || pos >= len(m.lineStarts) {
+		return pos + 1
+	}
+	end := pos + 1
+	for end < len(m.lineStarts) && !m.lineStarts[end] {
+		end++
+	}
+	return end
 }
 
 // jumpCursor moves the cursor straight to line, recording the jump first
@@ -512,12 +553,13 @@ func (m *DetailModel) jumpCursor(line int) {
 	m.setCursor(line)
 }
 
-// setCursor moves the cursor to pos (clamped in range), re-renders so the
-// cursor highlight lands on the right line, then scrolls the viewport by
+// setCursor moves the cursor to pos (clamped in range, and snapped back to
+// the start of the logical line it lands in — see lineStarts), re-renders so
+// the cursor highlight lands on the right line, then scrolls the viewport by
 // the minimum needed to keep the cursor visible — unlike jumpToSection/
 // jumpToMatch, which always land their target at the very top.
 func (m *DetailModel) setCursor(pos int) {
-	m.cursorLine = clamp(pos, 0, m.contentLen-1)
+	m.cursorLine = m.blockStart(clamp(pos, 0, m.contentLen-1))
 	m.reflow()
 	m.ensureCursorVisible()
 	m.syncHighlightFromScroll()
@@ -525,15 +567,22 @@ func (m *DetailModel) setCursor(pos int) {
 
 // ensureCursorVisible scrolls the diff panel so the cursor line stays
 // within the visible viewport, the DetailModel analogue of ListModel's
-// ensureVisible.
+// ensureVisible. A wrapped line is highlighted as a whole block, so it's the
+// block's last row that has to come into view when moving down — except when
+// the block is taller than the viewport itself, where showing its start is
+// the best that can be done.
 func (m *DetailModel) ensureCursorVisible() {
 	if m.leftVP.Height <= 0 {
 		return
 	}
+	last := m.blockEnd(m.cursorLine) - 1
+	if last-m.cursorLine >= m.leftVP.Height {
+		last = m.cursorLine
+	}
 	if m.cursorLine < m.leftVP.YOffset {
 		m.leftVP.SetYOffset(m.cursorLine)
-	} else if m.cursorLine >= m.leftVP.YOffset+m.leftVP.Height {
-		m.leftVP.SetYOffset(m.cursorLine - m.leftVP.Height + 1)
+	} else if last >= m.leftVP.YOffset+m.leftVP.Height {
+		m.leftVP.SetYOffset(last - m.leftVP.Height + 1)
 	}
 }
 
@@ -599,7 +648,7 @@ func (m *DetailModel) landOnLine(line int) {
 	if line != m.cursorLine {
 		m.pushJump(m.cursorLine)
 	}
-	m.cursorLine = line
+	m.cursorLine = m.blockStart(line)
 	m.reflow()
 	m.leftVP.SetYOffset(line)
 	m.syncHighlightFromScroll()
