@@ -819,8 +819,8 @@ func (m Model) cancelSearchPrompt() (tea.Model, tea.Cmd) {
 
 // submitSearch closes the prompt on Enter and searches for the submitted
 // term. There is one search term, and both views match against it: the
-// detail view synchronously via setSearchDisplay above, the list via the git
-// queries startListSearch dispatches. Only the *active* view jumps to its
+// detail view synchronously, as setSearchDisplay installs the term, and the
+// list via the git queries startListSearch dispatches. Only the *active* view jumps to its
 // first match, since moving the other view's cursor behind the user's back
 // would be the same surprise openDetail already avoids when a commit is
 // opened with a search running. An empty term clears the search entirely
