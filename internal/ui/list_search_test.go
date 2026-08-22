@@ -8,7 +8,7 @@ import (
 
 // runListSearch applies a resolved search the way the root Model does when
 // the list is the active view: install the matches, then jump to the first
-// one (see pumpPendingSearch in app.go).
+// one (see applyListMatches in app.go).
 func runListSearch(m *ListModel, matches []int) (needsLoad bool, target int) {
 	m.SetMatches(matches)
 	return m.jumpToFirstMatch()
