@@ -222,6 +222,13 @@ before every commit — don't commit red.
   `CommitDetail.Paths`/`WorktreeEntry.Paths` for one purpose only — letting
   `noDiffNotice` (`detail.go`) say *which* paths came up empty; nothing
   re-runs a fetch from it.
+- The non-interactive CLI paths say nothing when there's nothing to show:
+  `--staged`/`--diff` with an empty index/worktree (`hasChanges`) and `-n` in
+  a repo with no commits (`printCommits`) both just return, exit 0, and print
+  no explanation — mirroring `git diff`, which prints nothing and succeeds.
+  Only failures are printed. The TUI is the exception, and deliberately so:
+  `noDiffNotice` and `app.go`'s "no commits yet" error are what a screen that
+  would otherwise be blank shows instead.
 - Command-line parsing lives in `args.go`, not `main.go`, and takes its
   `*flag.FlagSet` as a parameter so tests can parse a literal argv quietly
   (`args_test.go`) while main installs usage/error reporting on it. The

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	xterm "github.com/charmbracelet/x/term"
@@ -54,10 +53,10 @@ func main() {
 	}
 
 	target := opts.target
-	if target.Staged && !hasChanges((*git.Repo).HasStagedChanges, target.Paths, "no staged changes") {
+	if target.Staged && !hasChanges((*git.Repo).HasStagedChanges, target.Paths) {
 		return
 	}
-	if target.Diff && !hasChanges((*git.Repo).HasWorktreeChanges, target.Paths, "no working tree changes") {
+	if target.Diff && !hasChanges((*git.Repo).HasWorktreeChanges, target.Paths) {
 		return
 	}
 
@@ -117,16 +116,15 @@ func openCWDRepo(ctx context.Context) (*git.Repo, error) {
 	return git.OpenRepo(ctx, ".")
 }
 
-// hasChanges is the pre-flight for --staged/--diff, so an empty
-// index/worktree prints a one-line message and exits instead of flashing an
-// alt-screen TUI just to immediately say there's nothing to show. check is
-// passed as a method expression, e.g. (*git.Repo).HasStagedChanges, and is
-// asked only about paths when the command line gave any — so `gitl --diff
-// untouched.go` reports "no working tree changes in untouched.go" rather
-// than opening an empty view. Reporting the emptiness (emptyMsg, widened to
-// name those paths) is part of the answer, so a false return means "already
-// explained, nothing to open".
-func hasChanges(check func(*git.Repo, context.Context, ...string) (bool, error), paths []string, emptyMsg string) bool {
+// hasChanges is the pre-flight for --staged/--diff: an empty index/worktree
+// exits quietly, the way `git diff` prints nothing and succeeds, instead of
+// flashing an alt-screen TUI just to immediately say there's nothing to
+// show. check is passed as a method expression, e.g.
+// (*git.Repo).HasStagedChanges, and is asked only about paths when the
+// command line gave any — so `gitl --diff untouched.go` is as silent as
+// `git diff -- untouched.go` is. Only a failure to answer at all is
+// reported, and exits nonzero.
+func hasChanges(check func(*git.Repo, context.Context, ...string) (bool, error), paths []string) bool {
 	ctx := context.Background()
 	repo, err := openCWDRepo(ctx)
 	if err != nil {
@@ -135,12 +133,6 @@ func hasChanges(check func(*git.Repo, context.Context, ...string) (bool, error),
 	has, err := check(repo, ctx, paths...)
 	if err != nil {
 		exitWithError(err)
-	}
-	if !has {
-		if len(paths) > 0 {
-			emptyMsg += " in " + strings.Join(paths, ", ")
-		}
-		fmt.Fprintln(os.Stderr, emptyMsg)
 	}
 	return has
 }
@@ -156,7 +148,10 @@ func printCommits(n int) error {
 		return err
 	}
 	if !hasCommits {
-		fmt.Println("this repository has no commits yet")
+		// Nothing to print, and nothing to say about it — same as the
+		// --staged/--diff pre-flight (see hasChanges). The guard itself stays:
+		// FetchLogBatch on an unborn HEAD would fail rather than print
+		// nothing.
 		return nil
 	}
 	commits, err := repo.FetchLogBatch(ctx, 0, n)
