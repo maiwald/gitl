@@ -125,7 +125,7 @@ func TestJumpForwardRedoesIntoSameDetailInstance(t *testing.T) {
 // searching.
 func TestSearchMatchThenOpenThenJumpBackReturnsToMatch(t *testing.T) {
 	m := newSearchableListModel()
-	m = submitListSearch(t, m, "x")
+	m = submitSearchPrompt(t, m, "x")
 
 	newModel, _ := m.Update(allHashesLoadedMsg{term: "x", hashes: fixtureHashOrder})
 	m = newModel.(Model)

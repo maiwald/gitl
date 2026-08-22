@@ -581,14 +581,20 @@ func (m Model) pumpPendingSearch() (Model, tea.Cmd) {
 	return m.applyListMatches(matches)
 }
 
-// applyListMatches installs a resolved search's match positions on the list
-// and jumps to the first match, dispatching a targeted fetch when that match
-// isn't loaded yet. matches is also kept here as the canonical copy, so a
-// list model built later (see commitsLoadedMsg) can be handed the same set
-// rather than losing the search.
+// applyListMatches installs a resolved search's match positions on the list,
+// and — only when the list is the view the user is actually looking at —
+// jumps to the first match, dispatching a targeted fetch when that match
+// isn't loaded yet. A search submitted from the detail view still highlights
+// the list, it just doesn't move its cursor (see submitSearch); n/N reach
+// the matches from there the same as from anywhere else. matches is also
+// kept here as the canonical copy, so a list model built later (see
+// commitsLoadedMsg) can be handed the same set rather than losing the search.
 func (m Model) applyListMatches(matches []int) (Model, tea.Cmd) {
 	m.listMatches = matches
 	m.list.SetMatches(matches)
+	if m.active != viewList {
+		return m, nil
+	}
 	if needsLoad, target := m.list.jumpToFirstMatch(); needsLoad {
 		if req, ok := m.list.RequestLoadUpTo(target); ok {
 			return m, fetchMoreCmd(m.repo, req)
@@ -802,10 +808,15 @@ func (m Model) cancelSearchPrompt() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// submitSearch closes the prompt on Enter and starts a search for the
-// submitted term in whichever view is active. An empty term clears the
-// search entirely instead (a vim-:noh-like escape hatch) — unlike
-// dismissSearch, which only hides it.
+// submitSearch closes the prompt on Enter and searches for the submitted
+// term. There is one search term, and both views match against it: the
+// detail view synchronously via setSearchDisplay above, the list via the git
+// queries startListSearch dispatches. Only the *active* view jumps to its
+// first match, since moving the other view's cursor behind the user's back
+// would be the same surprise openDetail already avoids when a commit is
+// opened with a search running. An empty term clears the search entirely
+// instead (a vim-:noh-like escape hatch) — unlike dismissSearch, which only
+// hides it.
 func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	term := m.searchInput.Value()
 	m.searchPromptOpen = false
@@ -819,6 +830,8 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	m.setSearchDisplay(term, false)
 	if m.active == viewDetail {
 		m.detail.jumpToFirstMatch()
+	}
+	if !m.start.opensList() {
 		return m, nil
 	}
 	return m.startListSearch(term)

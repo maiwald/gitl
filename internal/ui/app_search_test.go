@@ -50,11 +50,13 @@ func newSearchableDetailModel() Model {
 	return m
 }
 
-// submitListSearch drives the prompt (open, type, Enter) to submit term in
-// list view, without invoking the real command it returns (which would
-// shell out to git) — tests instead feed in hand-built
-// searchHashesLoadedMsg/allHashesLoadedMsg messages to control results.
-func submitListSearch(t *testing.T, m Model, term string) Model {
+// submitSearchPrompt drives the prompt (open, type, Enter) to submit term,
+// without invoking the real command it returns (which would shell out to
+// git) — tests instead feed in hand-built searchHashesLoadedMsg/
+// allHashesLoadedMsg messages to control results. The list queries it
+// asserts on are dispatched whichever view is active, since one term matches
+// against both (see submitSearch).
+func submitSearchPrompt(t *testing.T, m Model, term string) Model {
 	t.Helper()
 	newModel, _ := m.Update(keyRune('/'))
 	m = newModel.(Model)
@@ -73,6 +75,38 @@ func submitListSearch(t *testing.T, m Model, term string) Model {
 	return m
 }
 
+// TestSearchFromDetailViewAlsoMatchesTheList pins down the "one term, both
+// views" rule: a search submitted from the detail view matches the list too,
+// so returning to it doesn't show every row dimmed against an empty match
+// set with "no matches" in the status bar. Only the active view jumps, so
+// the list's cursor stays where the user left it.
+func TestSearchFromDetailViewAlsoMatchesTheList(t *testing.T) {
+	jl := &jumplist{}
+	list := NewListModel(fixtureCommits(5), jl)
+	list.SetSize(80, 20)
+	detail := NewDetailModel(fixtureDetailForSearch(), jl)
+	detail.SetSize(80, 4)
+	m := Model{active: viewDetail, list: list, detail: detail, repo: &git.Repo{}, jl: jl}
+	m.width, m.height = 80, 24
+
+	m = submitSearchPrompt(t, m, "needle")
+	if pos, total := m.detail.MatchPosition(); pos != 1 || total != 2 {
+		t.Fatalf("detail MatchPosition = (%d, %d), want (1, 2) — the active view jumps to its first match", pos, total)
+	}
+
+	newModel, _ := m.Update(allHashesLoadedMsg{term: "needle", hashes: fixtureHashOrder})
+	m = newModel.(Model)
+	newModel, _ = m.Update(searchHashesLoadedMsg{term: "needle", hashes: map[string]bool{"c": true}})
+	m = newModel.(Model)
+
+	if _, total := m.list.MatchPosition(); total != 1 {
+		t.Fatalf("list match total = %d, want 1 (the list matches the same term)", total)
+	}
+	if m.list.cursor != 0 {
+		t.Fatalf("list cursor = %d, want 0 — a search from the detail view must not move it", m.list.cursor)
+	}
+}
+
 // TestSearchSubmittedBeforeCommitsSurvivesTheListSwap pins down that a
 // search started before the commits arrive isn't lost when commitsLoadedMsg
 // replaces the list model wholesale. The prompt only needs the repo to be
@@ -83,7 +117,7 @@ func TestSearchSubmittedBeforeCommitsSurvivesTheListSwap(t *testing.T) {
 	m.repo = &git.Repo{}
 	m.width, m.height = 80, 24
 
-	m = submitListSearch(t, m, "x")
+	m = submitSearchPrompt(t, m, "x")
 	newModel, _ := m.Update(allHashesLoadedMsg{term: "x", hashes: fixtureHashOrder})
 	m = newModel.(Model)
 	newModel, _ = m.Update(searchHashesLoadedMsg{term: "x", hashes: map[string]bool{"c": true}})
@@ -195,7 +229,7 @@ func TestBackspaceOnNonEmptyPromptDeletesInsteadOfCancelling(t *testing.T) {
 
 func TestEnterOnEmptyQueryClearsActiveSearch(t *testing.T) {
 	m := newSearchableListModel()
-	m = submitListSearch(t, m, "Author")
+	m = submitSearchPrompt(t, m, "Author")
 	newModel, _ := m.Update(allHashesLoadedMsg{term: "Author", hashes: fixtureHashOrder})
 	m = newModel.(Model)
 	newModel, _ = m.Update(searchHashesLoadedMsg{term: "Author", hashes: map[string]bool{"a": true}})
@@ -218,7 +252,7 @@ func TestListSearchResolvesRegardlessOfMessageOrder(t *testing.T) {
 	for _, order := range []string{"hashesFirst", "orderFirst"} {
 		t.Run(order, func(t *testing.T) {
 			m := newSearchableListModel()
-			m = submitListSearch(t, m, "x")
+			m = submitSearchPrompt(t, m, "x")
 
 			hashesMsg := searchHashesLoadedMsg{term: "x", hashes: map[string]bool{"c": true}}
 			orderMsg := allHashesLoadedMsg{term: "x", hashes: fixtureHashOrder}
@@ -252,10 +286,10 @@ func TestListSearchResolvesRegardlessOfMessageOrder(t *testing.T) {
 
 func TestListSearchIgnoresStaleResultFromSupersededSearch(t *testing.T) {
 	m := newSearchableListModel()
-	m = submitListSearch(t, m, "first")
+	m = submitSearchPrompt(t, m, "first")
 
 	// Start a second search before the first one's queries return.
-	m = submitListSearch(t, m, "second")
+	m = submitSearchPrompt(t, m, "second")
 
 	newModel, _ := m.Update(searchHashesLoadedMsg{term: "first", hashes: map[string]bool{"a": true}})
 	m = newModel.(Model)
@@ -266,7 +300,7 @@ func TestListSearchIgnoresStaleResultFromSupersededSearch(t *testing.T) {
 
 func TestNAndShiftNCycleListMatchesEndToEnd(t *testing.T) {
 	m := newSearchableListModel()
-	m = submitListSearch(t, m, "Author")
+	m = submitSearchPrompt(t, m, "Author")
 	newModel, _ := m.Update(allHashesLoadedMsg{term: "Author", hashes: fixtureHashOrder})
 	m = newModel.(Model)
 	newModel, _ = m.Update(searchHashesLoadedMsg{term: "Author", hashes: map[string]bool{"a": true, "b": true}})
@@ -293,6 +327,11 @@ func TestNAndShiftNCycleListMatchesEndToEnd(t *testing.T) {
 	}
 }
 
+// TestSlashSearchesDetailViewContentSynchronously pins down that the detail
+// half of a search resolves within the submitting Update itself — the whole
+// commit is already in memory, so unlike the list half (whose git queries
+// this same submit dispatches, see TestSearchFromDetailViewAlsoMatchesTheList)
+// there is nothing to wait for.
 func TestSlashSearchesDetailViewContentSynchronously(t *testing.T) {
 	m := newSearchableDetailModel()
 
@@ -302,12 +341,9 @@ func TestSlashSearchesDetailViewContentSynchronously(t *testing.T) {
 		newModel, _ = m.Update(keyRune(r))
 		m = newModel.(Model)
 	}
-	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(Model)
 
-	if cmd != nil {
-		t.Fatal("detail search is fully synchronous (the diff is already in memory), should not dispatch a command")
-	}
 	pos, total := m.detail.MatchPosition()
 	if !m.hasActiveSearch() || m.searchTerm != "needle" || total != 2 || pos != 1 {
 		t.Fatalf("term=%q pos=%d total=%d active=%v, want (\"needle\", 1, 2, true)", m.searchTerm, pos, total, m.hasActiveSearch())
@@ -360,7 +396,7 @@ func TestStatusBarShowsDetailSearchPosition(t *testing.T) {
 
 func TestStatusBarShowsNoMatches(t *testing.T) {
 	m := newSearchableListModel()
-	m = submitListSearch(t, m, "nomatch")
+	m = submitSearchPrompt(t, m, "nomatch")
 	newModel, _ := m.Update(allHashesLoadedMsg{term: "nomatch", hashes: fixtureHashOrder})
 	m = newModel.(Model)
 	newModel, _ = m.Update(searchHashesLoadedMsg{term: "nomatch", hashes: map[string]bool{}})
@@ -377,7 +413,7 @@ func TestStatusBarShowsNoMatches(t *testing.T) {
 // TestNAndShiftNCycleListMatchesEndToEnd drives manually.
 func activeListSearch(t *testing.T, m Model, term string, matchedHashes map[string]bool) Model {
 	t.Helper()
-	m = submitListSearch(t, m, term)
+	m = submitSearchPrompt(t, m, term)
 	newModel, _ := m.Update(allHashesLoadedMsg{term: term, hashes: fixtureHashOrder})
 	m = newModel.(Model)
 	newModel, _ = m.Update(searchHashesLoadedMsg{term: term, hashes: matchedHashes})
