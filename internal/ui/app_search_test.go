@@ -248,6 +248,36 @@ func TestEnterOnEmptyQueryClearsActiveSearch(t *testing.T) {
 	}
 }
 
+// TestClearingSearchCancelsTheInFlightQueries pins down that an empty query
+// retires a search that hasn't come back yet: the status bar stops reporting
+// it, and its results — landing after the user has moved on — must not
+// revive the highlighting or move the cursor.
+func TestClearingSearchCancelsTheInFlightQueries(t *testing.T) {
+	m := newSearchableListModel()
+	m = submitSearchPrompt(t, m, "Author")
+
+	newModel, _ := m.Update(keyRune('/'))
+	m = newModel.(Model)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+
+	if strings.Contains(m.View(), "searching") {
+		t.Fatalf("status bar = %q, want no report of a search that was cleared", m.View())
+	}
+
+	newModel, _ = m.Update(allHashesLoadedMsg{term: "Author", hashes: fixtureHashOrder})
+	m = newModel.(Model)
+	newModel, _ = m.Update(searchHashesLoadedMsg{term: "Author", hashes: map[string]bool{"c": true}})
+	m = newModel.(Model)
+
+	if _, total := m.list.MatchPosition(); total != 0 {
+		t.Fatalf("list match total = %d after a cleared search's results landed, want 0", total)
+	}
+	if m.list.cursor != 0 {
+		t.Fatalf("list cursor = %d, want 0 — a cleared search must not still jump", m.list.cursor)
+	}
+}
+
 func TestListSearchResolvesRegardlessOfMessageOrder(t *testing.T) {
 	for _, order := range []string{"hashesFirst", "orderFirst"} {
 		t.Run(order, func(t *testing.T) {

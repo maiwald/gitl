@@ -847,6 +847,12 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 func (m *Model) setSearchDisplay(term string, dismissed bool) {
 	if term != m.searchTerm {
 		m.listMatches = nil
+		// Whatever queries are in flight are for the term being replaced.
+		// Dropping the pending search discards their results when they land
+		// (see pumpPendingSearch) and stops the status bar from reporting a
+		// search the user has already moved on from. A new search for the new
+		// term, if there is one, installs its own immediately after.
+		m.pendingSearch = nil
 	}
 	m.searchTerm = term
 	m.searchDismissed = dismissed
