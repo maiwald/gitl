@@ -852,11 +852,11 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the list position being left so ctrl-o can return to it, even
 		// before the detail view exists yet on the fetchDetailCmd path.
 		if entry, ok := m.list.SelectedEntry(); ok {
-			m.jl.push(jumpPos{view: viewList, listCursor: m.list.cursor})
+			m.jl.push(m.currentJumpPos())
 			return m.openDetail(git.EntryDetail(entry)), nil
 		}
 		if commit, ok := m.list.Selected(); ok {
-			m.jl.push(jumpPos{view: viewList, listCursor: m.list.cursor})
+			m.jl.push(m.currentJumpPos())
 			return m, fetchDetailCmd(m.repo, commit.Hash, nonFatal)
 		}
 		return m, nil
