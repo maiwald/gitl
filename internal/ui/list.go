@@ -284,6 +284,22 @@ func matchPosition(pos, total int) (int, int) {
 	return pos + 1, total
 }
 
+// stepMatchPos advances pos by delta within total matches, wrapping at both
+// ends — the shared arithmetic behind both views' n/N. A negative pos means
+// no match is active yet (a view that has matches but was never jumped into
+// one, see SetMatches/computeMatches): n selects the first match from there
+// and N the last, rather than letting -1 through the modulo, which would
+// land N two short of the end.
+func stepMatchPos(pos, delta, total int) int {
+	if pos < 0 {
+		if delta > 0 {
+			return 0
+		}
+		return total - 1
+	}
+	return (pos + delta + total) % total
+}
+
 // jumpToBottom moves the cursor to the last loaded commit, or, if history
 // isn't fully loaded yet, requests the remaining commits and defers the
 // jump until they arrive.
@@ -393,7 +409,7 @@ func (m *ListModel) stepMatch(delta int) (needsLoad bool, target int) {
 	if len(m.matches) == 0 {
 		return false, 0
 	}
-	m.matchPos = (m.matchPos + delta + len(m.matches)) % len(m.matches)
+	m.matchPos = stepMatchPos(m.matchPos, delta, len(m.matches))
 	return m.applyCurrentMatch()
 }
 

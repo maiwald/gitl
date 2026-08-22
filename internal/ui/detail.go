@@ -787,7 +787,7 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 	if total == 0 {
 		return 0, 0
 	}
-	m.matchPos = (m.matchPos + delta + total) % total
+	m.matchPos = stepMatchPos(m.matchPos, delta, total)
 	m.jumpToMatch()
 	return m.matchPos + 1, total
 }

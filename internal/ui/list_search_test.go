@@ -106,6 +106,22 @@ func TestListModelSearchNoMatches(t *testing.T) {
 	}
 }
 
+// TestPrevMatchFromNoActiveMatchSelectsTheLast pins down N's behavior in the
+// state a view is in when it has matches but was never jumped into one — a
+// commit opened while a search was running, or a list whose search resolved
+// from the detail view. n takes the first match; N must take the last, not
+// the one two short of it.
+func TestPrevMatchFromNoActiveMatchSelectsTheLast(t *testing.T) {
+	m := NewListModel(fixtureCommits(10), &jumplist{})
+	m.SetTotalCount(10)
+	m.SetSize(80, 5)
+	m.SetMatches([]int{2, 5, 8})
+
+	if _, target := m.PrevMatch(); target != 8 {
+		t.Fatalf("PrevMatch with no active match = %d, want 8 (the last match)", target)
+	}
+}
+
 // TestListModelMatchesDroppedOnTermChange pins down that a match set never
 // outlives the term it was computed for — including the empty term, which is
 // how clearing a search is expressed. Rows must not stay dimmed against a
