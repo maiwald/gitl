@@ -520,9 +520,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The search state can already be set: the prompt is available as
 		// soon as the repo opens, which is a whole fetch before this message.
 		m.list.SetSearchDisplay(m.searchTerm, m.searchDismissed)
-		m, searchCmd := m.applyListMatches(m.listMatches)
+		m, matchCmd := m.applyListMatches(m.listMatches)
 		m, jumpCmd := m.pumpPendingJump()
-		return m, tea.Batch(searchCmd, jumpCmd)
+		return m, tea.Batch(matchCmd, jumpCmd)
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
 		// A jump requested while this fetch was in flight was refused a fetch
