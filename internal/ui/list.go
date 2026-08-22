@@ -31,7 +31,9 @@ type ListModel struct {
 	// cursor is a position in commits; negative values address the
 	// synthetic leading rows instead (leading[i] ⟺ cursor == i-len(leading)).
 	// See CLAUDE.md's Conventions section for why this stays commit-index
-	// space rather than a combined row space.
+	// space rather than a combined row space. It is always within
+	// [topIndex(), lastIndex()] — the rows that actually exist, which on a
+	// list with nothing loaded yet is the single degenerate position 0.
 	cursor int
 	vp     viewport.Model
 
@@ -164,6 +166,16 @@ func (m ListModel) topIndex() int {
 	return -len(m.leading)
 }
 
+// lastIndex is the cursor position of the bottommost row. Normally the last
+// loaded commit, but floored at topIndex() so a list with no commits loaded
+// yet (before commitsLoadedMsg lands, or for good on a `gitl --staged`/
+// `--diff` run) can't put the cursor below its own row space: with leading
+// rows but no commits that's the last leading row, and with neither it's the
+// degenerate position 0.
+func (m ListModel) lastIndex() int {
+	return max(len(m.commits)-1, m.topIndex())
+}
+
 // rowIndex maps a cursor-space position (negative for a leading row — see
 // the cursor field's doc comment) to its index in the flattened rendered
 // row space (leading rows first, then commits), consolidating a transform
@@ -241,7 +253,7 @@ func (m *ListModel) halfPageSize() int {
 }
 
 func (m *ListModel) moveCursor(delta int) {
-	m.setCursor(clampBetween(m.cursor+delta, m.topIndex(), len(m.commits)-1))
+	m.setCursor(clampBetween(m.cursor+delta, m.topIndex(), m.lastIndex()))
 }
 
 // clampIndex constrains next to the valid index range [0, max], as used by
@@ -277,7 +289,7 @@ func matchPosition(pos, total int) (int, int) {
 // jump until they arrive.
 func (m *ListModel) jumpToBottom() (fetchRequest, bool) {
 	if len(m.commits) >= m.totalCount {
-		m.jumpCursor(len(m.commits) - 1)
+		m.jumpCursor(m.lastIndex())
 		return fetchRequest{}, false
 	}
 	// The target isn't loaded, so it's necessarily different from the

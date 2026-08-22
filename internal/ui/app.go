@@ -151,14 +151,21 @@ type pendingSearch struct {
 
 // NewModel constructs the initial root model for the given startup target.
 func NewModel(target StartTarget) Model {
+	// Seeded with an entry at the list's top (position 0), so ctrl-o can
+	// always get back there even if the cursor got elsewhere via plain
+	// motion first, never through an actual jump — same reasoning
+	// ListModel/DetailModel's own seed used to carry individually.
+	jl := &jumplist{back: []jumpPos{{view: viewList, listCursor: 0}}}
 	return Model{
 		start:      target,
 		quitOnBack: target.Staged || target.Diff || target.Rev != "",
-		// Seeded with an entry at the list's top (position 0), so ctrl-o can
-		// always get back there even if the cursor got elsewhere via plain
-		// motion first, never through an actual jump — same reasoning
-		// ListModel/DetailModel's own seed used to carry individually.
-		jl: &jumplist{back: []jumpPos{{view: viewList, listCursor: 0}}},
+		jl:         jl,
+		// The list is built empty here rather than left a zero value until
+		// commitsLoadedMsg replaces it: keys reach it from the very first
+		// frame (viewList is the initial view, and a jumplist entry can send
+		// the user there at any time), and a zero ListModel has no jumplist
+		// to push onto — a nil-pointer panic on the first jump-worthy motion.
+		list: NewListModel(nil, jl),
 	}
 }
 

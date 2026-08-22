@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/maiwald/gitl/internal/git"
 )
 
 func keyRune(r rune) tea.KeyMsg {
@@ -41,6 +42,51 @@ func TestListModelTopAndBottomFullyLoaded(t *testing.T) {
 	}
 	if c, ok := m.Selected(); !ok || c.Hash != "a" {
 		t.Fatalf("after g: selection = %+v, ok=%v, want hash a", c, ok)
+	}
+}
+
+// TestListModelNavigationOnEmptyHistoryStaysInRowSpace pins down the cursor
+// invariant topIndex() <= cursor <= lastIndex() on a list with nothing in it
+// — the state every run starts in, before commitsLoadedMsg lands, and the
+// permanent state of a `gitl --staged`/`--diff` run. Without it, G lands the
+// cursor on len(commits)-1 == -1, which addresses a synthetic leading row
+// that isn't there, and SelectedEntry then indexes leading[-1].
+func TestListModelNavigationOnEmptyHistoryStaysInRowSpace(t *testing.T) {
+	m := NewListModel(nil, &jumplist{})
+	m.SetSize(80, 5)
+
+	for _, k := range []rune{'G', 'j', 'k', 'g'} {
+		m.Update(keyRune(k))
+		if m.cursor != 0 {
+			t.Fatalf("cursor = %d after %q on an empty list, want 0", m.cursor, k)
+		}
+		if _, ok := m.Selected(); ok {
+			t.Fatalf("Selected() reports a commit after %q on an empty list", k)
+		}
+		if _, ok := m.SelectedEntry(); ok {
+			t.Fatalf("SelectedEntry() reports an entry after %q on an empty list", k)
+		}
+	}
+}
+
+// TestListModelJumpToBottomWithOnlyLeadingRows covers the same invariant with
+// the synthetic rows loaded but the commits not yet (worktreeEntriesLoadedMsg
+// can land before commitsLoadedMsg): G belongs on the last leading row, the
+// last row there actually is.
+func TestListModelJumpToBottomWithOnlyLeadingRows(t *testing.T) {
+	m := NewListModel(nil, &jumplist{})
+	m.SetSize(80, 5)
+	m.SetLeadingEntries([]git.WorktreeEntry{
+		{Kind: git.EntryWorktree, Files: []git.File{{Path: "a.txt"}}},
+		{Kind: git.EntryStaged, Files: []git.File{{Path: "b.txt"}}},
+	})
+
+	m.Update(keyRune('G'))
+	if m.cursor != -1 {
+		t.Fatalf("cursor = %d after G, want -1 (the last leading row)", m.cursor)
+	}
+	if e, ok := m.SelectedEntry(); !ok || e.Kind != git.EntryStaged {
+		t.Fatalf("SelectedEntry() = %+v, ok=%v, want the staged entry", e, ok)
 	}
 }
 
