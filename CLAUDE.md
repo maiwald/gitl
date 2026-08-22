@@ -195,6 +195,31 @@ before every commit — don't commit red.
   `renderHeaderLines`/`statLinesFor` as a line-space coordinate, the same
   way an active search match is), not spliced onto the rendered viewport
   afterward.
+- A `reflow()` is the detail view's only way to update anything it shows, so
+  every writer of what it renders (`SetSearchDisplay`, `SetSize`, every
+  cursor move) ends in one. That invariant is what lets `jumpToMatch` read
+  `messageMatchLines`/`diffMatchLines` out of the *previous* reflow instead
+  of forcing a fresh one first: those depend only on the match set and the
+  wrap width, both of which already ended in a reflow when they changed. The
+  restyle a match step needs is `landOnLine`'s own reflow, which has to run
+  regardless to bake the cursor highlight into the line it lands on — so a
+  second one before it is pure duplicated work, and on a large commit that's
+  a whole re-render of every diff line per `n`/`N` press.
+- `reflow` builds the flattened content and its parallel `lineStarts` map
+  through one `contentBuilder` (`detail.go`), so a row can't reach one
+  without reaching the other. Its `len()` is where the next block will
+  land, which is also the origin of that block's own local line space —
+  what the block's cursor coordinate is measured from and what its returned
+  line indices (`FileRange`s, match lines) are offset by. Render a block
+  immediately before adding it rather than predicting where it will go.
+- `wrapRanges` and `padRow` (`render.go`) each skip a lipgloss `Render` on
+  the common path — a line that already fits isn't wrapped, and a plain
+  (non-cursor) fill neither truncates nor styles its padding. Those are
+  claims about lipgloss's behavior rather than ours, and they're on the
+  hottest path in the app (a reflow pays both once per line of the whole
+  commit), so `render_test.go` compares each fast path against what lipgloss
+  itself produces: an upgrade that changes either fails there instead of
+  silently changing every rendered row.
 - Word-wrapping happens on **plain text**, before any styling
   (`wrapRanges`/`wrapStyledRows` in `render.go`, used by `renderDiffLine`
   and `renderHeaderLines`): the wrap is computed as byte ranges into the
