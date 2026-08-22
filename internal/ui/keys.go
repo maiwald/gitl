@@ -18,6 +18,12 @@ type KeyMap struct {
 	Search       key.Binding
 	NextMatch    key.Binding
 	PrevMatch    key.Binding
+	// JumpBack and JumpForward step through a view's jumplist (see
+	// ListModel/DetailModel's jumpBack/jumpForward fields) — vim's ctrl+o/
+	// ctrl+i, chosen over other unused bindings so muscle memory carries
+	// over directly.
+	JumpBack    key.Binding
+	JumpForward key.Binding
 }
 
 // DefaultKeyMap is the vim-style binding set used throughout the app.
@@ -36,4 +42,6 @@ var DefaultKeyMap = KeyMap{
 	Search:       key.NewBinding(key.WithKeys("/")),
 	NextMatch:    key.NewBinding(key.WithKeys("n")),
 	PrevMatch:    key.NewBinding(key.WithKeys("N")),
+	JumpBack:     key.NewBinding(key.WithKeys("ctrl+o")),
+	JumpForward:  key.NewBinding(key.WithKeys("ctrl+i")),
 }

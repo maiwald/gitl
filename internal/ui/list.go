@@ -14,6 +14,10 @@ import (
 // must get before a lazy-load fetch is triggered.
 const loadMoreLookahead = 20
 
+// jumplistCap bounds jumpBack/jumpForward so a long session's jumplist
+// can't grow unboundedly — matching vim's own default jumplist size.
+const jumplistCap = 100
+
 // fetchRequest describes a batch of commits ListModel needs from the repo
 // to satisfy a navigation that has run past the currently loaded data.
 type fetchRequest struct {
@@ -61,6 +65,16 @@ type ListModel struct {
 	matches  []int // absolute commit positions, ascending
 	matchPos int   // index into matches; -1 when there are none
 
+	// jumpBack and jumpForward are the two halves of the list's jumplist
+	// (vim's ctrl-o/ctrl-i): jumpBack holds positions the cursor jumped away
+	// from, most recent last; jumpForward holds positions undone by a
+	// JumpBack call, most recent last, so JumpForward can redo them. Seeded
+	// with an entry at position 0 (see NewListModel) so ctrl-o can always
+	// get back to the top of history even if the cursor got somewhere else
+	// via plain j/k rather than a jump. See pushJump for what counts as a
+	// jump worth recording.
+	jumpBack, jumpForward []int
+
 	// renderedRows caches one rendered row per position in the flattened
 	// row space (leading rows first, then commits — see rowIndex). Every
 	// writer of leading/commits/matches/matchPos/displayTerm/
@@ -80,6 +94,7 @@ func NewListModel(commits []git.Commit) ListModel {
 		totalCount:    len(commits),
 		matchPos:      -1,
 		pendingCursor: -1,
+		jumpBack:      []int{0},
 	}
 }
 
@@ -193,11 +208,71 @@ func (m *ListModel) Update(msg tea.KeyMsg) (fetchRequest, bool) {
 	case key.Matches(msg, DefaultKeyMap.HalfPageDown):
 		m.moveCursor(m.halfPageSize())
 	case key.Matches(msg, DefaultKeyMap.Top):
-		m.setCursor(m.topIndex())
+		m.jumpCursor(m.topIndex())
 	case key.Matches(msg, DefaultKeyMap.Bottom):
 		return m.jumpToBottom()
+	case key.Matches(msg, DefaultKeyMap.JumpBack):
+		m.JumpBack()
+	case key.Matches(msg, DefaultKeyMap.JumpForward):
+		m.JumpForward()
 	}
 	return m.maybeLoadMore()
+}
+
+// jumpCursor moves the cursor straight to target, recording the jump first
+// (see pushJump) unless target is where the cursor already is — a no-op
+// jump has nothing worth returning to. Used by g (Top) and JumpBack/
+// JumpForward's setCursor-only landing; jumpToBottom and applyCurrentMatch
+// push their own jump directly since their landing may be deferred until a
+// fetch completes.
+func (m *ListModel) jumpCursor(target int) {
+	if target != m.cursor {
+		m.pushJump(m.cursor)
+	}
+	m.setCursor(target)
+}
+
+// pushJump records pos — the position the cursor is about to leave — as a
+// jumplist entry reachable via JumpBack, and discards any jumpForward
+// history from an earlier JumpBack: a fresh jump invalidates whatever
+// "redo" existed before it, matching vim's own jumplist semantics. Capped
+// at jumplistCap.
+func (m *ListModel) pushJump(pos int) {
+	m.jumpForward = nil
+	m.jumpBack = append(m.jumpBack, pos)
+	if len(m.jumpBack) > jumplistCap {
+		m.jumpBack = m.jumpBack[len(m.jumpBack)-jumplistCap:]
+	}
+}
+
+// JumpBack and JumpForward step the cursor through the jumplist (see
+// pushJump), vim's ctrl-o/ctrl-i: browser-back/forward-style, each pushing
+// the position it leaves onto the other stack so they exactly undo one
+// another. Both report whether they moved the cursor (false when their
+// stack is empty). Every position either stack can hold was, by
+// construction, the cursor's position at some past point — either already
+// loaded then, or (position 0) always loaded once the list exists — so
+// neither ever needs to trigger a fetch.
+func (m *ListModel) JumpBack() bool {
+	if len(m.jumpBack) == 0 {
+		return false
+	}
+	target := m.jumpBack[len(m.jumpBack)-1]
+	m.jumpBack = m.jumpBack[:len(m.jumpBack)-1]
+	m.jumpForward = append(m.jumpForward, m.cursor)
+	m.setCursor(target)
+	return true
+}
+
+func (m *ListModel) JumpForward() bool {
+	if len(m.jumpForward) == 0 {
+		return false
+	}
+	target := m.jumpForward[len(m.jumpForward)-1]
+	m.jumpForward = m.jumpForward[:len(m.jumpForward)-1]
+	m.jumpBack = append(m.jumpBack, m.cursor)
+	m.setCursor(target)
+	return true
 }
 
 func (m *ListModel) halfPageSize() int {
@@ -245,9 +320,13 @@ func matchPosition(pos, total int) (int, int) {
 // jump until they arrive.
 func (m *ListModel) jumpToBottom() (fetchRequest, bool) {
 	if len(m.commits) >= m.totalCount {
-		m.setCursor(len(m.commits) - 1)
+		m.jumpCursor(len(m.commits) - 1)
 		return fetchRequest{}, false
 	}
+	// The target isn't loaded, so it's necessarily different from the
+	// cursor's current (loaded) position — push unconditionally rather than
+	// duplicating jumpCursor's now-vs-later comparison here.
+	m.pushJump(m.cursor)
 	m.pendingCursor = m.totalCount - 1
 	return m.RequestLoadUpTo(m.totalCount - 1)
 }
@@ -348,8 +427,17 @@ func (m *ListModel) stepMatch(delta int) (needsLoad bool, target int) {
 // in a full render(), even when deferred: matches/matchPos just changed,
 // which can affect dimming/highlighting across arbitrary rows, not just
 // the cursor's.
+//
+// This is the sole path behind Search's initial jump and every later
+// NextMatch/PrevMatch step, so every one of them pushes a jumplist entry
+// (unlike vim, where only the initial search is jumplisted) — deliberate,
+// since a single step here can jump much farther than vim's local
+// from-cursor re-search (message match to diff match, or across files).
 func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
 	target = m.matches[m.matchPos]
+	if target != m.cursor {
+		m.pushJump(m.cursor)
+	}
 	needsLoad = m.jumpOrDefer(target)
 	m.render()
 	return needsLoad, target
