@@ -493,6 +493,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(searchCmd, jumpCmd)
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
+		// A jump requested while this fetch was in flight was refused a fetch
+		// of its own (see RequestLoadUpTo) and is still waiting for a
+		// position this batch may not have reached. Now that the fetch is
+		// done, offer it again — otherwise the cursor silently never arrives.
+		if target, ok := m.list.pendingTarget(); ok {
+			if req, ok := m.list.RequestLoadUpTo(target); ok {
+				return m, fetchMoreCmd(m.repo, req)
+			}
+		}
 		return m, nil
 	case moreCommitsFailedMsg:
 		m.list.loadingMore = false

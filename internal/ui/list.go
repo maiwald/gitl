@@ -316,6 +316,15 @@ func (m *ListModel) jumpToBottom() (fetchRequest, bool) {
 	return m.RequestLoadUpTo(m.totalCount - 1)
 }
 
+// pendingTarget reports the position a deferred jump is still waiting to be
+// loaded (see pendingCursor), if there is one. RequestLoadUpTo refuses while
+// another fetch is in flight, so a jump requested during one has to be
+// re-offered once that fetch lands or it would wait forever — see
+// moreCommitsLoadedMsg in app.go.
+func (m ListModel) pendingTarget() (int, bool) {
+	return m.pendingCursor, m.pendingCursor >= 0
+}
+
 // RequestLoadUpTo requests whatever commits are needed so that index target
 // (plus a little lookahead) is loaded, unless a fetch is already in flight
 // or it's already loaded. This is the same "fetch the rest in one shot"
