@@ -545,9 +545,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// position this batch may not have reached. Now that the fetch is
 		// done, offer it again — otherwise the cursor silently never arrives.
 		if target, ok := m.list.pendingTarget(); ok {
-			if req, ok := m.list.RequestLoadUpTo(target); ok {
-				return m, fetchMoreCmd(m.repo, req)
-			}
+			return m, m.loadUpToCmd(target)
 		}
 		return m, nil
 	case moreCommitsFailedMsg:
@@ -675,11 +673,24 @@ func (m Model) applyListMatches(matches []int) (Model, tea.Cmd) {
 		needsLoad, target = m.list.jumpToLastMatch()
 	}
 	if needsLoad {
-		if req, ok := m.list.RequestLoadUpTo(target); ok {
-			return m, fetchMoreCmd(m.repo, req)
-		}
+		return m, m.loadUpToCmd(target)
 	}
 	return m, nil
+}
+
+// loadUpToCmd dispatches the targeted fetch a deferred list jump to target
+// needs, or nil when there's nothing to fetch — RequestLoadUpTo already
+// refuses when the position is loaded or another fetch owns the wire (see
+// its doc comment), and every caller here has just been told its own jump
+// was deferred. The pairing is uniform enough across the four navigations
+// that can outrun the loaded range (a resolved search, a CLI revision jump,
+// n/N, and a jump re-offered once the fetch blocking it lands) to live in
+// one place.
+func (m Model) loadUpToCmd(target int) tea.Cmd {
+	if req, ok := m.list.RequestLoadUpTo(target); ok {
+		return fetchMoreCmd(m.repo, req)
+	}
+	return nil
 }
 
 // pumpPendingJump applies a CLI-requested list position (`gitl <rev>`)
@@ -696,9 +707,7 @@ func (m Model) pumpPendingJump() (Model, tea.Cmd) {
 	m.pendingJump = nil
 
 	if needsLoad := m.list.JumpTo(pos); needsLoad {
-		if req, ok := m.list.RequestLoadUpTo(pos); ok {
-			return m, fetchMoreCmd(m.repo, req)
-		}
+		return m, m.loadUpToCmd(pos)
 	}
 	return m, nil
 }
@@ -991,9 +1000,7 @@ func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
 		needsLoad, target = m.list.PrevMatch()
 	}
 	if needsLoad {
-		if req, ok := m.list.RequestLoadUpTo(target); ok {
-			return m, fetchMoreCmd(m.repo, req)
-		}
+		return m, m.loadUpToCmd(target)
 	}
 	return m, nil
 }
