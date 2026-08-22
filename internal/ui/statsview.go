@@ -140,14 +140,11 @@ func padLeft(s string, width int) string {
 	return s
 }
 
-// formatCountsStyled renders "+N -M" both plain (for width measurement,
-// since callers need to right-align counts across files without an
-// ANSI-aware width directive) and styled (coloring each half via addStyle/
-// delStyle), omitting either half when its count is zero. The two are
-// computed together so they can't drift out of sync. Used where only a
-// single joined value is needed (e.g. a worktree row's summary);
-// statLinesFor's own table instead keeps additions and deletions apart via
-// formatCountParts, so each gets its own column.
+// formatCountsStyled renders "+N -M" as one styled string, coloring each
+// half via addStyle/delStyle and omitting either when its count is zero.
+// Used where a single joined value is all that's needed (e.g. a worktree
+// row's summary); statLinesFor's own table instead keeps additions and
+// deletions apart via formatCountParts, so each gets its own column.
 //
 // addStyle/delStyle are parameterized (rather than always the plain
 // diffAddStyle/diffDeleteStyle) so a selected/dimmed row elsewhere (e.g.
@@ -155,20 +152,18 @@ func padLeft(s string, width int) string {
 // every other per-field style on such a row does. sep styles the literal
 // space joining the two halves, needed for the same ANSI-reset reason as
 // rowFieldStyle's separators.
-func formatCountsStyled(additions, deletions int, addStyle, delStyle, sep lipgloss.Style) (plain, styled string) {
-	var plainParts, styledParts []string
+func formatCountsStyled(additions, deletions int, addStyle, delStyle, sep lipgloss.Style) string {
+	var parts []string
 	if additions > 0 {
-		plainParts = append(plainParts, fmt.Sprintf("+%d", additions))
-		styledParts = append(styledParts, addStyle.Render(fmt.Sprintf("+%d", additions)))
+		parts = append(parts, addStyle.Render(fmt.Sprintf("+%d", additions)))
 	}
 	if deletions > 0 {
-		plainParts = append(plainParts, fmt.Sprintf("-%d", deletions))
-		styledParts = append(styledParts, delStyle.Render(fmt.Sprintf("-%d", deletions)))
+		parts = append(parts, delStyle.Render(fmt.Sprintf("-%d", deletions)))
 	}
-	if len(plainParts) == 0 {
-		return "0", "0"
+	if len(parts) == 0 {
+		return "0"
 	}
-	return strings.Join(plainParts, " "), strings.Join(styledParts, sep.Render(" "))
+	return strings.Join(parts, sep.Render(" "))
 }
 
 // diffTotals sums additions/deletions across files — used by

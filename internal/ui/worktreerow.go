@@ -39,7 +39,7 @@ func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) st
 	// the moment the row is selected, even without a search active.
 	addStyle := rowFieldStyle(diffAddStyle, dimmed, selected)
 	delStyle := rowFieldStyle(diffDeleteStyle, dimmed, selected)
-	_, counts := formatCountsStyled(additions, deletions, addStyle, delStyle, countStyle)
+	counts := formatCountsStyled(additions, deletions, addStyle, delStyle, countStyle)
 
 	// leading mirrors renderCommitRow's sha/when blank columns exactly, at
 	// whichever width is active, so the title/counts that follow keep

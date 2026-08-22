@@ -229,10 +229,13 @@ func TestStatLinesForRightAlignsCounts(t *testing.T) {
 	}
 }
 
-func TestFormatCountsStyledPlainMatchesStyledContent(t *testing.T) {
+// TestFormatCountsStyledVisibleWidth pins down that the styling doesn't
+// disturb the value's visible width — the counts sit in a column, so the
+// ANSI escapes have to stay invisible to a width measurement.
+func TestFormatCountsStyledVisibleWidth(t *testing.T) {
 	tests := []struct {
 		additions, deletions int
-		wantPlain            string
+		want                 string
 	}{
 		{0, 0, "0"},
 		{5, 0, "+5"},
@@ -240,12 +243,9 @@ func TestFormatCountsStyledPlainMatchesStyledContent(t *testing.T) {
 		{5, 3, "+5 -3"},
 	}
 	for _, tt := range tests {
-		plain, styled := formatCountsStyled(tt.additions, tt.deletions, diffAddStyle, diffDeleteStyle, lipgloss.NewStyle())
-		if plain != tt.wantPlain {
-			t.Errorf("formatCountsStyled(%d, %d) plain = %q, want %q", tt.additions, tt.deletions, plain, tt.wantPlain)
-		}
-		if lipgloss.Width(styled) != len(plain) {
-			t.Errorf("formatCountsStyled(%d, %d) styled visible width = %d, want %d (matching plain)", tt.additions, tt.deletions, lipgloss.Width(styled), len(plain))
+		styled := formatCountsStyled(tt.additions, tt.deletions, diffAddStyle, diffDeleteStyle, lipgloss.NewStyle())
+		if lipgloss.Width(styled) != len(tt.want) {
+			t.Errorf("formatCountsStyled(%d, %d) visible width = %d, want %d (the width of %q)", tt.additions, tt.deletions, lipgloss.Width(styled), len(tt.want), tt.want)
 		}
 	}
 }
