@@ -222,6 +222,15 @@ before every commit — don't commit red.
   (compute only, no jump) rather than `RunSearch` — `RunSearch`'s own
   jump-to-first-match would fight the `cursorLine` this restore is
   specifically trying to land on.
+- Opening a commit/entry while a search is already active (from the list,
+  or via ctrl-o/ctrl-i landing back on one) computes and highlights its
+  matches immediately (`DetailModel.computeMatches`) but does *not* jump
+  the cursor to the first one — unlike submitting `/` from inside an
+  already-open commit (`RunSearch`, `computeMatches` plus a jump), which
+  does. Landing straight in the middle of a diff/message the moment a
+  view opens would be a surprising way for a view to open; n/N reach the
+  first match the same as from anywhere else. See `openDetail`'s doc
+  comment in `app.go`.
 
 ## Known limitations (intentional, not bugs)
 

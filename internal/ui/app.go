@@ -335,14 +335,22 @@ func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 // search state into it so an already-active search keeps working across
 // commits/entries (a freshly constructed DetailModel otherwise defaults to
 // searchDismissed=false, which would make an already-dismissed search
-// suddenly reappear just because a new commit/entry was opened).
+// suddenly reappear just because a new commit/entry was opened). Unlike a
+// "/" search submitted while already viewing this commit (RunSearch, which
+// jumps straight to the first match), opening a commit/entry only computes
+// and highlights matches — the cursor stays at the natural top of the view,
+// since jumping straight past the commit metadata into the diff/message
+// would be a surprising way for a view to open. n/N reach the first match
+// from here same as any other.
 func (m Model) openDetail(detail *git.CommitDetail) Model {
 	m.detail = NewDetailModel(detail, m.jl)
+	if m.searchTerm != "" {
+		m.detail.computeMatches(m.searchTerm)
+	}
 	m.detail.SetSize(m.width, m.contentHeight())
 	m.active = viewDetail
 	if m.searchTerm != "" {
 		m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
-		m.detail.RunSearch(m.searchTerm)
 	}
 	return m
 }

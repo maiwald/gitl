@@ -472,8 +472,12 @@ func TestNRevivesDismissedDetailSearchAndStatusBar(t *testing.T) {
 // TestOpeningCommitWithActiveSearchHighlightsMessageMatch covers the bug
 // this whole feature was built to fix: a commit matched only via its
 // message body (invisible in the list row, since the row only shows the
-// subject) must show the match the moment it's opened, not just once n/N
-// is pressed.
+// subject) must show the match the moment it's opened, not just once n/N is
+// pressed. Unlike a "/" search submitted from inside an already-open commit,
+// though, opening a commit doesn't jump the cursor to that match — see
+// computeMatches's doc comment — so the match is highlighted but not
+// (yet) the "active" one, and the cursor stays at the natural top of the
+// view.
 func TestOpeningCommitWithActiveSearchHighlightsMessageMatch(t *testing.T) {
 	list := NewListModel(fixtureCommits(5), &jumplist{})
 	list.SetSize(80, 20)
@@ -488,11 +492,17 @@ func TestOpeningCommitWithActiveSearchHighlightsMessageMatch(t *testing.T) {
 	if m.active != viewDetail {
 		t.Fatalf("active view = %v, want viewDetail", m.active)
 	}
-	if pos, total := m.detail.MatchPosition(); total != 1 || pos != 1 {
-		t.Fatalf("detail MatchPosition = (%d, %d), want (1, 1) — opening the commit should search it immediately", pos, total)
+	if m.detail.cursorLine != 0 {
+		t.Fatalf("detail cursorLine = %d, want 0 — opening a commit shouldn't jump the cursor to a match", m.detail.cursorLine)
 	}
-	if !strings.Contains(m.View(), searchActiveMatchStyle.Render("MARKER")) {
+	if pos, total := m.detail.MatchPosition(); total != 1 || pos != 0 {
+		t.Fatalf("detail MatchPosition = (%d, %d), want (0, 1) — opening the commit computes matches but marks none active yet", pos, total)
+	}
+	if !strings.Contains(m.View(), searchMatchStyle.Render("MARKER")) {
 		t.Fatalf("detail view = %q, want the message match visibly highlighted right after opening", m.View())
+	}
+	if strings.Contains(m.View(), searchActiveMatchStyle.Render("MARKER")) {
+		t.Fatalf("detail view = %q, want no match marked active until n/N is pressed", m.View())
 	}
 }
 
@@ -507,8 +517,8 @@ func TestOpeningCommitWithDismissedSearchStaysDismissed(t *testing.T) {
 	newModel, _ := m.Update(commitDetailLoadedMsg{detail: detail})
 	m = newModel.(Model)
 
-	if pos, total := m.detail.MatchPosition(); total != 1 || pos != 1 {
-		t.Fatalf("detail MatchPosition = (%d, %d), want (1, 1) — matches should still be computed even while dismissed", pos, total)
+	if pos, total := m.detail.MatchPosition(); total != 1 || pos != 0 {
+		t.Fatalf("detail MatchPosition = (%d, %d), want (0, 1) — matches should still be computed even while dismissed", pos, total)
 	}
 	view := m.View()
 	if strings.Contains(view, searchActiveMatchStyle.Render("MARKER")) || strings.Contains(view, searchMatchStyle.Render("MARKER")) {
