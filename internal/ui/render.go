@@ -163,6 +163,15 @@ func wrapRanges(text string, width int) [][2]int {
 	if width <= 0 || text == "" {
 		return [][2]int{{0, len(text)}}
 	}
+	// A line that already fits comes back from the wrapper as itself, padded
+	// out to width — so measure first and skip the render, which is the
+	// expensive half of laying a line out and which a reflow pays once per
+	// line of the entire commit. Trimming the trailing spaces is what the
+	// general path below would do to that single row anyway (whether the
+	// wrapper added them or the line carried its own).
+	if !strings.Contains(text, "\n") && lipgloss.Width(text) <= width {
+		return [][2]int{{0, len(strings.TrimRight(text, " "))}}
+	}
 	rows := strings.Split(lipgloss.NewStyle().Width(width).Render(text), "\n")
 	ranges := make([][2]int, 0, len(rows))
 	pos := 0
