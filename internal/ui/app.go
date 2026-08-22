@@ -34,6 +34,16 @@ type StartTarget struct {
 	Diff   bool
 }
 
+// opensDetail reports whether gitl was asked to open straight into a detail
+// view, skipping the list as the initial screen.
+func (t StartTarget) opensDetail() bool { return t.Staged || t.Diff || t.Rev != "" }
+
+// opensList reports whether the commit list gets loaded at all. Deliberately
+// not the negation of opensDetail: a `gitl <rev>` jump opens a detail view
+// *and* loads the list behind it (so ctrl-o can reach the commit's place in
+// history), while `--staged`/`--diff` have no list at any point.
+func (t StartTarget) opensList() bool { return !t.Staged && !t.Diff }
+
 // Model is the root Bubble Tea model for the application.
 type Model struct {
 	width, height int
@@ -154,11 +164,16 @@ func NewModel(target StartTarget) Model {
 	// Seeded with an entry at the list's top (position 0), so ctrl-o can
 	// always get back there even if the cursor got elsewhere via plain
 	// motion first, never through an actual jump — same reasoning
-	// ListModel/DetailModel's own seed used to carry individually.
-	jl := &jumplist{back: []jumpPos{{view: viewList, listCursor: 0}}}
+	// ListModel/DetailModel's own seed used to carry individually. Skipped
+	// when the run has no list at all (see opensList), where ctrl-o would
+	// otherwise strand the user on a permanently empty list view.
+	jl := &jumplist{}
+	if target.opensList() {
+		jl.back = []jumpPos{{view: viewList, listCursor: 0}}
+	}
 	return Model{
 		start:      target,
-		quitOnBack: target.Staged || target.Diff || target.Rev != "",
+		quitOnBack: target.opensDetail(),
 		jl:         jl,
 		// The list is built empty here rather than left a zero value until
 		// commitsLoadedMsg replaces it: keys reach it from the very first

@@ -68,6 +68,28 @@ func TestNewModelSetsQuitOnBackFromStagedTarget(t *testing.T) {
 	}
 }
 
+// TestStagedStartupHasNoListToJumpBackTo pins down that a `gitl --staged`
+// run — which never loads a list at all (see StartTarget.opensList) — leaves
+// the jumplist unseeded, so ctrl-o stays in the detail view instead of
+// stranding the user on a permanently empty list view.
+func TestStagedStartupHasNoListToJumpBackTo(t *testing.T) {
+	m := NewModel(StartTarget{Staged: true})
+	m.width, m.height = 80, 24
+	newModel, _ := m.Update(commitDetailLoadedMsg{
+		detail: git.EntryDetail(git.WorktreeEntry{Kind: git.EntryStaged, Files: []git.File{{Path: "a.txt"}}}),
+	})
+	m = newModel.(Model)
+
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = newModel.(Model)
+	if m.active != viewDetail {
+		t.Fatalf("active view = %v after ctrl+o, want viewDetail (there is no list to go back to)", m.active)
+	}
+	if !strings.Contains(m.View(), "Staged changes") {
+		t.Fatalf("view = %q, want the staged entry still on screen", m.View())
+	}
+}
+
 // TestQuitOnBackGate pins down handleDetailViewKey's Back branch: with
 // quitOnBack set (a `gitl --staged` startup jump), Back quits the program
 // outright; otherwise it returns to the list, exactly as it does for a real
