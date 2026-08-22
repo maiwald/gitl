@@ -274,13 +274,7 @@ func (m *DetailModel) renderDiffBlock(width int, cursorLine int) (lines []string
 	if len(m.detail.Files) == 0 {
 		return []string{noDiffNotice(m.detail)}, nil, nil, []bool{true}
 	}
-	diffActive := -1
-	if !m.searchDismissed {
-		if inMessage, idx := m.matchSegment(); !inMessage {
-			diffActive = idx
-		}
-	}
-	return RenderDiff(m.detail.Files, width, m.diffMatches, diffActive, m.searchDismissed, cursorLine)
+	return RenderDiff(m.detail.Files, width, m.diffMatches, m.activeMatchIn(false), m.searchDismissed, cursorLine)
 }
 
 // renderHeaderBlock renders the commit metadata/message block at width,
@@ -292,13 +286,7 @@ func (m *DetailModel) renderDiffBlock(width int, cursorLine int) (lines []string
 // renderHeaderLines).
 func (m *DetailModel) renderHeaderBlock(width int) (wrapped []string, matchLines []int, starts []bool) {
 	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
-	msgActive := -1
-	if !m.searchDismissed {
-		if inMessage, idx := m.matchSegment(); inMessage {
-			msgActive = idx
-		}
-	}
-	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, msgActive, m.searchDismissed, m.cursorLine)
+	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, m.activeMatchIn(true), m.searchDismissed, m.cursorLine)
 }
 
 // buildSections assembles one reflow pass's sticky-header/[ ]-navigation
@@ -724,14 +712,29 @@ func (m DetailModel) totalMatches() int { return len(m.messageMatches) + len(m.d
 // matchSegment reports which half of the combined message+diff match
 // sequence matchPos falls in (see messageMatches's doc comment), and idx's
 // position within that segment — the one place that boundary arithmetic
-// lives, instead of being reimplemented at each of its three call sites.
-// Only meaningful for matchPos >= 0; callers with a "no active match" case
+// lives, instead of being reimplemented at each of its call sites. Only
+// meaningful for matchPos >= 0; callers with a "no active match" case
 // (matchPos < 0) must still guard that separately before indexing with idx.
 func (m DetailModel) matchSegment() (inMessage bool, idx int) {
 	if m.matchPos < len(m.messageMatches) {
 		return true, m.matchPos
 	}
 	return false, m.matchPos - len(m.messageMatches)
+}
+
+// activeMatchIn resolves which match one of the two rendered blocks should
+// style as the active (n/N-selected) one: an index into that block's own
+// match slice, or -1 for "none of mine" — because the active match is in the
+// other block, because there is no active match yet, or because the search
+// is dismissed, in which case no match is styled at all anywhere.
+func (m DetailModel) activeMatchIn(message bool) int {
+	if m.searchDismissed || m.matchPos < 0 {
+		return -1
+	}
+	if inMessage, idx := m.matchSegment(); inMessage == message {
+		return idx
+	}
+	return -1
 }
 
 // NextMatch and PrevMatch cycle to the following/preceding match (across
