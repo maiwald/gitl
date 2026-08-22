@@ -86,6 +86,24 @@ gitl --diff        # open the working-tree-changes (index vs working tree)
                    # replacement for `git diff | less`: q/Esc quits outright.
 ```
 
+Each of those takes paths, limiting the diff that opens to them just like
+`git diff`/`git show` do:
+
+```sh
+gitl --diff internal/ui          # only this directory's unstaged changes
+gitl --staged main.go args.go    # only these files' staged changes
+gitl HEAD~3 internal/git         # only this directory's part of that commit
+gitl HEAD~3 -- main.go           # -- separates paths from the revision
+                                  # explicitly, needed for a path that could
+                                  # be read as a revision (or as a flag)
+```
+
+Without `--`, the first argument is always the revision, even if a file by
+that name exists — so a path-only invocation needs the separator, or one of
+`--staged`/`--diff`. The paths apply to the diff that opens and nothing
+else: the commit list behind it isn't filtered, so a commit opened from
+there (or reached with `ctrl-o`) shows its full diff.
+
 `--staged` and `--diff` are mutually exclusive with each other and with a
 revision argument.
 
@@ -126,6 +144,8 @@ Run `gitl --help` (or `-h`) at any time for the full flag reference.
 - `gitl <rev>` for a revision that isn't reachable from HEAD (e.g. a commit
   that only exists on another branch) still opens its detail view, but the
   list can't sensibly position a cursor on it, so it's left at the top.
+- Paths limit the startup diff only — there's no path-filtered commit list,
+  and no way to change or drop the pathspec from inside the running UI.
 
 ## Development
 

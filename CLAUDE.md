@@ -21,8 +21,11 @@ Module path: `github.com/maiwald/gitl`. Requires Go 1.25+ and `git` on
 
 ```
 main.go                    entry point: builds and runs the root tea.Program,
-                           parses -n / --staged / --diff / --version / a
-                           positional revision arg
+                           plus the -n printer and the --staged/--diff
+                           pre-flight
+args.go                    command-line parsing: flags, the revision/pathspec
+                           split (including git's "--" separator) and every
+                           combination rule, as a unit-testable options value
 internal/concurrent/       RunConcurrently: generic "run these fns in parallel,
                            return the first error in call order" helper, with no
                            git- or TUI-specific logic, shared by both packages below
@@ -42,7 +45,7 @@ internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
                            commands, canonical search state + prompt overlay +
                            status bar, StartTarget dispatch (plain / --staged /
-                           --diff / <rev>)
+                           --diff / <rev>, each optionally pathspec-limited)
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions
   render.go                primitives every view renders through (clipping/padding
@@ -208,6 +211,27 @@ before every commit — don't commit red.
   `Width`+`Background` set on genuinely plain (not pre-ANSI'd) text —
   `renderFileHeader`/hunk headers via `cursorMerged`, `renderClipped` —
   doesn't have this problem and needs no such strip.
+- A CLI pathspec (`gitl --diff <path>...`, `gitl <rev> [--] <path>...`)
+  reaches git as its own `-- <path>...` tail (`pathspecArgs` in
+  `internal/git/diff.go`) and is scoped to the **startup target only**
+  (`StartTarget.Paths`): `fetchDetailCmd`'s `paths` is passed exclusively by
+  the startup dispatch, never by Enter on a list row, and
+  `FetchWorktreeEntries` (the list's leading rows) is unfiltered. The commit
+  list can't be path-filtered at all, so filtering anything reached *through*
+  it would answer a question the list never asked. The pathspec is carried on
+  `CommitDetail.Paths`/`WorktreeEntry.Paths` for one purpose only — letting
+  `noDiffNotice` (`detail.go`) say *which* paths came up empty; nothing
+  re-runs a fetch from it.
+- Command-line parsing lives in `args.go`, not `main.go`, and takes its
+  `*flag.FlagSet` as a parameter so tests can parse a literal argv quietly
+  (`args_test.go`) while main installs usage/error reporting on it. The
+  `--` separator is split off (`splitPathspecs`) *before* `fs.Parse`,
+  because Go's flag package consumes a leading `--` itself — without the
+  pre-split, `gitl -- foo.go` would be indistinguishable from `gitl foo.go`,
+  where the argument means a revision instead. `flag.ContinueOnError` (not
+  `ExitOnError`) is what lets a bad flag and a bad argument *combination*
+  exit through the same path in main; `errFlagParse` marks the failures the
+  FlagSet has already printed itself, so they aren't reported twice.
 - `Model` (`app.go`) owns a single cross-view jumplist (`jl *jumplist`,
   vim's ctrl-o/ctrl-i): a two-stack, browser-back/forward shape capped at
   `jumplistCap`, holding tagged `jumpPos` entries (a list cursor position,
@@ -305,6 +329,12 @@ before every commit — don't commit red.
   reporting `searching…` while the queries it deferred run — the cost of not
   running them for every search made inside a commit. The hash order they
   need is fetched once per run and cached (`Model.allHashes`).
+- A CLI pathspec limits the startup diff only: there's no path-filtered
+  commit list, and no way to change or drop the pathspec from inside the
+  running UI. With no `--`, the first non-flag argument is always read as a
+  revision even when a file by that name exists (git guesses between the two;
+  gitl doesn't, since a path-only invocation has no list mode to fall back
+  to) — `--`, `--staged`, or `--diff` is how a bare path is expressed.
 - `gitl <rev>` for a revision not reachable from HEAD still opens its
   detail view (via `FetchCommitDetail`, which accepts any git-resolvable
   revision), but `CommitPosition` has no list position to offer, so the
