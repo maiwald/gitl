@@ -74,7 +74,7 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 
 	// date/clock are never search targets, so they're just rendered in
 	// their base style — sha, author, and subject go through highlightSpans
-	// below (sha only when unselected, alongside author/subject).
+	// below.
 
 	// when collapses date+clock into whichever single value is most useful
 	// for this row once the pane is narrow (see narrowListWidth): today's
@@ -95,16 +95,19 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 		when = date + gap(" ") + clock
 	}
 
-	if !selected {
-		ms := matchStyle(isActiveMatch)
-		sha = highlightSpans(sha, searchTerm, shaBase, ms)
-		author = highlightSpans(author, searchTerm, authorBase, ms)
-		subject = highlightSpans(subject, searchTerm, subjectBase, ms)
-	} else {
-		sha = shaBase.Render(sha)
-		author = authorBase.Render(author)
-		subject = subjectBase.Render(subject)
+	// The cursor row shows no search highlighting — its own background is
+	// already the strongest signal on the screen, the same reasoning
+	// renderLineWithBaseSpans applies to a match under the detail view's
+	// cursor. An empty term is how highlightSpans expresses that: it renders
+	// the field in its base style and nothing else.
+	term := searchTerm
+	if selected {
+		term = ""
 	}
+	ms := matchStyle(isActiveMatch)
+	sha = highlightSpans(sha, term, shaBase, ms)
+	author = highlightSpans(author, term, authorBase, ms)
+	subject = highlightSpans(subject, term, subjectBase, ms)
 	refs := formatRefs(c.Refs, selected, dimmed)
 
 	var row string
