@@ -81,32 +81,168 @@ func resolveSearch(m Model, term string, matchedHashes map[string]bool) Model {
 	return newModel.(Model)
 }
 
-// TestSearchFromDetailViewAlsoMatchesTheList pins down the "one term, both
-// views" rule: a search submitted from the detail view matches the list too,
-// so returning to it doesn't show every row dimmed against an empty match
-// set with "no matches" in the status bar. Only the active view jumps, so
-// the list's cursor stays where the user left it.
-func TestSearchFromDetailViewAlsoMatchesTheList(t *testing.T) {
-	jl := &jumplist{}
+// newSearchableBothViewsModel builds a Model with both views populated,
+// starting in the detail view — the shape the lazy list-search tests need,
+// since they care about what happens on the way back to the list.
+func newSearchableBothViewsModel() Model {
+	// Seeded the way NewModel seeds it, so ctrl-o can reach the list.
+	jl := &jumplist{back: []jumpPos{{view: viewList, listCursor: 0}}}
 	list := NewListModel(fixtureCommits(5), jl)
 	list.SetSize(80, 20)
 	detail := NewDetailModel(fixtureDetailForSearch(), jl)
 	detail.SetSize(80, 4)
 	m := Model{active: viewDetail, list: list, detail: detail, repo: &git.Repo{}, jl: jl}
 	m.width, m.height = 80, 24
+	return m
+}
 
-	m = submitSearchPrompt(t, m, "needle")
+// submitDetailSearch submits term from the detail view, asserting that it
+// costs no git queries — the list's half is repo-wide and deliberately isn't
+// run until something needs it (see ensureListSearch).
+func submitDetailSearch(t *testing.T, m Model, term string) Model {
+	t.Helper()
+	newModel, _ := m.Update(keyRune('/'))
+	m = newModel.(Model)
+	for _, r := range term {
+		newModel, _ = m.Update(keyRune(r))
+		m = newModel.(Model)
+	}
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+	if cmd != nil {
+		t.Fatal("a search inside a commit must not trigger the list's repo-wide queries")
+	}
+	if m.searchingTerm != "" {
+		t.Fatalf("searchingTerm = %q, want no list search in flight", m.searchingTerm)
+	}
+	return m
+}
+
+// TestSearchInsideCommitDefersTheListQueries pins down that searching within
+// an open commit costs nothing repo-wide: the commit's own matches resolve
+// synchronously, and the list's queries only go out when the list is shown
+// with the search still active.
+func TestSearchInsideCommitDefersTheListQueries(t *testing.T) {
+	m := newSearchableBothViewsModel()
+
+	m = submitDetailSearch(t, m, "needle")
 	if pos, total := m.detail.MatchPosition(); pos != 1 || total != 2 {
 		t.Fatalf("detail MatchPosition = (%d, %d), want (1, 2) — the active view jumps to its first match", pos, total)
 	}
 
-	m = resolveSearch(m, "needle", map[string]bool{"c": true})
+	// ctrl-o back to the list, with the search still showing: now the list
+	// needs its matches, or it would dim every row against an empty set. The
+	// first ctrl-o undoes the search's own jump within the commit; the second
+	// leaves the detail view.
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = newModel.(Model)
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = newModel.(Model)
+	if m.active != viewList {
+		t.Fatalf("active view = %v after ctrl+o, want viewList", m.active)
+	}
+	if cmd == nil || m.searchingTerm != "needle" {
+		t.Fatalf("searchingTerm = %q (cmd nil: %v), want the list queries dispatched on arrival", m.searchingTerm, cmd == nil)
+	}
 
+	m = resolveSearch(m, "needle", map[string]bool{"c": true})
 	if _, total := m.list.MatchPosition(); total != 1 {
 		t.Fatalf("list match total = %d, want 1 (the list matches the same term)", total)
 	}
 	if m.list.cursor != 0 {
-		t.Fatalf("list cursor = %d, want 0 — a search from the detail view must not move it", m.list.cursor)
+		t.Fatalf("list cursor = %d, want 0 — arriving at the list must not move its cursor", m.list.cursor)
+	}
+}
+
+// TestJumpBackLandsOnTheCommitItLeftRegardlessOfSearch pins down that ctrl-o
+// restores the list position it recorded, independent of search state: the
+// deferred list search it triggers on arrival installs matches for
+// highlighting only and must never move the cursor off that commit.
+func TestJumpBackLandsOnTheCommitItLeftRegardlessOfSearch(t *testing.T) {
+	m := newSearchableListModel()
+	for i := 0; i < 3; i++ {
+		newModel, _ := m.Update(keyRune('j'))
+		m = newModel.(Model)
+	}
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // opens commit "d"
+	m = newModel.(Model)
+	newModel, _ = m.Update(commitDetailLoadedMsg{detail: fixtureDetailForSearch()})
+	m = newModel.(Model)
+
+	m = submitDetailSearch(t, m, "needle")
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO}) // undo the in-commit jump
+	m = newModel.(Model)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO}) // back to the list
+	m = newModel.(Model)
+
+	if c, ok := m.list.Selected(); !ok || c.Hash != "d" {
+		t.Fatalf("selection after ctrl+o = %+v, ok=%v, want the commit it was opened from (hash d)", c, ok)
+	}
+
+	// The search it triggered on arrival resolves; the cursor stays put even
+	// though the only match is elsewhere in the list.
+	m = resolveSearch(m, "needle", map[string]bool{"a": true})
+	if c, ok := m.list.Selected(); !ok || c.Hash != "d" {
+		t.Fatalf("selection after the deferred search resolved = %+v, ok=%v, want hash d (matches highlight, they don't jump)", c, ok)
+	}
+	if _, total := m.list.MatchPosition(); total != 1 {
+		t.Fatalf("list match total = %d, want 1 (highlighting is still installed)", total)
+	}
+}
+
+// TestDismissedSearchNeverQueriesTheList covers the ordinary way out of a
+// commit: with a search active, the first q dismisses it and the second
+// returns to the list, which then displays no search at all — so its
+// repo-wide queries are never worth running.
+func TestDismissedSearchNeverQueriesTheList(t *testing.T) {
+	m := newSearchableBothViewsModel()
+	m = submitDetailSearch(t, m, "needle")
+
+	newModel, _ := m.Update(keyRune('q')) // dismisses the search
+	m = newModel.(Model)
+	newModel, cmd := m.Update(keyRune('q')) // returns to the list
+	m = newModel.(Model)
+
+	if m.active != viewList {
+		t.Fatalf("active view = %v, want viewList after the second q", m.active)
+	}
+	if cmd != nil || m.searchingTerm != "" {
+		t.Fatalf("searchingTerm = %q (cmd nil: %v), want no queries for a dismissed search", m.searchingTerm, cmd == nil)
+	}
+
+	// n revives the search, and that is the moment the list needs matches.
+	newModel, cmd = m.Update(keyRune('n'))
+	m = newModel.(Model)
+	if cmd == nil || m.searchingTerm != "needle" {
+		t.Fatalf("searchingTerm = %q (cmd nil: %v), want n to trigger the list queries", m.searchingTerm, cmd == nil)
+	}
+
+	m = resolveSearch(m, "needle", map[string]bool{"c": true})
+	if c, ok := m.list.Selected(); !ok || c.Hash != "c" {
+		t.Fatalf("selection = %+v, ok=%v, want n to land on the match once it resolved", c, ok)
+	}
+}
+
+// TestPrevMatchTriggeredSearchLandsOnTheLastMatch is the N counterpart: when
+// N is the key that triggers the list's queries, it must land on the last
+// match, not the first.
+func TestPrevMatchTriggeredSearchLandsOnTheLastMatch(t *testing.T) {
+	m := newSearchableBothViewsModel()
+	m = submitDetailSearch(t, m, "needle")
+	newModel, _ := m.Update(keyRune('q'))
+	m = newModel.(Model)
+	newModel, _ = m.Update(keyRune('q'))
+	m = newModel.(Model)
+
+	newModel, cmd := m.Update(keyRune('N'))
+	m = newModel.(Model)
+	if cmd == nil {
+		t.Fatal("N should trigger the list queries when the matches aren't loaded")
+	}
+
+	m = resolveSearch(m, "needle", map[string]bool{"b": true, "d": true})
+	if c, ok := m.list.Selected(); !ok || c.Hash != "d" {
+		t.Fatalf("selection = %+v, ok=%v, want the last match (hash d)", c, ok)
 	}
 }
 

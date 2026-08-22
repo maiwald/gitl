@@ -242,15 +242,24 @@ before every commit — don't commit red.
   fight the `cursorLine` this restore is specifically trying to land on.
 - There is **one search term**, owned by the root `Model` (`searchTerm`/
   `searchDismissed`/`listMatches`, written only by `setSearchDisplay`), and
-  **both views match against it**: the detail view synchronously (its whole
-  commit is in memory), the list via the git queries `startListSearch`
-  dispatches. Only the view that is *active* when `/` is submitted jumps to
-  its first match (`DetailModel.jumpToFirstMatch`, `applyListMatches`'s
-  `viewList` gate) — moving a cursor the user isn't looking at is the same
-  surprise as landing mid-diff the moment a commit opens, and n/N reach
-  those matches from either view anyway. A view with matches but none
-  active reports `[0/N]`; `stepMatchPos` makes n take the first from there
-  and N the last.
+  **both views answer to it** — but each is searched only when its answer is
+  actually needed. The detail view resolves synchronously (its whole commit
+  is in memory). The list's half is two repo-wide `git log` scans, so it
+  waits for `ensureListSearch`: the list becoming visible with the search
+  still showing, or n/N reviving it there. A search that stays inside one
+  commit never pays for it, and neither does the usual way out — the first
+  q/esc dismisses the search, so the second arrives at a list that displays
+  no search at all.
+- What a deferred list search does when it lands is decided when it's
+  *started* (`Model.jumpOnResolve`), never read off the active view when it
+  resolves: a search started merely to light up the list's rows must not
+  also move its cursor, while one started by `/` from the list, or by n/N,
+  lands on a match (`jumpToFirstMatch`/`jumpToLastMatch` — n takes the first
+  match ahead of the cursor, N the last one behind it). The jump isn't
+  consumed until there are commits to land it on, since a search can resolve
+  before the first batch of them does. A view with matches but none active
+  reports `[0/N]`; `stepMatchPos` makes n take the first from there and N
+  the last.
 - A match set must never outlive the term it was computed for. Each view
   keeps its own `displayTerm` next to its matches and drops (`ListModel`,
   whose matches take a git query) or recomputes (`DetailModel`) them the
@@ -292,11 +301,10 @@ before every commit — don't commit red.
   untracked file still appears (correctly counted, marked `StatusAdded`)
   but without its own hunks, so a repo with a huge untracked directory
   doesn't spawn hundreds of subprocesses.
-- A search submitted from the detail view also runs the list's git queries
-  (one term, both views), so searching inside a commit costs a `git log
-  --grep`/`--author` pair even if the user never returns to the list. The
-  hash order those queries need is fetched once per run and cached
-  (`Model.allHashes`).
+- Returning to the list with a search still showing can leave it briefly
+  reporting `searching…` while the queries it deferred run — the cost of not
+  running them for every search made inside a commit. The hash order they
+  need is fetched once per run and cached (`Model.allHashes`).
 - `gitl <rev>` for a revision not reachable from HEAD still opens its
   detail view (via `FetchCommitDetail`, which accepts any git-resolvable
   revision), but `CommitPosition` has no list position to offer, so the

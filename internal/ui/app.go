@@ -104,8 +104,13 @@ type Model struct {
 	// searchTerm, kept here rather than only inside ListModel because the
 	// list model is rebuilt from scratch when commits arrive — a search
 	// submitted before that (the prompt only needs the repo, not the list)
-	// would otherwise be silently dropped by the replacement.
+	// would otherwise be silently dropped by the replacement. Nil while the
+	// list's half of the search hasn't run: it's only fetched when something
+	// needs it, see ensureListSearch.
 	listMatches []int
+	// jumpOnResolve is what the list should do with the match positions it's
+	// waiting on — see the jumpNone/jumpNextMatch/jumpPrevMatch constants.
+	jumpOnResolve int
 
 	// jl is the single, cross-view jumplist backing ctrl-o/ctrl-i (vim's
 	// jumpBack/jumpForward). Shared by pointer with ListModel and
@@ -584,29 +589,82 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// jumpOnResolve values: what the list should do once its match positions
+// arrive. Recorded at the moment the search is started, not read off the
+// active view when it resolves, since a search started only to light the
+// list's rows up must not also drag its cursor around.
+const (
+	jumpNone      = 0
+	jumpNextMatch = 1  // land on the first match at or after the cursor
+	jumpPrevMatch = -1 // land on the last match at or before it
+)
+
 // startListSearch kicks off the git queries a list search needs, recording
 // the term so their results can be recognized as still wanted when they
-// arrive.
-func (m Model) startListSearch(term string) (Model, tea.Cmd) {
+// arrive, and what to do with them once they do.
+func (m Model) startListSearch(term string, jump int) (Model, tea.Cmd) {
 	m.searchingTerm = term
+	m.jumpOnResolve = jump
 	return m, searchCmd(m.repo, term, m.allHashes)
 }
 
-// applyListMatches installs a resolved search's match positions on the list,
-// and — only when the list is the view the user is actually looking at —
-// jumps to the first match, dispatching a targeted fetch when that match
-// isn't loaded yet. A search submitted from the detail view still highlights
-// the list, it just doesn't move its cursor (see submitSearch); n/N reach
-// the matches from there the same as from anywhere else. matches is also
-// kept here as the canonical copy, so a list model built later (see
-// commitsLoadedMsg) can be handed the same set rather than losing the search.
+// ensureListSearch starts the list's queries if its match positions aren't
+// available for the active term yet. Nothing calls this speculatively: the
+// list's half of a search is repo-wide (two `git log` scans over all of
+// HEAD), so it's only worth running once something is actually about to use
+// it — the list becoming visible with the search still showing, or n/N
+// reviving it there. A search that stays inside one commit never pays for
+// it, and neither does the common exit path, where the first q/esc dismisses
+// the search before the second one returns to the list.
+//
+// jump says what to do when the results land (see jumpOnResolve); an
+// already-running search has its intent upgraded rather than being started
+// twice, so an n pressed while the queries are still out still lands on a
+// match.
+func (m Model) ensureListSearch(jump int) (Model, tea.Cmd) {
+	if m.searchTerm == "" || m.searchDismissed || m.repo == nil || !m.start.opensList() {
+		return m, nil
+	}
+	if m.searchingTerm == m.searchTerm {
+		if jump != jumpNone {
+			m.jumpOnResolve = jump
+		}
+		return m, nil
+	}
+	// setSearchDisplay drops listMatches on every term change and a resolved
+	// search always installs a non-nil slice (empty when it found nothing),
+	// so nil here means "not searched yet", not "searched, no matches".
+	if m.listMatches != nil {
+		return m, nil
+	}
+	return m.startListSearch(m.searchTerm, jump)
+}
+
+// applyListMatches installs a resolved search's match positions on the list
+// and carries out whatever jump was asked for when it was started (see
+// jumpOnResolve), dispatching a targeted fetch when the match it lands on
+// isn't loaded yet. matches is also kept here as the canonical copy, so a
+// list model built later (see commitsLoadedMsg) can be handed the same set
+// rather than losing the search — which is why the jump isn't consumed until
+// there are commits to land it on: a search can resolve before the very
+// first batch of commits does.
 func (m Model) applyListMatches(matches []int) (Model, tea.Cmd) {
 	m.listMatches = matches
 	m.list.SetMatches(matches)
-	if m.active != viewList {
+	if m.jumpOnResolve == jumpNone || len(m.list.commits) == 0 {
 		return m, nil
 	}
-	if needsLoad, target := m.list.jumpToFirstMatch(); needsLoad {
+	jump := m.jumpOnResolve
+	m.jumpOnResolve = jumpNone
+
+	var needsLoad bool
+	var target int
+	if jump == jumpNextMatch {
+		needsLoad, target = m.list.jumpToFirstMatch()
+	} else {
+		needsLoad, target = m.list.jumpToLastMatch()
+	}
+	if needsLoad {
 		if req, ok := m.list.RequestLoadUpTo(target); ok {
 			return m, fetchMoreCmd(m.repo, req)
 		}
@@ -701,7 +759,7 @@ func (m Model) doJumpBack() (tea.Model, tea.Cmd) {
 	target := m.jl.back[len(m.jl.back)-1]
 	m.jl.back = m.jl.back[:len(m.jl.back)-1]
 	m.jl.forward = append(m.jl.forward, m.currentJumpPos())
-	return m.gotoJumpPos(target), nil
+	return m.gotoJumpPos(target)
 }
 
 func (m Model) doJumpForward() (tea.Model, tea.Cmd) {
@@ -711,7 +769,7 @@ func (m Model) doJumpForward() (tea.Model, tea.Cmd) {
 	target := m.jl.forward[len(m.jl.forward)-1]
 	m.jl.forward = m.jl.forward[:len(m.jl.forward)-1]
 	m.jl.back = append(m.jl.back, m.currentJumpPos())
-	return m.gotoJumpPos(target), nil
+	return m.gotoJumpPos(target)
 }
 
 // gotoJumpPos applies target, switching the active view if needed. A list
@@ -725,18 +783,20 @@ func (m Model) doJumpForward() (tea.Model, tea.Cmd) {
 // same non-jumping way openDetail does before landing the cursor exactly on
 // cursorLine — SetSearchDisplay computes matches without moving the cursor
 // precisely so a restore like this one lands where it means to.
-func (m Model) gotoJumpPos(pos jumpPos) Model {
+func (m Model) gotoJumpPos(pos jumpPos) (Model, tea.Cmd) {
 	if pos.view == viewList {
 		m.active = viewList
 		m.list.JumpTo(pos.listCursor)
-		return m
+		// Landing here with the search still showing is the other moment the
+		// list's own matches are needed — see ensureListSearch.
+		return m.ensureListSearch(jumpNone)
 	}
 	if m.detail.detail != pos.commit {
 		m.detail = m.newDetailModel(pos.commit)
 	}
 	m.detail.setCursor(pos.cursorLine)
 	m.active = viewDetail
-	return m
+	return m, nil
 }
 
 // handleDetailViewKey routes a key press while the detail view is active:
@@ -750,7 +810,7 @@ func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		m.active = viewList
-		return m, nil
+		return m.ensureListSearch(jumpNone)
 	}
 	m.detail.Update(msg)
 	return m, nil
@@ -818,14 +878,15 @@ func (m Model) cancelSearchPrompt() (tea.Model, tea.Cmd) {
 }
 
 // submitSearch closes the prompt on Enter and searches for the submitted
-// term. There is one search term, and both views match against it: the
-// detail view synchronously, as setSearchDisplay installs the term, and the
-// list via the git queries startListSearch dispatches. Only the *active* view jumps to its
-// first match, since moving the other view's cursor behind the user's back
-// would be the same surprise openDetail already avoids when a commit is
-// opened with a search running. An empty term clears the search entirely
-// instead (a vim-:noh-like escape hatch) — unlike dismissSearch, which only
-// hides it.
+// term. There is one search term and both views answer to it, but only the
+// view in front of the user is searched now: the detail view resolves
+// synchronously as setSearchDisplay installs the term, while the list's
+// repo-wide queries wait until something needs them (ensureListSearch).
+// Whichever view was active jumps to its first match; the other never moves
+// its cursor behind the user's back — the same surprise openDetail avoids
+// when a commit is opened with a search running. An empty term clears the
+// search entirely instead (a vim-:noh-like escape hatch) — unlike
+// dismissSearch, which only hides it.
 func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	term := m.searchInput.Value()
 	m.searchPromptOpen = false
@@ -839,11 +900,9 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	m.setSearchDisplay(term, false)
 	if m.active == viewDetail {
 		m.detail.jumpToFirstMatch()
-	}
-	if !m.start.opensList() {
 		return m, nil
 	}
-	return m.startListSearch(term)
+	return m.startListSearch(term, jumpNextMatch)
 }
 
 // setSearchDisplay is the sole writer of the canonical search term/
@@ -905,6 +964,13 @@ func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
 			m.detail.PrevMatch()
 		}
 		return m, nil
+	}
+
+	// n/N is one of the two moments the list's own matches are actually
+	// needed (see ensureListSearch); until they land there is nothing to
+	// step through, so the step itself becomes the jump they resolve into.
+	if m.listMatches == nil {
+		return m.ensureListSearch(delta)
 	}
 
 	var needsLoad bool

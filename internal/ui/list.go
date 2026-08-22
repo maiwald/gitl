@@ -357,6 +357,25 @@ func (m *ListModel) jumpToFirstMatch() (needsLoad bool, target int) {
 	return m.applyCurrentMatch()
 }
 
+// jumpToLastMatch is jumpToFirstMatch's mirror: the last match at or before
+// the cursor, wrapping to the last match overall if none qualify. It's where
+// N lands when it's the key that triggered the search in the first place
+// (see ensureListSearch in app.go) — n takes the first match ahead of the
+// cursor, so N takes the last one behind it.
+func (m *ListModel) jumpToLastMatch() (needsLoad bool, target int) {
+	if len(m.matches) == 0 {
+		return false, 0
+	}
+	m.matchPos = len(m.matches) - 1
+	for i := len(m.matches) - 1; i >= 0; i-- {
+		if m.matches[i] <= m.cursor {
+			m.matchPos = i
+			break
+		}
+	}
+	return m.applyCurrentMatch()
+}
+
 // NextMatch and PrevMatch cycle to the following/preceding search match,
 // wrapping at both ends. See Search for the needsLoad/target contract.
 func (m *ListModel) NextMatch() (needsLoad bool, target int) { return m.stepMatch(1) }
