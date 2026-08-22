@@ -131,15 +131,6 @@ func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int
 	}
 }
 
-// padLeft right-aligns s within width, left-padding with spaces. It's a
-// no-op (never truncates) when s is already at or beyond width.
-func padLeft(s string, width int) string {
-	if n := width - len(s); n > 0 {
-		return strings.Repeat(" ", n) + s
-	}
-	return s
-}
-
 // formatCountsStyled renders "+N -M" as one styled string, coloring each
 // half via addStyle/delStyle and omitting either when its count is zero.
 // Used where a single joined value is all that's needed (e.g. a worktree

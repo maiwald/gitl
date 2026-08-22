@@ -151,20 +151,6 @@ func (m *DetailModel) SetSize(width, height int) {
 	m.reflow()
 }
 
-// blankLine renders one of the blank separator rows reflow splices between
-// the header/stats/diff blocks: plain empty when isCursor is false (as
-// before), or a full-width row filled with the cursor background when it's
-// the line the cursor is currently on — these separators live outside
-// renderHeaderBlock/renderDiffBlock/statLinesFor, so they need their own
-// cursor check rather than inheriting one from whichever block they sit
-// between.
-func blankLine(width int, isCursor bool) string {
-	if !isCursor {
-		return ""
-	}
-	return padRow("", width, lipgloss.NewStyle().Background(cursorRowBg))
-}
-
 func (m *DetailModel) reflow() {
 	if m.detail == nil {
 		return
@@ -306,16 +292,6 @@ func buildSections(fileRanges []FileRange, headerLen int, hasStats bool, offset 
 	return sections
 }
 
-// baseSpan is a byte-offset [start,end) run of a header line rendered with
-// a specific non-match base style (e.g. the author's name colored
-// authorStyle), computed once per logical line in headerLinesFor alongside
-// its plain text so it composes with search-match highlighting the same
-// way a single uniform base already does for diff lines.
-type baseSpan struct {
-	start, end int
-	style      lipgloss.Style
-}
-
 // headerLinesFor builds the commit header's pre-wrap logical lines, one
 // entry per line (wrapping happens later, in renderHeaderLines, so its
 // matchLines bookkeeping stays exact — the same convention RenderDiff/
@@ -442,71 +418,6 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 		wrapped = append(wrapped, rows...)
 	}
 	return wrapped, matchLines
-}
-
-// renderLineWithBaseSpans composites per-column base coloring (spans) with
-// search-match spans (matches) into one already-styled string: walks the
-// boundary points from both span lists, and for each resulting piece
-// renders with whichever match style covers it, else whichever baseSpan
-// covers it, else base — a match always wins over a base span on overlap
-// (e.g. a search hit inside the author's name still shows the search
-// highlight, not the name's blue). base is the fallback for text outside
-// every span and match: colorless for header/message lines (spans already
-// cover every colored substring there), or a diff line's op color
-// (diffAddStyle/diffDeleteStyle/diffContextStyle) when called from
-// renderDiffLine with no spans at all.
-//
-// cursor merges the cursor row's background into whatever style would
-// otherwise apply at each position, except inside a match: a match's own
-// background is already the line's strongest signal, and layering the
-// (much subtler) cursor background on top of it would only mute it for no
-// benefit — so the cursor background applies everywhere on the line
-// *except* a matched span.
-func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, cursor bool) string {
-	bounds := map[int]bool{0: true, len(text): true}
-	for _, s := range spans {
-		bounds[s.start] = true
-		bounds[s.end] = true
-	}
-	for _, m := range matches {
-		bounds[m.start] = true
-		bounds[m.end] = true
-	}
-	points := make([]int, 0, len(bounds))
-	for p := range bounds {
-		points = append(points, p)
-	}
-	sort.Ints(points)
-
-	styleAt := func(pos int) lipgloss.Style {
-		for _, m := range matches {
-			if pos >= m.start && pos < m.end {
-				return matchStyle(m.active)
-			}
-		}
-		for _, s := range spans {
-			if pos >= s.start && pos < s.end {
-				if cursor {
-					return s.style.Background(cursorRowBg)
-				}
-				return s.style
-			}
-		}
-		if cursor {
-			return base.Background(cursorRowBg)
-		}
-		return base
-	}
-
-	var b strings.Builder
-	for i := 0; i < len(points)-1; i++ {
-		start, end := points[i], points[i+1]
-		if start >= end {
-			continue
-		}
-		b.WriteString(styleAt(start).Render(text[start:end]))
-	}
-	return b.String()
 }
 
 // MessageMatch identifies one case-insensitive occurrence of a search term

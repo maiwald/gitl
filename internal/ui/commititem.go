@@ -152,39 +152,6 @@ func rowGap(selected bool) func(string) string {
 	return func(s string) string { return style.Render(s) }
 }
 
-// padRow truncates row to width and pads any remainder with trailing
-// spaces in style. MaxWidth alone (no Width) truncates in place; combining
-// Width with MaxWidth would run row — which already contains several
-// independently-Rendered, reset-terminated spans — through lipgloss's
-// paragraph reflow, miscounting cell positions across those resets and
-// risking a hard-wrap mid-field, so padding to width is done by hand
-// instead.
-func padRow(row string, width int, style lipgloss.Style) string {
-	row = style.MaxWidth(width).Render(row)
-	if pad := width - lipgloss.Width(row); pad > 0 {
-		row += style.Render(strings.Repeat(" ", pad))
-	}
-	return row
-}
-
-// renderClippedStyled truncates content that may already contain
-// independently-Render()'d spans (ANSI resets embedded) to width via padRow
-// — see padRow's doc comment for why Width+MaxWidth reflow can't be used
-// here. cursor fills the padding with the cursor row's background instead
-// of plain spaces, for a stats-table row the detail view's cursor is
-// currently on (see statsview.go's renderStatLine); otherwise the fill is
-// unstyled plain spaces.
-func renderClippedStyled(content string, width int, cursor bool) string {
-	if width <= 0 {
-		return content
-	}
-	fill := lipgloss.NewStyle()
-	if cursor {
-		fill = fill.Background(cursorRowBg)
-	}
-	return padRow(content, width, fill)
-}
-
 // RenderCommitList renders commits as plain list rows, one per line, with
 // no selection/dim/search styling — used by the -n non-interactive flag.
 func RenderCommitList(commits []git.Commit, width int) string {
@@ -193,27 +160,6 @@ func RenderCommitList(commits []git.Commit, width int) string {
 		lines[i] = renderCommitRow(c, width, false, false, "", false)
 	}
 	return strings.Join(lines, "\n")
-}
-
-// highlightSpans splits text at case-insensitive occurrences of term,
-// rendering unmatched runs with base and matched runs with match, then
-// concatenating the already-rendered pieces — the same nested-style
-// pattern used above (style a plain-text span, then render it), just
-// generalized to N spans instead of one field per style. Returns
-// base.Render(text) unchanged when term is empty.
-func highlightSpans(text, term string, base, match lipgloss.Style) string {
-	if term == "" {
-		return base.Render(text)
-	}
-	var b strings.Builder
-	pos := 0
-	for _, occ := range findOccurrences(text, term) {
-		b.WriteString(base.Render(text[pos:occ[0]]))
-		b.WriteString(match.Render(text[occ[0]:occ[1]]))
-		pos = occ[1]
-	}
-	b.WriteString(base.Render(text[pos:]))
-	return b.String()
 }
 
 // formatRefs renders branch/tag/HEAD decorations as bracketed badges,
@@ -242,18 +188,6 @@ func shaPrefix(hash string) string {
 		return hash
 	}
 	return hash[:shaColumnWidth]
-}
-
-// truncate shortens s to at most n runes, appending an ellipsis if cut.
-func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
 }
 
 // isToday reports whether t falls on the same calendar day as now, in t's

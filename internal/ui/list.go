@@ -244,46 +244,8 @@ func (m *ListModel) pushJump(pos int) {
 	m.jl.push(jumpPos{view: viewList, listCursor: pos})
 }
 
-// halfPage is how far ctrl-u/ctrl-d move in a viewport of the given height:
-// half a screen, floored at 1 so they still move something on a one- or
-// two-row viewport. Shared with DetailModel, whose cursor pages the same way.
-func halfPage(height int) int {
-	return max(height/2, 1)
-}
-
 func (m *ListModel) moveCursor(delta int) {
 	m.setCursor(clamp(m.cursor+delta, m.topIndex(), m.lastIndex()))
-}
-
-// clamp constrains v to the range [lo, hi].
-func clamp(v, lo, hi int) int {
-	return min(max(v, lo), hi)
-}
-
-// matchPosition reports pos as a 1-based position within total, or (0, 0)
-// when there are no matches — the shared shape behind both ListModel's and
-// DetailModel's MatchPosition methods.
-func matchPosition(pos, total int) (int, int) {
-	if total == 0 {
-		return 0, 0
-	}
-	return pos + 1, total
-}
-
-// stepMatchPos advances pos by delta within total matches, wrapping at both
-// ends — the shared arithmetic behind both views' n/N. A negative pos means
-// no match is active yet (a view that has matches but was never jumped into
-// one, see SetMatches/computeMatches): n selects the first match from there
-// and N the last, rather than letting -1 through the modulo, which would
-// land N two short of the end.
-func stepMatchPos(pos, delta, total int) int {
-	if pos < 0 {
-		if delta > 0 {
-			return 0
-		}
-		return total - 1
-	}
-	return (pos + delta + total) % total
 }
 
 // jumpToBottom moves the cursor to the last loaded commit, or, if history

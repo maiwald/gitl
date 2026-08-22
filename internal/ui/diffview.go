@@ -96,20 +96,6 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 	return lines, ranges, matchLines
 }
 
-// cursorMerged merges the cursor row's background into base when isCursor
-// is true, else returns base unchanged. Only safe for a row rendered with a
-// single, uniform style (a file/hunk header, the binary notice) — content
-// that composites independently-rendered spans (diff/header text lines)
-// instead threads the cursor flag into renderLineWithBaseSpans, which
-// merges the background per-span before any Render() call fires (see
-// CLAUDE.md's "style plain-text spans before any .Render() call" rule).
-func cursorMerged(base lipgloss.Style, isCursor bool) lipgloss.Style {
-	if isCursor {
-		return base.Background(cursorRowBg)
-	}
-	return base
-}
-
 // DiffMatchKind distinguishes a DiffMatch found in a file's own displayed
 // name (DiffMatchFileName) from one found in a diff line's content
 // (DiffMatchLine). DiffMatchLine is deliberately the zero value: existing
@@ -169,24 +155,6 @@ func FindDiffMatches(files []git.File, term string) []DiffMatch {
 	return matches
 }
 
-// findOccurrences returns the byte [start, end) offset of every
-// case-insensitive occurrence of term within text.
-func findOccurrences(text, term string) [][2]int {
-	lowerText, lowerTerm := strings.ToLower(text), strings.ToLower(term)
-	var occs [][2]int
-	pos := 0
-	for {
-		idx := strings.Index(lowerText[pos:], lowerTerm)
-		if idx < 0 {
-			break
-		}
-		idx += pos
-		occs = append(occs, [2]int{idx, idx + len(term)})
-		pos = idx + len(term)
-	}
-	return occs
-}
-
 // renderFileHeader renders a file's header row: its status glyph plus
 // displayed name (filePathLabel), with any file-name search matches (see
 // DiffMatchFileName) highlighted inline. matches are in the same
@@ -220,16 +188,6 @@ func filePathLabel(f git.File) string {
 	return f.Path
 }
 
-// renderClipped renders text in a single line, truncated (not wrapped) to
-// width. It skips the width constraint entirely when width isn't positive,
-// since lipgloss's Width/MaxWidth degenerate at zero.
-func renderClipped(style lipgloss.Style, text string, width int) string {
-	if width <= 0 {
-		return style.Render(text)
-	}
-	return style.Width(width).MaxWidth(width).Render(text)
-}
-
 func fileStatusGlyph(s git.FileStatus) string {
 	switch s {
 	case git.StatusAdded:
@@ -243,14 +201,6 @@ func fileStatusGlyph(s git.FileStatus) string {
 	default:
 		return "M"
 	}
-}
-
-// lineMatch is a search match's position within a single diff line's
-// rendered text (prefix + DiffLine.Text), plus whether it's the active
-// (n/N-selected) match.
-type lineMatch struct {
-	start, end int
-	active     bool
 }
 
 // renderDiffLine renders a single diff line, word-wrapping it to width when
