@@ -75,18 +75,7 @@ func trimTrailingNewlines(out []byte) string {
 // splitLines trims trailing newlines from out and splits it into
 // non-empty lines. It returns nil for empty input.
 func splitLines(out []byte) []string {
-	text := trimTrailingNewlines(out)
-	if text == "" {
-		return nil
-	}
-	lines := strings.Split(text, "\n")
-	result := make([]string, 0, len(lines))
-	for _, l := range lines {
-		if l != "" {
-			result = append(result, l)
-		}
-	}
-	return result
+	return splitRecords(out, "\n")
 }
 
 // splitNullTerminated splits NUL-delimited git output (from a -z flag) into
@@ -94,11 +83,19 @@ func splitLines(out []byte) []string {
 // themselves contain newlines and avoids git's own quoting of unusual path
 // characters, since -z output is never quoted.
 func splitNullTerminated(out []byte) []string {
-	text := strings.TrimRight(string(out), "\x00")
+	return splitRecords(out, "\x00")
+}
+
+// splitRecords is the shared body of both: git's record-per-entry output
+// always ends with a trailing separator (and, for some commands, a run of
+// them), so trim those off and drop any empty entry rather than reporting
+// one for each.
+func splitRecords(out []byte, sep string) []string {
+	text := strings.TrimRight(string(out), sep)
 	if text == "" {
 		return nil
 	}
-	parts := strings.Split(text, "\x00")
+	parts := strings.Split(text, sep)
 	result := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if p != "" {
