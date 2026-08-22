@@ -113,10 +113,11 @@ func padRow(row string, width int, style lipgloss.Style) string {
 const lipglossTabWidth = 4
 
 // expandTabs replaces tabs with lipglossTabWidth spaces, also returning a
-// map from each byte offset in text to its offset in the result (nil when
-// there was nothing to expand, i.e. the identity map), so span and match
-// offsets computed against the original text can follow it.
-func expandTabs(text string) (string, []int) {
+// mapping from each byte offset in text to its offset in the result (nil
+// when there was nothing to expand, i.e. the identity mapping — see
+// shiftSpans), so span and match offsets computed against the original text
+// can follow it.
+func expandTabs(text string) (string, offsetMap) {
 	if !strings.Contains(text, "\t") {
 		return text, nil
 	}
@@ -131,7 +132,7 @@ func expandTabs(text string) (string, []int) {
 		b.WriteByte(text[i])
 	}
 	offsets[len(text)] = b.Len()
-	return b.String(), offsets
+	return b.String(), func(i int) int { return offsets[i] }
 }
 
 // wrapRanges word-wraps plain (ANSI-free) text to width the way lipgloss
@@ -180,9 +181,9 @@ func wrapRanges(text string, width int) [][2]int {
 // means no caller needs to strip lipgloss's plain padding back off before
 // re-padding, since nothing was padded before styling ran.
 func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, width int, cursor bool) []string {
-	text, offsets := expandTabs(text)
-	spans = shiftSpans(spans, offsets)
-	matches = shiftMatches(matches, offsets)
+	text, expanded := expandTabs(text)
+	spans = shiftSpans(spans, expanded)
+	matches = shiftMatches(matches, expanded)
 
 	fill := lipgloss.NewStyle()
 	if cursor {
@@ -202,27 +203,41 @@ func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lip
 	return rows
 }
 
-// shiftSpans and shiftMatches move offsets computed against pre-tab-expansion
-// text onto the expanded text (see expandTabs); a nil map means the text had
-// no tabs and the offsets already line up.
-func shiftSpans(spans []baseSpan, offsets []int) []baseSpan {
-	if offsets == nil || len(spans) == 0 {
+// offsetMap relocates a byte offset in one version of a line's plain text
+// onto another version of it: past a rendering prefix the offsets were
+// computed without (shiftBy), or through tab expansion (expandTabs). A nil
+// offsetMap is the identity, which shiftSpans/shiftMatches take as "nothing
+// to do" rather than copying the slice for no reason.
+type offsetMap func(int) int
+
+// shiftBy is the offsetMap for text about to be rendered behind an n-byte
+// prefix — a diff line's +/-/space marker, or a file header's status glyph —
+// which spans and matches are always computed without (see DiffMatch's and
+// intralineSpans's coordinate conventions).
+func shiftBy(n int) offsetMap {
+	return func(i int) int { return i + n }
+}
+
+// shiftSpans and shiftMatches move spans/matches through at, onto whatever
+// version of the line's text is actually being rendered.
+func shiftSpans(spans []baseSpan, at offsetMap) []baseSpan {
+	if at == nil || len(spans) == 0 {
 		return spans
 	}
 	shifted := make([]baseSpan, len(spans))
 	for i, s := range spans {
-		shifted[i] = baseSpan{start: offsets[s.start], end: offsets[s.end], style: s.style}
+		shifted[i] = baseSpan{start: at(s.start), end: at(s.end), style: s.style}
 	}
 	return shifted
 }
 
-func shiftMatches(matches []lineMatch, offsets []int) []lineMatch {
-	if offsets == nil || len(matches) == 0 {
+func shiftMatches(matches []lineMatch, at offsetMap) []lineMatch {
+	if at == nil || len(matches) == 0 {
 		return matches
 	}
 	shifted := make([]lineMatch, len(matches))
 	for i, m := range matches {
-		shifted[i] = lineMatch{start: offsets[m.start], end: offsets[m.end], active: m.active}
+		shifted[i] = lineMatch{start: at(m.start), end: at(m.end), active: m.active}
 	}
 	return shifted
 }

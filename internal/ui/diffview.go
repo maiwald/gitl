@@ -184,11 +184,7 @@ func renderFileHeader(f git.File, width int, cursor bool, matches []lineMatch) s
 	if len(matches) == 0 && !cursor {
 		return renderClipped(fileHeaderStyle, label, width)
 	}
-	shiftedMatches := make([]lineMatch, len(matches))
-	for i, m := range matches {
-		shiftedMatches[i] = lineMatch{start: len(prefix) + m.start, end: len(prefix) + m.end, active: m.active}
-	}
-	content := renderLineWithBaseSpans(label, nil, shiftedMatches, fileHeaderStyle, cursor)
+	content := renderLineWithBaseSpans(label, nil, shiftMatches(matches, shiftBy(len(prefix))), fileHeaderStyle, cursor)
 	return renderClippedStyled(content, width, cursor)
 }
 
@@ -231,15 +227,8 @@ func renderDiffLine(l git.DiffLine, width int, spans []baseSpan, matches []lineM
 	style, prefix := diffLineStyle(l.Op)
 	text := prefix + l.Text
 
-	shiftedMatches := make([]lineMatch, len(matches))
-	for i, m := range matches {
-		shiftedMatches[i] = lineMatch{start: len(prefix) + m.start, end: len(prefix) + m.end, active: m.active}
-	}
-	shiftedSpans := make([]baseSpan, len(spans))
-	for i, s := range spans {
-		shiftedSpans[i] = baseSpan{start: len(prefix) + s.start, end: len(prefix) + s.end, style: s.style}
-	}
-	return wrapStyledRows(text, shiftedSpans, shiftedMatches, style, width, cursor)
+	at := shiftBy(len(prefix))
+	return wrapStyledRows(text, shiftSpans(spans, at), shiftMatches(matches, at), style, width, cursor)
 }
 
 func diffLineStyle(op git.LineOp) (lipgloss.Style, string) {
