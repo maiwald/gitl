@@ -168,41 +168,27 @@ func (m *DetailModel) reflow() {
 	// The header/message is wrapped the same way diff lines are (each
 	// visual row its own entry) so the line offset applied to fileRanges
 	// below stays exact regardless of terminal width — see the FileRange
-	// convention in diffview.go. Rendered before the diff block (unlike the
-	// document order it appears in) since offset — needed to translate
-	// m.cursorLine into the diff block's own local line space — depends on
-	// its length.
+	// convention in diffview.go. Each block is rendered immediately before
+	// it's added, so where it lands (b.len()) is also where its own local
+	// line space starts — which is what the cursor coordinate handed to it
+	// has to be measured from.
+	var b contentBuilder
 	wrappedHeader, messageMatchLines, headerStarts := m.renderHeaderBlock(diffWidth)
-	statLines := statLinesFor(m.detail.Files, diffWidth, m.cursorLine-len(wrappedHeader)-1)
-	offset := len(wrappedHeader) + 1 + len(statLines)
+	b.addBlock(wrappedHeader, headerStarts)
+	b.addLines(blankLine(diffWidth, m.cursorLine == b.len()))
+
+	statLines := statLinesFor(m.detail.Files, diffWidth, m.cursorLine-b.len())
 	if len(statLines) > 0 {
-		offset++
+		b.addLines(statLines...)
+		b.addLines(blankLine(diffWidth, m.cursorLine == b.len()))
 	}
 
+	offset := b.len()
 	diffLines, fileRanges, rawDiffMatchLines, diffStarts := m.renderDiffBlock(diffWidth, m.cursorLine-offset)
+	b.addBlock(diffLines, diffStarts)
 
-	content := make([]string, 0, len(wrappedHeader)+1+len(statLines)+1+len(diffLines))
-	content = append(content, wrappedHeader...)
-	content = append(content, blankLine(diffWidth, m.cursorLine == len(content)))
-	content = append(content, statLines...)
-	if len(statLines) > 0 {
-		content = append(content, blankLine(diffWidth, m.cursorLine == len(content)))
-	}
-	content = append(content, diffLines...)
-
-	// Every row a block other than the header/diff contributes is a logical
-	// line of its own: the separators are one row each, and a stats row is
-	// clipped to width rather than wrapped (see renderClipped).
-	m.lineStarts = make([]bool, 0, len(content))
-	m.lineStarts = append(m.lineStarts, headerStarts...)
-	m.lineStarts = append(m.lineStarts, true)
-	for range statLines {
-		m.lineStarts = append(m.lineStarts, true)
-	}
-	if len(statLines) > 0 {
-		m.lineStarts = append(m.lineStarts, true)
-	}
-	m.lineStarts = append(m.lineStarts, diffStarts...)
+	content := b.lines
+	m.lineStarts = b.starts
 
 	m.fileRanges = make([]FileRange, len(fileRanges))
 	for i, r := range fileRanges {
@@ -254,6 +240,35 @@ func (m *DetailModel) reflow() {
 
 	m.syncHighlightFromScroll()
 }
+
+// contentBuilder accumulates one reflow pass's flattened content and its
+// parallel line-start map (see DetailModel.lineStarts) together, so the two
+// can't drift: every row that goes into one goes into the other in the same
+// call. len() doubles as "where does the next block start", which is the
+// coordinate a block's own cursor line and its FileRanges are measured from.
+type contentBuilder struct {
+	lines  []string
+	starts []bool
+}
+
+// addBlock appends a block that word-wraps internally, carrying its own
+// line-start map (renderHeaderLines' and RenderDiff's `starts` returns).
+func (b *contentBuilder) addBlock(rows []string, starts []bool) {
+	b.lines = append(b.lines, rows...)
+	b.starts = append(b.starts, starts...)
+}
+
+// addLines appends rows that are each a logical line of their own: the blank
+// separators between blocks, and the stats rows, which are clipped to width
+// rather than wrapped (see renderClipped).
+func (b *contentBuilder) addLines(rows ...string) {
+	b.lines = append(b.lines, rows...)
+	for range rows {
+		b.starts = append(b.starts, true)
+	}
+}
+
+func (b *contentBuilder) len() int { return len(b.lines) }
 
 // renderDiffBlock renders this commit's diff (or the noDiffNotice
 // placeholder for a diff-less commit) at width, honoring the current
