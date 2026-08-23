@@ -15,7 +15,7 @@ import (
 // source of truth both paths are supposed to share.
 func TestListModelIncrementalRenderMatchesFullRebuild(t *testing.T) {
 	m := NewListModel(fixtureCommits(30), &jumplist{})
-	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetLeadingSummaries(fixtureLeadingSummaries())
 	m.SetSize(80, 10)
 	m.SetTotalCount(30)
 	m.SetSearchDisplay("subject", false)

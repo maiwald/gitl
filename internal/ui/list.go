@@ -42,7 +42,7 @@ type ListModel struct {
 	// part in the skip/limit/totalCount/match arithmetic below, which is
 	// keyed to real positions in HEAD's history; they're layered on at
 	// render time only.
-	leading []git.WorktreeEntry
+	leading []git.EntrySummary
 
 	totalCount  int
 	loadingMore bool
@@ -130,7 +130,8 @@ func (m *ListModel) AppendCommits(commits []git.Commit) {
 }
 
 // Selected returns the commit currently under the cursor, if any — false
-// when the cursor is on a synthetic leading row instead (see SelectedEntry).
+// when the cursor is on a synthetic leading row instead (see
+// SelectedSummary).
 func (m ListModel) Selected() (git.Commit, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.commits) {
 		return git.Commit{}, false
@@ -138,12 +139,13 @@ func (m ListModel) Selected() (git.Commit, bool) {
 	return m.commits[m.cursor], true
 }
 
-// SelectedEntry returns the synthetic leading row currently under the
+// SelectedSummary returns the synthetic leading row currently under the
 // cursor, if any — false when the cursor is on a real commit instead (see
-// Selected).
-func (m ListModel) SelectedEntry() (git.WorktreeEntry, bool) {
+// Selected). It's a summary, not the entry itself: the diff behind the row is
+// only fetched when the row is opened.
+func (m ListModel) SelectedSummary() (git.EntrySummary, bool) {
 	if m.cursor >= 0 {
-		return git.WorktreeEntry{}, false
+		return git.EntrySummary{}, false
 	}
 	return m.leading[m.rowIndex(m.cursor)], true
 }
@@ -174,12 +176,12 @@ func (m ListModel) rowCount() int {
 	return len(m.leading) + len(m.commits)
 }
 
-// SetLeadingEntries installs the synthetic rows shown above the commit list.
+// SetLeadingSummaries installs the synthetic rows shown above the commit list.
 // The cursor needs no adjustment: it stays a position in commits regardless
 // of how many leading rows precede it. Only the rendered row it corresponds
 // to shifts, which ensureVisible accounts for.
-func (m *ListModel) SetLeadingEntries(entries []git.WorktreeEntry) {
-	m.leading = entries
+func (m *ListModel) SetLeadingSummaries(summaries []git.EntrySummary) {
+	m.leading = summaries
 	m.ensureVisible()
 	m.render()
 }
@@ -459,8 +461,8 @@ func (m ListModel) isMatch(pos int) bool {
 // patch (patchRow) go through it.
 func (m ListModel) renderRow(pos int, ctx rowContext) string {
 	if pos < 0 {
-		e := m.leading[m.rowIndex(pos)]
-		return renderWorktreeRow(e, m.vp.Width, pos == m.cursor, ctx.term != "")
+		s := m.leading[m.rowIndex(pos)]
+		return renderWorktreeRow(s, m.vp.Width, pos == m.cursor, ctx.term != "")
 	}
 	c := m.commits[pos]
 	// Matches come from git log queries over real commits only, so a

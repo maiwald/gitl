@@ -109,22 +109,22 @@ func TestListModelJumpToDefersUntilLoaded(t *testing.T) {
 	}
 }
 
-func fixtureLeadingEntries() []git.WorktreeEntry {
-	return []git.WorktreeEntry{
-		{Kind: git.EntryWorktree, Files: []git.File{{Path: "a.txt", Additions: 1}}},
-		{Kind: git.EntryStaged, Files: []git.File{{Path: "b.txt", Additions: 2}}},
+func fixtureLeadingSummaries() []git.EntrySummary {
+	return []git.EntrySummary{
+		{Kind: git.EntryWorktree, Files: 1, Additions: 1},
+		{Kind: git.EntryStaged, Files: 1, Additions: 2},
 	}
 }
 
 // TestListModelCursorMovesOntoLeadingRowsAndClamps pins down the
 // negative-cursor scheme: moving up from commits[0] steps onto the
 // synthetic leading rows (staged, then working tree, matching display
-// order), Selected() reports false there while SelectedEntry() reports the
-// entry, and the cursor clamps at the topmost leading row rather than going
+// order), Selected() reports false there while SelectedSummary() reports the
+// row, and the cursor clamps at the topmost leading row rather than going
 // negative indefinitely.
 func TestListModelCursorMovesOntoLeadingRowsAndClamps(t *testing.T) {
 	m := NewListModel(fixtureCommits(3), &jumplist{})
-	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetLeadingSummaries(fixtureLeadingSummaries())
 	m.SetSize(80, 10)
 
 	if c, ok := m.Selected(); !ok || c.Hash != "a" {
@@ -135,17 +135,17 @@ func TestListModelCursorMovesOntoLeadingRowsAndClamps(t *testing.T) {
 	if _, ok := m.Selected(); ok {
 		t.Fatal("Selected() = true while cursor is on a leading row, want false")
 	}
-	if e, ok := m.SelectedEntry(); !ok || e.Kind != git.EntryStaged {
+	if e, ok := m.SelectedSummary(); !ok || e.Kind != git.EntryStaged {
 		t.Fatalf("after 1 up: entry = %+v ok=%v, want EntryStaged", e, ok)
 	}
 
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if e, ok := m.SelectedEntry(); !ok || e.Kind != git.EntryWorktree {
+	if e, ok := m.SelectedSummary(); !ok || e.Kind != git.EntryWorktree {
 		t.Fatalf("after 2 up: entry = %+v ok=%v, want EntryWorktree", e, ok)
 	}
 
 	m.Update(tea.KeyMsg{Type: tea.KeyUp}) // one more: should clamp, not go further negative
-	if e, ok := m.SelectedEntry(); !ok || e.Kind != git.EntryWorktree {
+	if e, ok := m.SelectedSummary(); !ok || e.Kind != git.EntryWorktree {
 		t.Fatalf("after clamping: entry = %+v ok=%v, want still EntryWorktree", e, ok)
 	}
 }
@@ -155,7 +155,7 @@ func TestListModelCursorMovesOntoLeadingRowsAndClamps(t *testing.T) {
 // not just to commits[0].
 func TestListModelTopKeyLandsOnTopmostLeadingRow(t *testing.T) {
 	m := NewListModel(fixtureCommits(5), &jumplist{})
-	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetLeadingSummaries(fixtureLeadingSummaries())
 	m.SetSize(80, 3)
 
 	for i := 0; i < 3; i++ {
@@ -163,27 +163,27 @@ func TestListModelTopKeyLandsOnTopmostLeadingRow(t *testing.T) {
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 
-	e, ok := m.SelectedEntry()
+	e, ok := m.SelectedSummary()
 	if !ok || e.Kind != git.EntryWorktree {
 		t.Fatalf("after 'g': entry = %+v ok=%v, want topmost EntryWorktree", e, ok)
 	}
 }
 
-// TestSetLeadingEntriesDoesNotMoveCursorOffCommit pins down that installing
+// TestSetLeadingSummariesDoesNotMoveCursorOffCommit pins down that installing
 // leading rows after the cursor is already on a commit leaves that
 // selection untouched — the cursor stays in commit-index space regardless
 // of how many synthetic rows precede it.
-func TestSetLeadingEntriesDoesNotMoveCursorOffCommit(t *testing.T) {
+func TestSetLeadingSummariesDoesNotMoveCursorOffCommit(t *testing.T) {
 	m := NewListModel(fixtureCommits(5), &jumplist{})
 	m.SetSize(80, 3)
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 
-	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetLeadingSummaries(fixtureLeadingSummaries())
 
 	c, ok := m.Selected()
 	if !ok || c.Hash != "c" {
-		t.Fatalf("after SetLeadingEntries: selection = %+v ok=%v, want hash c (unmoved)", c, ok)
+		t.Fatalf("after SetLeadingSummaries: selection = %+v ok=%v, want hash c (unmoved)", c, ok)
 	}
 }
 
@@ -193,7 +193,7 @@ func TestSetLeadingEntriesDoesNotMoveCursorOffCommit(t *testing.T) {
 // len(leading)), so Search/NextMatch land the cursor on the correct commit.
 func TestListModelSearchIndicesUnaffectedByLeadingRows(t *testing.T) {
 	m := NewListModel(fixtureCommits(5), &jumplist{})
-	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetLeadingSummaries(fixtureLeadingSummaries())
 	m.SetSize(80, 3)
 	m.SetTotalCount(5)
 
@@ -222,7 +222,7 @@ func TestListModelSearchIndicesUnaffectedByLeadingRows(t *testing.T) {
 // len(commits), never shifted by len(leading).
 func TestListModelLoadMoreSkipLimitUnaffectedByLeadingRows(t *testing.T) {
 	m := NewListModel(fixtureCommits(30), &jumplist{})
-	m.SetLeadingEntries(fixtureLeadingEntries())
+	m.SetLeadingSummaries(fixtureLeadingSummaries())
 	m.SetTotalCount(100)
 	m.SetSize(80, 5)
 

@@ -63,7 +63,7 @@ func TestNonFatalErrorClearedByNextSuccessfulLoad(t *testing.T) {
 		t.Fatal("expected lastError to be set")
 	}
 
-	newModel, _ = m.Update(worktreeEntriesLoadedMsg{})
+	newModel, _ = m.Update(worktreeSummariesLoadedMsg{})
 	m = newModel.(Model)
 	if m.lastError != nil {
 		t.Fatalf("lastError = %v, want nil after a successful load", m.lastError)

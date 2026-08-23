@@ -146,17 +146,6 @@ func formatCountsStyled(additions, deletions int, addStyle, delStyle, sep lipglo
 	return strings.Join(parts, sep.Render(" "))
 }
 
-// diffTotals sums additions/deletions across files, for renderWorktreeRow's
-// +A -D summary. statLinesFor accumulates its own totals inline, in the loop
-// that already computes its column widths.
-func diffTotals(files []git.File) (additions, deletions int) {
-	for _, f := range files {
-		additions += f.Additions
-		deletions += f.Deletions
-	}
-	return additions, deletions
-}
-
 func pluralize(n int, singular, plural string) string {
 	if n == 1 {
 		return singular

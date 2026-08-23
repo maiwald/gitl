@@ -10,14 +10,8 @@ import (
 )
 
 func TestRenderWorktreeRowShowsTitleAndCounts(t *testing.T) {
-	e := git.WorktreeEntry{
-		Kind: git.EntryStaged,
-		Files: []git.File{
-			{Path: "a.txt", Additions: 3, Deletions: 1},
-			{Path: "b.txt", Additions: 2},
-		},
-	}
-	row := renderWorktreeRow(e, 80, false, false)
+	s := git.EntrySummary{Kind: git.EntryStaged, Files: 2, Additions: 5, Deletions: 1}
+	row := renderWorktreeRow(s, 80, false, false)
 
 	if !strings.Contains(row, "Staged changes") {
 		t.Errorf("row = %q, want it to contain the entry title", row)
@@ -34,8 +28,8 @@ func TestRenderWorktreeRowShowsTitleAndCounts(t *testing.T) {
 }
 
 func TestRenderWorktreeRowDimmedReplacesCountColors(t *testing.T) {
-	e := git.WorktreeEntry{Kind: git.EntryWorktree, Files: []git.File{{Path: "a.txt", Additions: 1}}}
-	row := renderWorktreeRow(e, 80, false, true)
+	s := git.EntrySummary{Kind: git.EntryWorktree, Files: 1, Additions: 1}
+	row := renderWorktreeRow(s, 80, false, true)
 
 	if strings.Contains(row, diffAddStyle.Render("+1")) {
 		t.Errorf("row = %q, want the addition count styled dim, not diffAddStyle, while dimmed", row)
@@ -51,11 +45,11 @@ func TestRenderWorktreeRowDimmedReplacesCountColors(t *testing.T) {
 // and wide layouts (see narrowListWidth), this is checked at both.
 func TestRenderWorktreeRowLeadingColumnsAlignWithCommitRow(t *testing.T) {
 	c := fixtureCommitForRow()
-	e := git.WorktreeEntry{Kind: git.EntryStaged}
+	s := git.EntrySummary{Kind: git.EntryStaged}
 
 	for _, width := range []int{80, 120} {
 		commitRow := renderCommitRow(c, width, false, false, "", false)
-		worktreeRow := renderWorktreeRow(e, width, false, false)
+		worktreeRow := renderWorktreeRow(s, width, false, false)
 
 		authorWidth := authorColumnWidth
 		authorName := c.AuthorName
@@ -70,7 +64,7 @@ func TestRenderWorktreeRowLeadingColumnsAlignWithCommitRow(t *testing.T) {
 		}
 		commitPrefixWidth := lipgloss.Width(commitRow[:authorIdx])
 
-		titleText := entryTitleStyle.Render(fmt.Sprintf("%-*s", entryTitleWidth, entryTitle(e.Kind)))
+		titleText := entryTitleStyle.Render(fmt.Sprintf("%-*s", entryTitleWidth, entryTitle(s.Kind)))
 		titleIdx := strings.Index(worktreeRow, titleText)
 		if titleIdx < 0 {
 			t.Fatalf("width %d: could not locate title field in worktree row %q", width, worktreeRow)

@@ -18,12 +18,11 @@ const entryTitleWidth = 16
 // with the real commit rows below it, its title and file-count/+- totals
 // sitting where the subject column would be. There's no searchTerm parameter:
 // such a row can never be a search match, so callers pass dimmed directly.
-func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) string {
+func renderWorktreeRow(s git.EntrySummary, width int, selected, dimmed bool) string {
 	narrow := width < narrowListWidth
 
-	title := fmt.Sprintf("%-*s", entryTitleWidth, entryTitle(e.Kind))
-	nFiles := fmt.Sprintf("%d %s", len(e.Files), pluralize(len(e.Files), "file", "files"))
-	additions, deletions := diffTotals(e.Files)
+	title := fmt.Sprintf("%-*s", entryTitleWidth, entryTitle(s.Kind))
+	nFiles := fmt.Sprintf("%d %s", s.Files, pluralize(s.Files, "file", "files"))
 
 	titleStyle := rowFieldStyle(entryTitleStyle, dimmed, selected)
 	countStyle := rowFieldStyle(normalRowStyle, dimmed, selected)
@@ -36,7 +35,7 @@ func renderWorktreeRow(e git.WorktreeEntry, width int, selected, dimmed bool) st
 	// search active.
 	addStyle := rowFieldStyle(diffAddStyle, dimmed, selected)
 	delStyle := rowFieldStyle(diffDeleteStyle, dimmed, selected)
-	counts := formatCountsStyled(additions, deletions, addStyle, delStyle, countStyle)
+	counts := formatCountsStyled(s.Additions, s.Deletions, addStyle, delStyle, countStyle)
 
 	// leading mirrors renderCommitRow's sha/when columns at whichever width
 	// is active, so the title and counts land where a real row's

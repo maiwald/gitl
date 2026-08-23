@@ -70,7 +70,7 @@ type Model struct {
 	// lastError is the latest non-fatal fetch failure, shown in the status
 	// bar until the next successful fetch of any kind clears it.
 	lastError error
-	entries   []git.WorktreeEntry // canonical copy, mirrored into list.leading as it and the list each become available
+	summaries []git.EntrySummary // canonical copy, mirrored into list.leading as it and the list each become available
 
 	// pendingJump is a CLI-requested list position (`gitl <rev>`) not yet
 	// applied, because the list or the resolved position is still missing —
@@ -188,12 +188,13 @@ type commitDetailLoadedMsg struct {
 	detail *git.CommitDetail
 }
 
-// worktreeEntriesLoadedMsg carries the synthetic working-tree/staged rows.
-// It can arrive before or after commitsLoadedMsg (independent concurrent
-// fetches), so both messages re-mirror Model.entries into the list rather
-// than relying on whichever ListModel exists when this one arrives.
-type worktreeEntriesLoadedMsg struct {
-	entries []git.WorktreeEntry
+// worktreeSummariesLoadedMsg carries the counts behind the synthetic
+// working-tree/staged rows. It can arrive before or after commitsLoadedMsg
+// (independent concurrent fetches), so both messages re-mirror
+// Model.summaries into the list rather than relying on whichever ListModel
+// exists when this one arrives.
+type worktreeSummariesLoadedMsg struct {
+	summaries []git.EntrySummary
 }
 
 // revPositionMsg carries the resolved list position of a CLI-requested
@@ -269,13 +270,15 @@ func loadListCmd(repo *git.Repo, severity errSeverity) tea.Cmd {
 	}, func(m commitsLoadedMsg) tea.Msg { return m })
 }
 
-// loadWorktreeEntriesCmd fetches the synthetic leading rows. Its failure is
-// always nonFatal: those rows are supplementary to the list/detail view.
-func loadWorktreeEntriesCmd(repo *git.Repo) tea.Cmd {
-	return runCmd(nonFatal, func(ctx context.Context) ([]git.WorktreeEntry, error) {
-		return repo.FetchWorktreeEntries(ctx)
-	}, func(entries []git.WorktreeEntry) tea.Msg {
-		return worktreeEntriesLoadedMsg{entries: entries}
+// loadWorktreeSummariesCmd fetches the counts the synthetic leading rows
+// show — not the diffs behind them, which are left to the fetch that opens
+// one. Its failure is always nonFatal: those rows are supplementary to the
+// list/detail view.
+func loadWorktreeSummariesCmd(repo *git.Repo) tea.Cmd {
+	return runCmd(nonFatal, func(ctx context.Context) ([]git.EntrySummary, error) {
+		return repo.FetchWorktreeSummaries(ctx)
+	}, func(summaries []git.EntrySummary) tea.Msg {
+		return worktreeSummariesLoadedMsg{summaries: summaries}
 	})
 }
 
@@ -349,12 +352,13 @@ func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity, paths ...
 	}, func(d *git.CommitDetail) tea.Msg { return commitDetailLoadedMsg{detail: d} })
 }
 
-// fetchEntryDetailCmd fetches a single synthetic entry's diff directly, for a
-// CLI `--staged`/`--diff` startup jump that has no list to select the row
-// from, and opens it via commitDetailLoadedMsg like any other detail view.
-// Failure is fatal since that path has no list to fall back to.
-func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind, paths []string) tea.Cmd {
-	return runCmd(fatal, func(ctx context.Context) ([]git.File, error) {
+// fetchEntryDetailCmd fetches a single synthetic entry's diff and opens it via
+// commitDetailLoadedMsg like any other detail view. severity is fatal from the
+// `--staged`/`--diff` startup dispatch, which has no list to fall back to, and
+// nonFatal from Enter in the list, which stays up if the fetch fails. paths is
+// only ever the CLI's own pathspec — see StartTarget.Paths.
+func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind, severity errSeverity, paths ...string) tea.Cmd {
+	return runCmd(severity, func(ctx context.Context) ([]git.File, error) {
 		return repo.FetchWorktreeEntry(ctx, kind, paths...)
 	}, func(files []git.File) tea.Msg {
 		entry := git.WorktreeEntry{Kind: kind, Files: files, Paths: paths}
@@ -423,7 +427,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// once here rather than repeated in each success case below.
 	switch msg.(type) {
 	case commitsLoadedMsg, moreCommitsLoadedMsg, commitDetailLoadedMsg,
-		worktreeEntriesLoadedMsg, searchLoadedMsg:
+		worktreeSummariesLoadedMsg, searchLoadedMsg:
 		m.lastError = nil
 	}
 
@@ -443,10 +447,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// A commit-less repo is not an error here: FetchWorktreeEntry
 			// treats the missing HEAD as the empty tree, same as
 			// `git diff --cached` does.
-			return m, fetchEntryDetailCmd(msg.repo, git.EntryStaged, m.start.Paths)
+			return m, fetchEntryDetailCmd(msg.repo, git.EntryStaged, fatal, m.start.Paths...)
 		}
 		if m.start.Diff {
-			return m, fetchEntryDetailCmd(msg.repo, git.EntryWorktree, m.start.Paths)
+			return m, fetchEntryDetailCmd(msg.repo, git.EntryWorktree, fatal, m.start.Paths...)
 		}
 		if m.start.Rev != "" {
 			// fetchDetailCmd passes the raw revision straight to `git log -1`,
@@ -455,7 +459,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(
 				fetchDetailCmd(msg.repo, m.start.Rev, fatal, m.start.Paths...),
 				loadListCmd(msg.repo, nonFatal),
-				loadWorktreeEntriesCmd(msg.repo),
+				loadWorktreeSummariesCmd(msg.repo),
 				resolveRevPositionCmd(msg.repo, m.start.Rev),
 			)
 		}
@@ -463,12 +467,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = errors.New("this repository has no commits yet")
 			return m, nil
 		}
-		return m, tea.Batch(loadListCmd(msg.repo, fatal), loadWorktreeEntriesCmd(msg.repo))
+		return m, tea.Batch(loadListCmd(msg.repo, fatal), loadWorktreeSummariesCmd(msg.repo))
 	case commitsLoadedMsg:
 		m.list = NewListModel(msg.commits, m.jl)
 		m.list.SetTotalCount(msg.totalCount)
 		m.list.SetSize(m.width, m.contentHeight())
-		m.list.SetLeadingEntries(m.entries)
+		m.list.SetLeadingSummaries(m.summaries)
 		// The search state can already be set: the prompt is available as
 		// soon as the repo opens, a whole fetch before this message.
 		m.list.SetSearchDisplay(m.searchTerm, m.searchDismissed)
@@ -489,9 +493,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.loadingMore = false
 		m.lastError = msg.err
 		return m, nil
-	case worktreeEntriesLoadedMsg:
-		m.entries = msg.entries
-		m.list.SetLeadingEntries(m.entries)
+	case worktreeSummariesLoadedMsg:
+		m.summaries = msg.summaries
+		m.list.SetLeadingSummaries(m.summaries)
 		return m, nil
 	case revPositionMsg:
 		if !msg.found {
@@ -756,20 +760,22 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	if key.Matches(msg, DefaultKeyMap.Enter) {
-		// A synthetic entry's files were already loaded at startup, so
-		// opening one needs no fetch; a commit is loaded on demand. Either
-		// way the transition is jump-worthy: push the list position being
-		// left so ctrl-o can return to it, even before the detail view
-		// exists on the fetchDetailCmd path.
-		if entry, ok := m.list.SelectedEntry(); ok {
-			m.jl.push(m.currentJumpPos())
-			return m.openDetail(git.EntryDetail(entry)), nil
+		// A synthetic row carries only the counts it displays, so opening
+		// one fetches its diff on demand exactly as a commit does — with no
+		// pathspec, which is scoped to the startup target alone. Either way
+		// the transition is jump-worthy: push the list position being left
+		// so ctrl-o can return to it, before the detail view exists.
+		var cmd tea.Cmd
+		if summary, ok := m.list.SelectedSummary(); ok {
+			cmd = fetchEntryDetailCmd(m.repo, summary.Kind, nonFatal)
+		} else if commit, ok := m.list.Selected(); ok {
+			cmd = fetchDetailCmd(m.repo, commit.Hash, nonFatal)
 		}
-		if commit, ok := m.list.Selected(); ok {
-			m.jl.push(m.currentJumpPos())
-			return m, fetchDetailCmd(m.repo, commit.Hash, nonFatal)
+		if cmd == nil {
+			return m, nil
 		}
-		return m, nil
+		m.jl.push(m.currentJumpPos())
+		return m, cmd
 	}
 	if req, ok := m.list.Update(msg); ok {
 		return m, fetchMoreCmd(m.repo, req)
