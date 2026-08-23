@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -457,5 +458,207 @@ func TestHasChangesLimitedToPaths(t *testing.T) {
 				t.Errorf("check(%q) = %v, want %v", tt.path, has, tt.want)
 			}
 		})
+	}
+}
+
+func TestFetchWorktreeSummariesOmitsEmptyAndOrdersWorktreeFirst(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	ctx := context.Background()
+
+	summaries, err := repo.FetchWorktreeSummaries(ctx)
+	if err != nil {
+		t.Fatalf("FetchWorktreeSummaries: %v", err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("got %d summaries on a clean repo, want 0", len(summaries))
+	}
+
+	dir := repo.Path
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("line one\nline two\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other.txt"), []byte("staged\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "other.txt")
+
+	summaries, err = repo.FetchWorktreeSummaries(ctx)
+	if err != nil {
+		t.Fatalf("FetchWorktreeSummaries: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("got %d summaries, want 2 (worktree + staged): %+v", len(summaries), summaries)
+	}
+	if summaries[0].Kind != EntryWorktree {
+		t.Errorf("summaries[0].Kind = %v, want EntryWorktree", summaries[0].Kind)
+	}
+	if summaries[1].Kind != EntryStaged {
+		t.Errorf("summaries[1].Kind = %v, want EntryStaged", summaries[1].Kind)
+	}
+}
+
+// TestFetchWorktreeSummariesMatchFullDiff is the anti-drift test between the
+// counts a list row shows and the diff its detail view opens: the two come
+// from different git invocations now, and only agree as long as neither grows
+// a flag the other lacks. The fixture deliberately contains no copy or rename,
+// the one case where they're expected to disagree (see stagedSummary).
+func TestFetchWorktreeSummariesMatchFullDiff(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	ctx := context.Background()
+	dir := repo.Path
+
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("line one\nline two\nline three\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("x\ny\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "staged.txt")
+
+	summaries, err := repo.FetchWorktreeSummaries(ctx)
+	if err != nil {
+		t.Fatalf("FetchWorktreeSummaries: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("got %d summaries, want 2: %+v", len(summaries), summaries)
+	}
+
+	for _, summary := range summaries {
+		files, err := repo.FetchWorktreeEntry(ctx, summary.Kind)
+		if err != nil {
+			t.Fatalf("FetchWorktreeEntry(%v): %v", summary.Kind, err)
+		}
+		want := EntrySummary{Kind: summary.Kind, Files: len(files)}
+		for _, f := range files {
+			want.Additions += f.Additions
+			want.Deletions += f.Deletions
+		}
+		if summary != want {
+			t.Errorf("summary for %v = %+v, want %+v (the full diff's own totals)", summary.Kind, summary, want)
+		}
+	}
+}
+
+// TestUntrackedSummaryLineCounts pins the counts against what `git diff
+// --numstat --no-index -- /dev/null <path>` reports for each shape: a final
+// line without its newline still counts, an empty file counts nothing, and a
+// binary file is "-", which contributes nothing rather than its byte content.
+func TestUntrackedSummaryLineCounts(t *testing.T) {
+	tests := []struct {
+		name    string
+		content []byte
+		want    int
+	}{
+		{"trailing newline", []byte("a\nb\n"), 2},
+		{"no trailing newline", []byte("a\nb\nc"), 3},
+		{"empty", []byte(""), 0},
+		{"binary", []byte("a\x00b\nc\n"), 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := initFixtureRepoWithFile(t)
+			if err := os.WriteFile(filepath.Join(repo.Path, "untracked.txt"), tt.content, 0o644); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+
+			summary, err := repo.untrackedSummary(context.Background())
+			if err != nil {
+				t.Fatalf("untrackedSummary: %v", err)
+			}
+			if summary.Files != 1 {
+				t.Fatalf("Files = %d, want 1", summary.Files)
+			}
+			if summary.Additions != tt.want {
+				t.Errorf("Additions = %d, want %d", summary.Additions, tt.want)
+			}
+		})
+	}
+}
+
+// TestUntrackedSummarySkipsUnreadable covers the path countAddedLines refuses
+// to open: a named pipe, where the read would block until something wrote to
+// it. It still counts as a file, since git lists it as untracked.
+func TestUntrackedSummarySkipsUnreadable(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	fifo := filepath.Join(repo.Path, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("Mkfifo: %v", err)
+	}
+
+	summary, err := repo.untrackedSummary(context.Background())
+	if err != nil {
+		t.Fatalf("untrackedSummary: %v", err)
+	}
+	if summary.Additions != 0 {
+		t.Errorf("Additions = %d, want 0 for a fifo", summary.Additions)
+	}
+}
+
+// TestNumstatSummaryRecordShapes covers the three numstat records that aren't
+// a plain "N\tM\tpath": a rename (one record carrying two paths, which the -z
+// form would split into what looks like two), a binary change ("-\t-"), and a
+// mode-only change ("0\t0"), which still counts as a changed file.
+func TestNumstatSummaryRecordShapes(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	ctx := context.Background()
+	dir := repo.Path
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "core.fileMode", "true")
+
+	if err := os.WriteFile(filepath.Join(dir, "bin.dat"), []byte("\x00\x01binary\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mode.txt"), []byte("unchanged\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "bin.dat", "mode.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "add bin.dat and mode.txt")
+
+	runGitCmd(t, dir, fixtureCommitEnv, "mv", "tracked.txt", "renamed.txt")
+	if err := os.WriteFile(filepath.Join(dir, "bin.dat"), []byte("\x00\x02other\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "mode.txt"), 0o755); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "-A")
+
+	summary, err := repo.numstatSummary(ctx, "--cached")
+	if err != nil {
+		t.Fatalf("numstatSummary: %v", err)
+	}
+	if summary.Files != 3 {
+		t.Errorf("Files = %d, want 3 (rename + binary + mode change): %+v", summary.Files, summary)
+	}
+	if summary.Additions != 0 || summary.Deletions != 0 {
+		t.Errorf("counts = +%d -%d, want +0 -0: none of these records carries line counts", summary.Additions, summary.Deletions)
+	}
+}
+
+// TestStagedSummaryOnUnbornHead pins that a repo with no commits needs no
+// special case: `git diff --cached --numstat` diffs the index against the
+// empty tree by itself, exactly as stagedDiff relies on.
+func TestStagedSummaryOnUnbornHead(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "new.txt")
+
+	repo, err := OpenRepo(ctx, dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	summary, err := repo.stagedSummary(ctx)
+	if err != nil {
+		t.Fatalf("stagedSummary: %v", err)
+	}
+	want := EntrySummary{Kind: EntryStaged, Files: 1, Additions: 2}
+	if summary != want {
+		t.Errorf("stagedSummary = %+v, want %+v", summary, want)
 	}
 }

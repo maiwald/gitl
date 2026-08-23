@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/maiwald/gitl/internal/concurrent"
@@ -28,6 +32,15 @@ type WorktreeEntry struct {
 	Kind  EntryKind
 	Files []File
 	Paths []string
+}
+
+// EntrySummary is the file and line counts behind one synthetic entry —
+// everything its list row shows, without the diff those counts came from.
+type EntrySummary struct {
+	Kind      EntryKind
+	Files     int
+	Additions int
+	Deletions int
 }
 
 // HasStagedChanges reports whether the index differs from HEAD, via `git
@@ -96,6 +109,32 @@ func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error
 		entries = append(entries, WorktreeEntry{Kind: EntryStaged, Files: stagedFiles})
 	}
 	return entries, nil
+}
+
+// FetchWorktreeSummaries returns a counts-only summary of every synthetic
+// entry that currently has something to show, in the same order and with the
+// same empty entries omitted as FetchWorktreeEntries — but without building
+// either diff. A list row shows nothing but these counts, so the hunks behind
+// them are left to the fetch that opens the entry, and this costs only what
+// git spends deciding which files differ.
+func (r *Repo) FetchWorktreeSummaries(ctx context.Context) ([]EntrySummary, error) {
+	var worktree, staged EntrySummary
+	err := concurrent.RunConcurrently(
+		func() (err error) { worktree, err = r.worktreeSummary(ctx); return },
+		func() (err error) { staged, err = r.stagedSummary(ctx); return },
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var summaries []EntrySummary
+	if worktree.Files > 0 {
+		summaries = append(summaries, worktree)
+	}
+	if staged.Files > 0 {
+		summaries = append(summaries, staged)
+	}
+	return summaries, nil
 }
 
 // EntryDetail wraps a synthetic entry's files as a CommitDetail so the detail
@@ -210,4 +249,138 @@ func (r *Repo) untrackedDiff(ctx context.Context, path string) File {
 	f.OldPath = ""
 	f.Status = StatusAdded
 	return f
+}
+
+// stagedSummary counts the index against HEAD. Unlike stagedDiff it passes no
+// copy-detection flag: --find-copies-harder costs time proportional to the
+// whole repository rather than to the diff, which stagedDiff can afford once
+// per detail-view open but this can't, running as it does on every startup.
+// The row's counts can therefore differ from the stats the entry's own detail
+// view shows — a staged copy reads as a whole added file here.
+func (r *Repo) stagedSummary(ctx context.Context) (EntrySummary, error) {
+	s, err := r.numstatSummary(ctx, "--cached")
+	s.Kind = EntryStaged
+	return s, err
+}
+
+// worktreeSummary counts tracked files against the index plus every untracked
+// file, mirroring what worktreeDiff assembles. The two are independent, so
+// they run concurrently.
+func (r *Repo) worktreeSummary(ctx context.Context) (EntrySummary, error) {
+	var tracked, untracked EntrySummary
+	err := concurrent.RunConcurrently(
+		func() (err error) { tracked, err = r.numstatSummary(ctx); return },
+		func() (err error) { untracked, err = r.untrackedSummary(ctx); return },
+	)
+	if err != nil {
+		return EntrySummary{}, err
+	}
+	return EntrySummary{
+		Kind:      EntryWorktree,
+		Files:     tracked.Files + untracked.Files,
+		Additions: tracked.Additions + untracked.Additions,
+		Deletions: tracked.Deletions + untracked.Deletions,
+	}, nil
+}
+
+// numstatSummary totals the records of `git diff --numstat <args...>`.
+//
+// The -z variant is deliberately not used here. It reports a rename as
+// "A\tD\t\0<old>\0<new>\0" — an empty path field followed by two more
+// fields — and splitNullTerminated drops empty entries, so a parser built on
+// it would silently miscount every rename as two records. Plain --numstat
+// quotes any path containing a newline, making it exactly one record per line,
+// and the path itself is irrelevant to a count either way.
+func (r *Repo) numstatSummary(ctx context.Context, args ...string) (EntrySummary, error) {
+	out, err := runGit(ctx, r.Path, append([]string{"diff", "--numstat"}, args...)...)
+	if err != nil {
+		return EntrySummary{}, err
+	}
+
+	var summary EntrySummary
+	for _, line := range splitLines(out) {
+		additions, rest, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		deletions, _, ok := strings.Cut(rest, "\t")
+		if !ok {
+			continue
+		}
+		summary.Files++
+		// A binary file's counts are both "-", which fails to parse and so
+		// contributes nothing — the same total the hunk-parsing path reaches
+		// for one, since go-gitdiff gives it no fragments to count.
+		if n, err := strconv.Atoi(additions); err == nil {
+			summary.Additions += n
+		}
+		if n, err := strconv.Atoi(deletions); err == nil {
+			summary.Deletions += n
+		}
+	}
+	return summary, nil
+}
+
+// untrackedSummary counts the untracked files the working-tree entry shows as
+// added, and the lines in them. Counting needs no diff, so unlike
+// untrackedFiles this spawns no git process per file and maxUntrackedDiffs'
+// subprocess cap doesn't apply — every untracked file is counted, even past
+// the point where the detail view stops synthesizing hunks for them.
+func (r *Repo) untrackedSummary(ctx context.Context) (EntrySummary, error) {
+	paths, err := r.untrackedPaths(ctx, nil)
+	if err != nil {
+		return EntrySummary{}, err
+	}
+
+	summary := EntrySummary{Kind: EntryWorktree, Files: len(paths)}
+	for _, path := range paths {
+		summary.Additions += countAddedLines(filepath.Join(r.Path, path))
+	}
+	return summary, nil
+}
+
+// binarySniffBytes is how much of a file git inspects for a NUL byte before
+// calling it binary (buffer_is_binary in xdiff-interface.c).
+const binarySniffBytes = 8000
+
+// countAddedLines returns the additions `git diff --no-index` would report for
+// an untracked file: one per newline plus a final unterminated line, and none
+// at all for a binary file, which git reports as "-". Anything it can't read
+// counts zero, the same way untrackedDiff degrades on a path it can't diff.
+//
+// Only regular files are opened. A named pipe would otherwise block the read
+// until something wrote to it, hanging the fetch; git, being handed the path
+// rather than opening it this way, has no such problem.
+func countAddedLines(path string) int {
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+		return 0
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	buf := make([]byte, 32*1024)
+	var lines, read int
+	var last byte
+	for {
+		n, err := f.Read(buf)
+		chunk := buf[:n]
+		if sniff := binarySniffBytes - read; sniff > 0 && bytes.IndexByte(chunk[:min(n, sniff)], 0) >= 0 {
+			return 0
+		}
+		lines += bytes.Count(chunk, []byte{'\n'})
+		if n > 0 {
+			last = chunk[n-1]
+			read += n
+		}
+		if err != nil {
+			break
+		}
+	}
+	if read > 0 && last != '\n' {
+		lines++
+	}
+	return lines
 }
