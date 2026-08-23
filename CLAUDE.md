@@ -38,8 +38,10 @@ internal/git/              data access layer, no TUI dependencies
   search.go                SearchCommitHashes (author+message, OR), AllCommitHashes,
                            HashesMatching (in-memory hash-substring filter, list search only)
   rev.go                   ResolveRevision, CommitPosition (CLI revision jump support)
-  worktree.go              EntryKind/WorktreeEntry, FetchWorktreeEntries/FetchWorktreeEntry
-                           (staged + working-tree diffs, untracked files as synthesized
+  worktree.go              EntryKind/WorktreeEntry, EntrySummary/FetchWorktreeSummaries
+                           (numstat counts for the list's leading rows),
+                           FetchWorktreeEntry (the diff behind one, on open: staged +
+                           working-tree diffs, untracked files as synthesized
                            added-file diffs), HasStagedChanges/HasWorktreeChanges, EntryDetail
 internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
@@ -278,8 +280,9 @@ before every commit — don't commit red.
   reaches git as its own `-- <path>...` tail (`pathspecArgs` in
   `internal/git/diff.go`) and is scoped to the **startup target only**
   (`StartTarget.Paths`): `fetchDetailCmd`'s `paths` is passed exclusively by
-  the startup dispatch, never by Enter on a list row, and
-  `FetchWorktreeEntries` (the list's leading rows) is unfiltered. The commit
+  the startup dispatch, never by Enter on a list row — including Enter on a
+  synthetic row, whose `FetchWorktreeEntry` is called with no paths — and
+  `FetchWorktreeSummaries` (the list's leading rows) is unfiltered. The commit
   list can't be path-filtered at all, so filtering anything reached *through*
   it would answer a question the list never asked. The pathspec is carried on
   `CommitDetail.Paths`/`WorktreeEntry.Paths` for one purpose only — letting
@@ -387,14 +390,22 @@ before every commit — don't commit red.
   `headerLinesFor`'s doc comment in `detail.go`. Searching for a commit's
   own hash while already viewing that commit isn't useful; the hash field
   is only a search target when picking a commit out of the list.
-- The working-tree/staged rows and their diffs are fetched once at startup,
-  like the rest of the app's data — there's no refresh key, so edits made
-  in another terminal while gitl is running aren't reflected.
-- Only the first `maxUntrackedDiffs` (200) untracked files get their own
-  `git diff --no-index` call in the working-tree view; beyond that, an
-  untracked file still appears (correctly counted, marked `StatusAdded`)
-  but without its own hunks, so a repo with a huge untracked directory
-  doesn't spawn hundreds of subprocesses.
+- The working-tree/staged rows' counts are fetched once at startup and their
+  diffs once each on open, like the rest of the app's data — there's no
+  refresh key, so edits made in another terminal while gitl is running aren't
+  reflected.
+- A leading row's counts and the stats shown by opening it come from different
+  git invocations, and are allowed to disagree in two places — both pinned by
+  tests in `worktree_test.go`, since restoring the agreement means putting the
+  cost this split removed back on every startup. `stagedDiff` pays for
+  `--find-copies-harder`, which costs time proportional to the whole
+  repository, so a staged copy reads as a plain added file in the row and as a
+  zero-line copy in the detail view. And only the first `maxUntrackedDiffs`
+  (200) untracked files get their own `git diff --no-index` call, so beyond
+  that an untracked file appears in the opened diff marked `StatusAdded` but
+  without hunks (and contributing no lines to that view's stats), while the
+  row's totals, which spawn no subprocess to count, include every one of
+  them.
 - Returning to the list with a search still showing can leave it briefly
   reporting `searching…` while the queries it deferred run — the cost of not
   running them for every search made inside a commit. The hash order they
