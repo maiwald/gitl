@@ -50,8 +50,10 @@ internal/ui/               Bubble Tea models, no direct git shelling out
   styles.go                lipgloss style definitions
   render.go                primitives every view renders through (clipping/padding
                            a row to width, compositing styled spans into a line,
-                           cursor + search-match styling) plus the cursor/match
-                           arithmetic both view models share
+                           cursor + search-match styling), the lineRenderer/
+                           renderRows layout the detail view's blocks are built
+                           from, plus the cursor/match arithmetic both view
+                           models share
   list.go, commititem.go   commit list: cursor, viewport, lazy pagination, search
   worktreerow.go           renderWorktreeRow: the two synthetic leading rows
   entry.go                 entryTitle/entryDescription: display strings shared by
@@ -128,8 +130,8 @@ before every commit — don't commit red.
   unit separator (`\x1f`) as a delimiter precisely because none of the
   fields requested can contain it — don't switch to a delimiter that could
   collide with commit messages or paths.
-- Diff line wrapping: each wrapped visual row is its own entry in the
-  flattened `RenderDiff` output (not a single multi-line string), so
+- Diff line wrapping: each wrapped visual row is its own entry in the rows
+  `RenderDiff`'s lineRenderers produce (not a single multi-line string), so
   `FileRange` line-index bookkeeping stays correct regardless of terminal
   width.
 - Search-match highlighting always styles plain-text spans *before* any
@@ -191,27 +193,47 @@ before every commit — don't commit red.
   `leftVP.YOffset` the same way `ListModel.cursor` is decoupled from
   `vp.YOffset` — movement moves the cursor, then the viewport follows it
   (`setCursor`'s `ensureCursorVisible`), never the reverse. Its highlight
-  is baked into content at `reflow()` time (threaded into `RenderDiff`/
-  `renderHeaderLines`/`statLinesFor` as a line-space coordinate, the same
-  way an active search match is), not spliced onto the rendered viewport
-  afterward.
-- A `reflow()` is the detail view's only way to update anything it shows, so
-  every writer of what it renders (`SetSearchDisplay`, `SetSize`, every
-  cursor move) ends in one. That invariant is what lets `jumpToMatch` read
-  `messageMatchLines`/`diffMatchLines` out of the *previous* reflow instead
-  of forcing a fresh one first: those depend only on the match set and the
-  wrap width, both of which already ended in a reflow when they changed. The
-  restyle a match step needs is `landOnLine`'s own reflow, which has to run
-  regardless to bake the cursor highlight into the line it lands on — so a
-  second one before it is pure duplicated work, and on a large commit that's
-  a whole re-render of every diff line per `n`/`N` press.
-- `reflow` builds the flattened content and its parallel `lineStarts` map
-  through one `contentBuilder` (`detail.go`), so a row can't reach one
-  without reaching the other. Its `len()` is where the next block will
-  land, which is also the origin of that block's own local line space —
-  what the block's cursor coordinate is measured from and what its returned
-  line indices (`FileRange`s, match lines) are offset by. Render a block
-  immediately before adding it rather than predicting where it will go.
+  is part of the rendered content, not something spliced onto the viewport
+  afterward — but it's applied by `renderRows` (`render.go`) once the lines
+  have been laid out, not threaded into the blocks that produce them, which
+  is what lets a cursor move repaint just the two lines that changed.
+- A `reflow()` is the detail view's only way to change *what its lines say*,
+  so every writer of that (`SetSearchDisplay`, `SetSize`, `setMatchPos`)
+  ends in one. Which line the cursor is on is the sole exception: it goes
+  through `repaintCursor`, which re-renders only the line being left and the
+  line being taken up and splices them into the cached rows. That invariant
+  is what lets `jumpToMatch` read `messageMatchLines`/`diffMatchLines` out of
+  the *previous* reflow instead of forcing a fresh one first: those depend
+  only on the match set and the wrap width, both of which already ended in a
+  reflow when they changed. The restyle a match step needs is `landOnLine`'s
+  own repaint, which has to run regardless to move the cursor highlight onto
+  the line it lands on — so a reflow before it is pure duplicated work, and
+  on a large commit that's a whole re-render of every diff line per `n`/`N`
+  press.
+- A block of detail-view content (`renderHeaderLines`, `statLinesFor`,
+  `RenderDiff`) returns `[]lineRenderer` (`render.go`) — one closure per
+  *logical* line, each able to render itself plain or with the cursor row's
+  background — and knows nothing about where its lines will land or which
+  one the cursor is on. `reflow` concatenates the blocks and `renderRows`
+  lays them out, returning the flattened rows plus the `lineStart` index and
+  applying the cursor to whichever line contains it. So the line indices a
+  block reports (`FileRange`s, match lines) are in *its own* logical lines,
+  counted from its own origin, and `reflow` rebases each one onto a row via
+  `rowOf` — anything new that a block reports has to be rebased there too, or
+  it will silently point into a different block.
+- `DetailModel` keeps the `lines` it last assembled next to the `content`
+  they rendered into, and `repaintCursor` patches the two logical lines whose
+  highlight changed rather than reflowing (`ListModel.renderedRows` /
+  `renderCursorMoved` is the same bargain, with the same obligation: a change
+  to what a line *says* must go through `reflow`, which rebuilds all three of
+  `lines`/`content`/`lineStart` together). The splice depends on a line
+  rendering to the same number of rows with and without the cursor
+  background — that's the wrap-on-plain-text invariant below, and
+  `TestDetailModelCursorPatchMatchesFullReflow` pins the whole arrangement by
+  comparing patched content against a full reflow after every kind of jump.
+  `BenchmarkDetailCursorMove`/`BenchmarkDetailReflow` are the reason it
+  exists (~2.8 ms against ~32 ms on an 8000-line diff); if they ever
+  converge, something has started reflowing on every keypress.
 - `wrapRanges` and `padRow` (`render.go`) each skip a lipgloss `Render` on
   the common path — a line that already fits isn't wrapped, and a plain
   (non-cursor) fill neither truncates nor styles its padding. Those are
@@ -229,10 +251,12 @@ before every commit — don't commit red.
   word boundary while the style in effect has *no background*, so wrapping a
   line that already carries the cursor row's background turns it into one
   unbreakable word and lands it on a different number of rows than the same
-  line without it. Since `RenderDiff`/`renderHeaderLines` render each line
-  plain to learn its row count and only then re-render it with the cursor
-  flag, a mismatch there silently shifts every line index below it
-  (`FileRange`s, match positions, `cursorLine`'s own bound). Wrapping first
+  line without it. Since `renderRows` renders each line plain to learn its
+  row count and then overwrites one of them in place with its cursor
+  rendering, a mismatch there would silently shift every line index below it
+  (`FileRange`s, match positions, `cursorLine`'s own bound) — and
+  `repaintCursor` patches lines into the cached rows on that same
+  assumption. Wrapping first
   also removes the need to strip lipgloss's plain padding back off before
   re-padding: nothing is padded until after styling.
 - Every entry in the flattened content is exactly **one display line**.
@@ -244,10 +268,10 @@ before every commit — don't commit red.
   that produces a content row must truncate, never wrap — or return its rows
   separately, the way `wrapStyledRows` does.
 - The detail cursor moves by **logical line, not visual row**: `reflow`
-  records `DetailModel.lineStarts` (parallel to the content, false on the
-  continuation rows of a wrapped line, fed by `RenderDiff`'s and
-  `renderHeaderLines`' own `starts` returns), `setCursor` snaps whatever it's
-  given back to `blockStart`, and downward motion is floored at `blockEnd`.
+  records `DetailModel.lineStart` (the row each logical line begins at, from
+  `renderRows`; `logicalAt` searches it backwards, from a row to the line
+  containing it), `setCursor` snaps whatever it's given back to `blockStart`,
+  and downward motion is floored at `blockEnd`.
   The highlight covers a wrapped line's whole block, so stepping row by row
   through it would make presses look like dead keys.
 - A CLI pathspec (`gitl --diff <path>...`, `gitl <rev> [--] <path>...`)
