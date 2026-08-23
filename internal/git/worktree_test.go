@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -506,10 +508,12 @@ func TestFetchWorktreeSummariesMatchFullDiff(t *testing.T) {
 	}
 }
 
-// TestUntrackedSummaryLineCounts pins the counts against what `git diff
-// --numstat --no-index -- /dev/null <path>` reports for each shape: a final
-// line without its newline still counts, an empty file counts nothing, and a
-// binary file is "-", which contributes nothing rather than its byte content.
+// TestUntrackedSummaryLineCounts checks countAddedLines against git itself:
+// the summary reimplements in Go what `git diff --no-index -- /dev/null
+// <path>` used to be spawned per file to answer, so git is the oracle it has
+// to keep agreeing with. The shapes that make the two diverge if it doesn't:
+// a final line missing its newline still counts, an empty file counts
+// nothing, and a binary file reports "-" rather than any count at all.
 func TestUntrackedSummaryLineCounts(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -524,11 +528,12 @@ func TestUntrackedSummaryLineCounts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := initFixtureRepoWithFile(t)
+			ctx := context.Background()
 			if err := os.WriteFile(filepath.Join(repo.Path, "untracked.txt"), tt.content, 0o644); err != nil {
 				t.Fatalf("WriteFile: %v", err)
 			}
 
-			summary, err := repo.untrackedSummary(context.Background())
+			summary, err := repo.untrackedSummary(ctx)
 			if err != nil {
 				t.Fatalf("untrackedSummary: %v", err)
 			}
@@ -538,8 +543,35 @@ func TestUntrackedSummaryLineCounts(t *testing.T) {
 			if summary.Additions != tt.want {
 				t.Errorf("Additions = %d, want %d", summary.Additions, tt.want)
 			}
+			if got := gitNoIndexAdditions(t, repo.Path, "untracked.txt"); got != tt.want {
+				t.Errorf("git itself reports %d additions, want %d — the fixture, not the code, is wrong", got, tt.want)
+			}
 		})
 	}
+}
+
+// gitNoIndexAdditions asks git how many lines it would report as added for
+// path, the way untrackedDiff still does for the diff a row opens. It can't
+// use runGitCmd: --no-index exits 1 precisely when it found a difference.
+func gitNoIndexAdditions(t *testing.T, dir, path string) int {
+	t.Helper()
+	out, _, err := runGitDiffExit(context.Background(), dir, "diff", "--numstat", "--no-index", "--", "/dev/null", path)
+	if err != nil {
+		t.Fatalf("git diff --numstat --no-index: %v", err)
+	}
+	lines := splitLines(out)
+	if len(lines) != 1 {
+		t.Fatalf("git diff --numstat --no-index = %q, want one record", lines)
+	}
+	additions, _, _ := strings.Cut(lines[0], "\t")
+	if additions == "-" {
+		return 0
+	}
+	n, err := strconv.Atoi(additions)
+	if err != nil {
+		t.Fatalf("unparseable numstat count %q: %v", additions, err)
+	}
+	return n
 }
 
 // TestUntrackedSummarySkipsUnreadable covers the path countAddedLines refuses
@@ -624,5 +656,67 @@ func TestStagedSummaryOnUnbornHead(t *testing.T) {
 	want := EntrySummary{Kind: EntryStaged, Files: 1, Additions: 2}
 	if summary != want {
 		t.Errorf("stagedSummary = %+v, want %+v", summary, want)
+	}
+}
+
+// TestStagedSummaryCountsACopyAsAnAddition pins the divergence the summary
+// deliberately accepts, on the same fixture
+// TestFetchWorktreeEntryStagedDetectsCopyFromUntouchedSource uses: opening the
+// row pays for --find-copies-harder and sees one copied file with no added
+// lines, while the row itself skips that scan — a cost proportional to the
+// whole repository, paid on every startup — and reports the copy's content as
+// additions. Restoring the flag here to make the two agree is exactly the
+// change this test exists to catch.
+func TestStagedSummaryCountsACopyAsAnAddition(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	ctx := context.Background()
+	dir := repo.Path
+	content := []byte("line one\nline two\nline three\nline four\n")
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), content, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "tracked.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "give tracked.txt real content")
+
+	if err := os.WriteFile(filepath.Join(dir, "copy.txt"), content, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "copy.txt")
+
+	summary, err := repo.stagedSummary(ctx)
+	if err != nil {
+		t.Fatalf("stagedSummary: %v", err)
+	}
+	want := EntrySummary{Kind: EntryStaged, Files: 1, Additions: 4}
+	if summary != want {
+		t.Errorf("stagedSummary = %+v, want %+v (the copy read as a plain added file)", summary, want)
+	}
+}
+
+// TestWorktreeSummaryCountsEveryUntrackedFile pins the second deliberate
+// divergence: maxUntrackedDiffs caps how many untracked files get a
+// synthesized diff (see
+// TestWorktreeDiffUntrackedFileBeyondCapDegradesGracefully), because each one
+// costs a subprocess. Counting costs none, so the row's totals climb past
+// the cap instead of silently flattening there.
+func TestWorktreeSummaryCountsEveryUntrackedFile(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	total := maxUntrackedDiffs + 1
+	for i := 0; i < total; i++ {
+		name := fmt.Sprintf("untracked-%04d.txt", i)
+		if err := os.WriteFile(filepath.Join(repo.Path, name), []byte("one line\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+
+	summary, err := repo.worktreeSummary(context.Background())
+	if err != nil {
+		t.Fatalf("worktreeSummary: %v", err)
+	}
+	if summary.Files != total {
+		t.Errorf("Files = %d, want %d", summary.Files, total)
+	}
+	if summary.Additions != total {
+		t.Errorf("Additions = %d, want %d — every untracked file counts, cap or no cap", summary.Additions, total)
 	}
 }
