@@ -173,42 +173,6 @@ func TestFetchWorktreeEntryWorktree(t *testing.T) {
 	}
 }
 
-func TestFetchWorktreeEntriesOmitsEmptyAndOrdersWorktreeFirst(t *testing.T) {
-	repo := initFixtureRepoWithFile(t)
-	ctx := context.Background()
-
-	entries, err := repo.FetchWorktreeEntries(ctx)
-	if err != nil {
-		t.Fatalf("FetchWorktreeEntries: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("got %d entries on a clean repo, want 0", len(entries))
-	}
-
-	dir := repo.Path
-	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("line one\nline two\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "other.txt"), []byte("staged\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	runGitCmd(t, dir, fixtureCommitEnv, "add", "other.txt")
-
-	entries, err = repo.FetchWorktreeEntries(ctx)
-	if err != nil {
-		t.Fatalf("FetchWorktreeEntries: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("got %d entries, want 2 (worktree + staged): %+v", len(entries), entries)
-	}
-	if entries[0].Kind != EntryWorktree {
-		t.Errorf("entries[0].Kind = %v, want EntryWorktree", entries[0].Kind)
-	}
-	if entries[1].Kind != EntryStaged {
-		t.Errorf("entries[1].Kind = %v, want EntryStaged", entries[1].Kind)
-	}
-}
-
 func TestEntryDetail(t *testing.T) {
 	entry := WorktreeEntry{Kind: EntryStaged, Files: []File{{Path: "a.txt"}}}
 	detail := EntryDetail(entry)

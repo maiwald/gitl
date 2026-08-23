@@ -84,33 +84,6 @@ func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind, paths ...
 	}
 }
 
-// FetchWorktreeEntries returns every synthetic entry that currently has
-// something to show, working tree first (furthest from HEAD) then staged.
-// Unfiltered by pathspec even on a run started with one: these are the commit
-// list's leading rows, and the list itself is never restricted to the CLI's
-// paths. Entries with no changes are omitted, mirroring how `git status` omits
-// empty sections. The two diffs are independent git invocations, so they run
-// concurrently.
-func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error) {
-	var worktreeFiles, stagedFiles []File
-	err := concurrent.RunConcurrently(
-		func() (err error) { worktreeFiles, err = r.worktreeDiff(ctx, nil); return },
-		func() (err error) { stagedFiles, err = r.stagedDiff(ctx, nil); return },
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	var entries []WorktreeEntry
-	if len(worktreeFiles) > 0 {
-		entries = append(entries, WorktreeEntry{Kind: EntryWorktree, Files: worktreeFiles})
-	}
-	if len(stagedFiles) > 0 {
-		entries = append(entries, WorktreeEntry{Kind: EntryStaged, Files: stagedFiles})
-	}
-	return entries, nil
-}
-
 // FetchWorktreeSummaries returns a counts-only summary of every synthetic
 // entry that currently has something to show, in the same order and with the
 // same empty entries omitted as FetchWorktreeEntries — but without building
