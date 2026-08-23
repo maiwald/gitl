@@ -96,9 +96,7 @@ func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 
 // TestDetailModelShowsStatsBlockBeforeDiff pins down that the stats summary
 // (statLinesFor, statsview.go) is spliced in between the header/message and
-// the diff content, and that fileRanges is shifted past both the header and
-// the stats block (not just the header, as it was before the stats block
-// existed).
+// the diff content, and that fileRanges is shifted past both blocks.
 func TestDetailModelShowsStatsBlockBeforeDiff(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 5)
 	d.Files[0].Additions = 3
@@ -551,12 +549,11 @@ func TestDetailModelStickyHeaderShowsSectionTitles(t *testing.T) {
 }
 
 // TestDetailModelStickyHeaderDoesNotDuplicateHeaderWhileScrolling pins down
-// the fix for the sticky row briefly duplicating a file's own header line:
-// scrolling one line at a time (unlike jumpToSection, which lands past the
-// header via sectionContentStart) still passes through the exact scroll
-// position where a file's header line becomes the topmost visible line, and
-// the sticky row must keep showing the previous file there instead of
-// repeating what's already visible immediately below it.
+// that the sticky row never duplicates a file's own header line. Scrolling one
+// line at a time (unlike jumpToSection, which lands past the header via
+// sectionContentStart) passes through the scroll position where a file's
+// header is the topmost visible line, and the sticky row must keep showing the
+// previous file there instead of repeating what's visible just below it.
 func TestDetailModelStickyHeaderDoesNotDuplicateHeaderWhileScrolling(t *testing.T) {
 	m := NewDetailModel(fixtureDetailWithFiles(2, 20), &jumplist{})
 	m.SetSize(80, 8)

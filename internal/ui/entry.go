@@ -2,10 +2,9 @@ package ui
 
 import "github.com/maiwald/gitl/internal/git"
 
-// entryTitle is the pseudo-entry's title line in the detail view header,
-// its title in the list row (worktreerow.go), and its sticky-header/
-// section title in place of the literal "Commit" a real commit uses (see
-// renderStickyHeader in detail.go).
+// entryTitle is the pseudo-entry's title in the detail view header, in its
+// list row, and in the sticky header, where it stands in for the literal
+// "Commit" a real commit shows.
 func entryTitle(k git.EntryKind) string {
 	switch k {
 	case git.EntryStaged:

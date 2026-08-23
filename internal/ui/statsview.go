@@ -8,31 +8,25 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
-// statsSectionTitle is the stats block's in-content heading, reused as-is
-// for the detail view's sticky header (detail.go) while the stats block is
-// in view, so the two stay identical without a second literal to drift.
+// statsSectionTitle is the stats block's in-content heading, reused as-is for
+// the detail view's sticky header while the stats block is in view.
 const statsSectionTitle = "Files changed"
 
-// statLinesFor renders a `git show --stat`-style summary: one line per
-// file with exact +N/-M counts, then a totals line — computed from the
-// already-parsed CommitDetail.Files rather than re-shelling to `git show
-// --stat`, whose own per-file column is a proportional visual, not exact
-// counts. Returns nil when files is empty (merge commits / no diff).
+// statLinesFor renders a `git show --stat`-style summary: one line per file
+// with exact +N/-M counts, then a totals line. The counts come from the
+// already-parsed CommitDetail.Files rather than `git show --stat`, whose
+// per-file column is a proportional visual rather than exact counts. Returns
+// nil when files is empty (merge commits / no diff).
 //
-// Additions and deletions each get their own right-aligned column (not one
-// combined "+N -M" block), so every file's "+" lines up regardless of
-// neighboring digit counts. The totals row reuses the same renderStatLine
-// column layout — its "N files changed" label standing in for a file's
-// name — instead of git's own prose summary, so its counts land in the
-// same columns. A blank line separates it from the per-file rows (the same
-// convention detail.go's reflow uses between blocks).
+// Additions and deletions each get their own right-aligned column, so every
+// file's "+" lines up regardless of neighboring digit counts. The totals row
+// reuses the same renderStatLine layout, its "N files changed" label standing
+// in for a file's name, so its counts land in the same columns.
 //
-// Each row comes back as a lineRenderer, so which one the cursor is on is
-// decided by the caller once it knows where they landed (see renderRows) —
-// the same arrangement RenderDiff/renderHeaderLines use for their own
-// content. The rows are in this block's own order: the "Files changed"
-// heading, one per file, a blank separator, then the totals row — a local
-// line convention statsFileIndexAt (detail.go) depends on.
+// Each row comes back as a lineRenderer, leaving the cursor to the caller (see
+// renderRows). The rows are in this block's own order — heading, one per file,
+// a blank separator, then the totals row — which statsFileIndexAt (detail.go)
+// depends on.
 func statLinesFor(files []git.File, width int) []lineRenderer {
 	if len(files) == 0 {
 		return nil
@@ -80,10 +74,9 @@ func statRow(label string, binary bool, nameWidth, addWidth, delWidth int, addCo
 	}
 }
 
-// formatCountParts renders a file's or totals row's addition/deletion
-// counts as separate "+N"/"-M" strings (empty when that count is zero), so
-// statLinesFor can right-align additions and deletions in their own
-// columns rather than as one combined string.
+// formatCountParts renders a row's addition/deletion counts as separate
+// "+N"/"-M" strings (empty when that count is zero), so statLinesFor can
+// right-align each in its own column.
 func formatCountParts(additions, deletions int) (add, del string) {
 	if additions > 0 {
 		add = fmt.Sprintf("+%d", additions)
@@ -94,17 +87,13 @@ func formatCountParts(additions, deletions int) (add, del string) {
 	return add, del
 }
 
-// renderStatLine renders one row of the stats table: a left-justified
-// label (a file's path, or the totals row's "N files changed") followed
-// by additions/deletions right-aligned into the shared addWidth/delWidth
-// columns statLinesFor computes across every row. binary and the
-// both-empty case (a mode-only change, or an all-binary/zero totals row)
-// each collapse to a single "Bin"/"0" marker, right-aligned across both
-// columns combined. The default case's content mixes independently-
-// Rendered spans (the styled counts), so it's clipped via
-// renderClippedStyled, not renderClipped — see that helper's doc comment
-// for why. cursor merges the cursor row's background across the whole
-// line, the same treatment every other row kind in the detail view gets.
+// renderStatLine renders one row of the stats table: a left-justified label (a
+// file's path, or the totals row's "N files changed") followed by
+// additions/deletions right-aligned into the shared addWidth/delWidth columns
+// statLinesFor computes across every row. A binary file and the both-empty
+// case (a mode-only change, or a zero totals row) collapse to a single
+// "Bin"/"0" marker spanning both columns. The default case's content mixes
+// independently-Rendered spans, so it's clipped via renderClippedStyled.
 func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int, cursor bool) string {
 	name := fmt.Sprintf(" %-*s  ", nameWidth, label)
 	combinedWidth := addWidth + 1 + delWidth
@@ -123,10 +112,9 @@ func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int
 			// two count columns are plain text sitting *between*
 			// independently-Rendered spans, so they need the cursor
 			// background applied here, before rendering. Left plain, they'd
-			// stay unhighlighted: the outer fill renderClippedStyled wraps
-			// the finished row in only reaches the first embedded ANSI reset
-			// (see padRow), which the styled "+N" puts right in the middle of
-			// the row — leaving a visible gap across the rest of it.
+			// stay unhighlighted: the outer fill only reaches the first
+			// embedded ANSI reset (see padRow), which the styled "+N" puts
+			// mid-row.
 			plain = plain.Background(cursorRowBg)
 		}
 		addPad := strings.Repeat(" ", addWidth-len(addCount))
@@ -136,18 +124,14 @@ func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int
 	}
 }
 
-// formatCountsStyled renders "+N -M" as one styled string, coloring each
-// half via addStyle/delStyle and omitting either when its count is zero.
-// Used where a single joined value is all that's needed (e.g. a worktree
-// row's summary); statLinesFor's own table instead keeps additions and
-// deletions apart via formatCountParts, so each gets its own column.
+// formatCountsStyled renders "+N -M" as one styled string, coloring each half
+// via addStyle/delStyle and omitting either when its count is zero. Used where
+// a single joined value is all that's needed, e.g. a worktree row's summary;
+// statLinesFor's table keeps the two apart via formatCountParts instead.
 //
-// addStyle/delStyle are parameterized (rather than always the plain
-// diffAddStyle/diffDeleteStyle) so a selected/dimmed row elsewhere (e.g.
-// renderWorktreeRow) can swap in its own per-state styles the same way
-// every other per-field style on such a row does. sep styles the literal
-// space joining the two halves, needed for the same ANSI-reset reason as
-// rowFieldStyle's separators.
+// The styles are parameters so a selected or dimmed row can swap in its own
+// per-state versions. sep styles the literal space joining the two halves,
+// needed for the same ANSI-reset reason as rowFieldStyle's separators.
 func formatCountsStyled(additions, deletions int, addStyle, delStyle, sep lipgloss.Style) string {
 	var parts []string
 	if additions > 0 {
@@ -162,10 +146,9 @@ func formatCountsStyled(additions, deletions int, addStyle, delStyle, sep lipglo
 	return strings.Join(parts, sep.Render(" "))
 }
 
-// diffTotals sums additions/deletions across files — used by
-// renderWorktreeRow's own +A -D summary (statLinesFor accumulates its
-// per-file totals inline, alongside the width computation its own loop
-// already does, so it doesn't go through this).
+// diffTotals sums additions/deletions across files, for renderWorktreeRow's
+// +A -D summary. statLinesFor accumulates its own totals inline, in the loop
+// that already computes its column widths.
 func diffTotals(files []git.File) (additions, deletions int) {
 	for _, f := range files {
 		additions += f.Additions

@@ -18,9 +18,8 @@ const logFormat = "%H" + fieldSep + "%P" + fieldSep +
 	"%an" + fieldSep + "%ae" + fieldSep + "%ad" + fieldSep +
 	"%D" + fieldSep + "%s"
 
-// numLogFields is the number of fields logFormat produces per record,
-// shared by parseLogLine (which validates against it directly) and
-// parseCommitDetail (which appends one more field, %B, after it).
+// numLogFields is the number of fields logFormat produces per record, shared
+// by parseLogLine and parseCommitDetail, which appends one more field (%B).
 const numLogFields = 7
 
 // Commit is a single entry from git log.

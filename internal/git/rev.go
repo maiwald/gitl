@@ -24,18 +24,13 @@ func (r *Repo) ResolveRevision(ctx context.Context, rev string) (string, error) 
 // CommitPosition returns the zero-based position of hash within HEAD's
 // history, in the same order FetchLogBatch produces — the order ListModel's
 // indices are keyed to. ok is false when hash isn't reachable from HEAD at
-// all (e.g. a commit that only exists on another branch), in which case
-// there is no list position to place a cursor on.
+// all, in which case there is no list position to place a cursor on.
 //
-// This deliberately scans AllCommitHashes rather than computing
-// `git rev-list --count hash..HEAD`, which would be a single git
-// invocation instead of a full-history fetch plus a linear scan.
-// rev-list --count measures reachability distance, not git log's
-// traversal order, and the two diverge once merges are involved — using
-// it here would silently place the cursor on the wrong commit in any
-// history with merges, rather than fail loudly. The cost of the scan is
-// the same `git log --format=%H` query AllCommitHashes already serves
-// list search with, and this only runs once per CLI `gitl <rev>` jump.
+// It scans AllCommitHashes rather than taking the single-invocation
+// `git rev-list --count hash..HEAD`, which measures reachability distance
+// rather than git log's traversal order: the two diverge once merges are
+// involved, and it would silently place the cursor on the wrong commit instead
+// of failing loudly. The scan runs once per CLI `gitl <rev>` jump.
 func (r *Repo) CommitPosition(ctx context.Context, hash string) (pos int, ok bool, err error) {
 	hashes, err := r.AllCommitHashes(ctx)
 	if err != nil {

@@ -5,12 +5,10 @@ package concurrent
 
 import "sync"
 
-// RunConcurrently runs each fn in its own goroutine and waits for all of
-// them to finish, returning the first non-nil error in call order (not
-// completion order). Used to overlap independent operations — several git
-// subprocess calls, or two unrelated repo queries from the UI layer —
-// instead of running them one after another, when there's nothing to
-// serialize them for.
+// RunConcurrently runs each fn in its own goroutine and waits for all of them
+// to finish, returning the first non-nil error in call order, not completion
+// order. Used to overlap independent operations — several git subprocess
+// calls, or two unrelated repo queries — that have nothing to serialize them.
 func RunConcurrently(fns ...func() error) error {
 	errs := make([]error, len(fns))
 	var wg sync.WaitGroup

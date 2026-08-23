@@ -15,19 +15,17 @@ const commitDetailFormat = logFormat + fieldSep + "%B"
 // diff base for root commits (which have no parent to diff against).
 const emptyTreeHash = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-// CommitDetail holds full commit metadata, the complete message body, and
-// the commit's diff. Files is left empty for merge commits: with more than
-// one parent there's no single canonical diff, and picking one (e.g.
-// first-parent) is deferred to a later stage.
+// CommitDetail holds full commit metadata, the complete message body, and the
+// commit's diff. Files is left empty for merge commits: with more than one
+// parent there's no single canonical diff, and picking one is deferred.
 //
-// Kind is EntryCommit (its zero value) for every CommitDetail built by
-// FetchCommitDetail below; EntryDetail (worktree.go) builds the other two
-// kinds directly, with Commit and Body left zero since a synthetic entry has
-// no commit metadata.
+// Kind is EntryCommit for every CommitDetail FetchCommitDetail builds;
+// EntryDetail (worktree.go) builds the other two kinds directly, with Commit
+// and Body left zero.
 //
 // Paths records the pathspecs Files was restricted to, empty when it wasn't.
-// It's carried purely so the UI can say *why* a diff came out empty (see
-// noDiffNotice in internal/ui/detail.go) — nothing re-runs a fetch from it.
+// It's carried only so the UI can say *why* a diff came out empty (see
+// noDiffNotice) — nothing re-runs a fetch from it.
 type CommitDetail struct {
 	Kind EntryKind
 	Commit
@@ -61,8 +59,8 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string, paths ...stri
 		if len(detail.Parents) == 1 {
 			from = detail.Parents[0]
 		}
-		// --find-copies-harder: see stagedDiff's doc comment (worktree.go)
-		// for why the "-harder" variant is worth its cost here.
+		// --find-copies-harder: see stagedDiff (worktree.go) for what the
+		// "-harder" variant buys and costs.
 		files, err := r.diffFiles(ctx, paths, from, detail.Hash, "--find-copies-harder")
 		if err != nil {
 			return nil, err

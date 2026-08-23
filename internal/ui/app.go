@@ -13,8 +13,8 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
-// batchSize is how many commits are fetched per request, both for the
-// initial synchronous load and for subsequent lazy-loaded batches.
+// batchSize is how many commits are fetched per request, for the initial
+// load and for each lazy-loaded batch.
 const batchSize = 300
 
 // view identifies which screen is currently active.
@@ -25,15 +25,13 @@ const (
 	viewDetail
 )
 
-// StartTarget describes what gitl was asked to open on startup: nothing
-// (the plain list), the staged-changes entry, or the working-tree (unstaged)
+// StartTarget describes what gitl was asked to open on startup: nothing (the
+// plain list), a revision, the staged-changes entry, or the working-tree
 // entry. Built by main.go from the command line.
 //
 // Paths is the optional pathspec limiting that startup diff, the way `git
 // diff -- <path>...` limits its own. It applies to the startup detail view
-// only, never to the commit list behind it or to a commit later opened from
-// there: nothing about the list is path-filtered, so a filtered detail view
-// reached from it would be answering a question the list never asked.
+// only, never to the commit list or to a commit opened from it.
 type StartTarget struct {
 	Rev    string
 	Staged bool
@@ -45,9 +43,9 @@ type StartTarget struct {
 // view, skipping the list as the initial screen.
 func (t StartTarget) opensDetail() bool { return t.Staged || t.Diff || t.Rev != "" }
 
-// opensList reports whether the commit list gets loaded at all. Deliberately
-// not the negation of opensDetail: a `gitl <rev>` jump opens a detail view
-// *and* loads the list behind it (so ctrl-o can reach the commit's place in
+// opensList reports whether the commit list gets loaded at all. Not the
+// negation of opensDetail: a `gitl <rev>` jump opens a detail view *and*
+// loads the list behind it (so ctrl-o can reach the commit's place in
 // history), while `--staged`/`--diff` have no list at any point.
 func (t StartTarget) opensList() bool { return !t.Staged && !t.Diff }
 
@@ -58,9 +56,8 @@ type Model struct {
 
 	start StartTarget
 	// quitOnBack makes Back/q from the detail view quit outright instead of
-	// returning to the list — set in NewModel for `gitl --staged`/`--diff`/
-	// `<rev>` startup jumps, which open straight into a detail view with no
-	// list to return to. Nothing else ever writes it.
+	// returning to the list — set for the startup jumps that open straight
+	// into a detail view with no list to return to.
 	quitOnBack bool
 
 	repo   *git.Repo
@@ -70,16 +67,15 @@ type Model struct {
 	// err is a fatal startup failure: View() replaces the whole screen
 	// with it, and it's never cleared.
 	err error
-	// lastError is the latest non-fatal fetch failure (pagination, worktree
-	// entries, search, or a list-opened commit detail), shown in the status
+	// lastError is the latest non-fatal fetch failure, shown in the status
 	// bar until the next successful fetch of any kind clears it.
 	lastError error
 	entries   []git.WorktreeEntry // canonical copy, mirrored into list.leading as it and the list each become available
 
 	// pendingJump is a CLI-requested list position (`gitl <rev>`) not yet
-	// applied, either because the list doesn't exist yet or because
-	// resolveRevPositionCmd hasn't returned yet — two independent halves
-	// that can land in either order, joined by pumpPendingJump.
+	// applied, because the list or the resolved position is still missing —
+	// two independent halves that can land in either order, joined by
+	// pumpPendingJump.
 	pendingJump *int
 
 	searchPromptOpen bool
@@ -91,49 +87,34 @@ type Model struct {
 	searchingTerm string
 	// allHashes is the full reachable commit-hash history in log order,
 	// fetched once on the first search and reused for every later one —
-	// gitl has no refresh mechanism (see CLAUDE.md's "Known limitations"),
-	// so this can't go stale during a run, and refetching it via a git
-	// subprocess on every search submission would be wasted I/O on a large
-	// repo. Nil means "not fetched yet": a genuinely empty history would be
-	// indistinguishable, but a run with no commits either fails at startup
-	// or has no list to search (see StartTarget.opensList).
+	// gitl has no refresh mechanism, so it can't go stale during a run.
+	// Nil means "not fetched yet".
 	allHashes []string
 
 	// searchTerm and searchDismissed are the single, canonical search state
-	// shared by both views — see setSearchDisplay, the only place that
-	// writes them. Neither ListModel nor DetailModel owns its own copy;
-	// each keeps a display mirror pushed down from here (via
-	// SetSearchDisplay) purely so their own internal render calls don't
-	// need term/dismissed threaded through as parameters everywhere.
+	// shared by both views, written only by setSearchDisplay. Each view
+	// keeps a display mirror pushed down from here via SetSearchDisplay.
 	searchTerm      string
 	searchDismissed bool
 	// listMatches is the canonical copy of the list's match positions for
-	// searchTerm, kept here rather than only inside ListModel because the
-	// list model is rebuilt from scratch when commits arrive — a search
-	// submitted before that (the prompt only needs the repo, not the list)
-	// would otherwise be silently dropped by the replacement. Nil while the
-	// list's half of the search hasn't run: it's only fetched when something
-	// needs it, see ensureListSearch.
+	// searchTerm, kept here because ListModel is rebuilt from scratch when
+	// commits arrive and would otherwise drop a search submitted before
+	// that. Nil while the list's half of the search hasn't run — it's only
+	// fetched when something needs it, see ensureListSearch.
 	listMatches []int
 	// jumpOnResolve is what the list should do with the match positions it's
 	// waiting on — see the jumpNone/jumpNextMatch/jumpPrevMatch constants.
 	jumpOnResolve int
 
-	// jl is the single, cross-view jumplist backing ctrl-o/ctrl-i (vim's
-	// jumpBack/jumpForward). Shared by pointer with ListModel and
-	// DetailModel — see jumplist's doc comment for why a jump made from
-	// inside either view, or the view transition of opening/leaving a
-	// commit, is recorded onto one shared history instead of two
-	// independent per-view ones.
+	// jl is the single, cross-view jumplist backing ctrl-o/ctrl-i, shared
+	// by pointer with ListModel and DetailModel.
 	jl *jumplist
 }
 
 // jumpPos identifies one position recorded in the jumplist: either a list
-// cursor position, or a line within a specific commit/entry's detail view
-// (commit, not cursorLine alone, since JumpForward may need to reconstruct a
-// DetailModel for a commit that isn't the currently active one — the exact
-// *git.CommitDetail pointer it was fetched as, reused directly with no
-// re-fetch).
+// cursor position, or a line within a specific commit/entry's detail view.
+// It carries the commit, not cursorLine alone, so a jump can reconstruct a
+// DetailModel for a commit that isn't the active one without re-fetching it.
 type jumpPos struct {
 	view       view
 	listCursor int
@@ -142,23 +123,17 @@ type jumpPos struct {
 }
 
 // jumplist is the shared, cross-view jumplist backing ctrl-o/ctrl-i, matching
-// vim's own semantics where switching buffers (here: list <-> detail) is
-// itself jump-recordable, not just movement within one — see CLAUDE.md's
-// jumplist note. Owned by the root Model and referenced by pointer from both
-// ListModel and DetailModel (constructed with it, see NewListModel/
-// NewDetailModel) so a jump made from inside either view (g/G, [/], a
-// search-match step) pushes onto this one shared stack; JumpBack/JumpForward
-// themselves are handled centrally by the root Model (see doJumpBack/
-// doJumpForward) since popping an entry can require switching the active
-// view, which neither child model can do on its own.
+// vim's semantics where switching buffers (here: list <-> detail) is itself
+// jump-recordable, not just movement within one. Owned by the root Model and
+// referenced by pointer from both ListModel and DetailModel, which only push
+// onto it; traversal lives on Model (doJumpBack/doJumpForward) since popping
+// an entry can require switching the active view.
 type jumplist struct {
 	back, forward []jumpPos
 }
 
-// push records pos as a jumplist entry reachable via JumpBack, discarding any
-// forward history from an earlier JumpBack — a fresh jump invalidates
-// whatever "redo" existed before it, matching vim's own jumplist semantics.
-// Capped at jumplistCap entries, matching vim's own default jumplist size.
+// push records pos as a jumplist entry reachable via JumpBack. A fresh jump
+// invalidates whatever forward history an earlier JumpBack left, as in vim.
 func (j *jumplist) push(pos jumpPos) {
 	j.forward = nil
 	j.back = append(j.back, pos)
@@ -169,12 +144,10 @@ func (j *jumplist) push(pos jumpPos) {
 
 // NewModel constructs the initial root model for the given startup target.
 func NewModel(target StartTarget) Model {
-	// Seeded with an entry at the list's top (position 0), so ctrl-o can
-	// always get back there even if the cursor got elsewhere via plain
-	// motion first, never through an actual jump — same reasoning
-	// ListModel/DetailModel's own seed used to carry individually. Skipped
-	// when the run has no list at all (see opensList), where ctrl-o would
-	// otherwise strand the user on a permanently empty list view.
+	// Seeded with an entry at the list's top so ctrl-o can always get back
+	// there even if the cursor only ever moved by plain motion. Skipped when
+	// the run has no list at all (see opensList), where ctrl-o would strand
+	// the user on a permanently empty list view.
 	jl := &jumplist{}
 	if target.opensList() {
 		jl.back = []jumpPos{{view: viewList, listCursor: 0}}
@@ -183,11 +156,9 @@ func NewModel(target StartTarget) Model {
 		start:      target,
 		quitOnBack: target.opensDetail(),
 		jl:         jl,
-		// The list is built empty here rather than left a zero value until
-		// commitsLoadedMsg replaces it: keys reach it from the very first
-		// frame (viewList is the initial view, and a jumplist entry can send
-		// the user there at any time), and a zero ListModel has no jumplist
-		// to push onto — a nil-pointer panic on the first jump-worthy motion.
+		// Built empty rather than left a zero value until commitsLoadedMsg
+		// replaces it: keys reach it from the very first frame, and a zero
+		// ListModel has no jumplist to push onto.
 		list: NewListModel(nil, jl),
 	}
 }
@@ -196,10 +167,9 @@ func (m Model) Init() tea.Cmd {
 	return openRepoCmd()
 }
 
-// repoOpenedMsg reports the outcome of opening the repo and checking
-// whether it has any commits — the one thing every startup path needs
-// before it can dispatch its own next commands (see Update's handling of
-// it).
+// repoOpenedMsg reports the outcome of opening the repo and checking whether
+// it has any commits — what every startup path needs before it can dispatch
+// its own next commands.
 type repoOpenedMsg struct {
 	repo       *git.Repo
 	hasCommits bool
@@ -219,21 +189,18 @@ type commitDetailLoadedMsg struct {
 }
 
 // worktreeEntriesLoadedMsg carries the synthetic working-tree/staged rows.
-// It can arrive before or after commitsLoadedMsg (they're independent
-// concurrent fetches), so it's never applied only to whatever ListModel
-// exists at the moment it arrives — see Update's handling of both messages,
-// which each re-mirror Model.entries into the list.
+// It can arrive before or after commitsLoadedMsg (independent concurrent
+// fetches), so both messages re-mirror Model.entries into the list rather
+// than relying on whichever ListModel exists when this one arrives.
 type worktreeEntriesLoadedMsg struct {
 	entries []git.WorktreeEntry
 }
 
 // revPositionMsg carries the resolved list position of a CLI-requested
 // revision (`gitl <rev>`), for positioning the list's cursor behind the
-// detail view that opens immediately from fetchDetailCmd. found is false
-// when the revision couldn't be resolved at all, or resolved but isn't
-// reachable from HEAD (e.g. a commit only on another branch) — in either
-// case there's no sensible list position, so the cursor is simply left
-// where it is (see Update's handling of it).
+// detail view. found is false when the revision couldn't be resolved, or
+// isn't reachable from HEAD — either way there's no sensible list position
+// and the cursor is left where it is.
 type revPositionMsg struct {
 	pos   int
 	found bool
@@ -243,9 +210,8 @@ type revPositionMsg struct {
 type errSeverity int
 
 const (
-	// nonFatal: whatever is already on screen is still valid and stays;
-	// the failure is reported in the status bar until the next successful
-	// fetch retires it.
+	// nonFatal: whatever is already on screen stays; the failure is
+	// reported in the status bar until the next successful fetch.
 	nonFatal errSeverity = iota
 	// fatal: there is nothing left to show, so the error replaces the
 	// whole screen. Reserved for startup failures.
@@ -257,10 +223,9 @@ type errMsg struct {
 	severity errSeverity
 }
 
-// runCmd wraps fetch as a tea.Cmd: on success, toMsg(v) becomes the
-// resulting message; on failure, errMsg{err, severity} does — the shape
-// behind nearly every fetch below. fetchMoreCmd and resolveRevPositionCmd
-// are exceptions — see their own doc comments.
+// runCmd wraps fetch as a tea.Cmd: on success toMsg(v) becomes the resulting
+// message, on failure errMsg{err, severity} does. fetchMoreCmd and
+// resolveRevPositionCmd report failures their own way instead.
 func runCmd[T any](severity errSeverity, fetch func(context.Context) (T, error), toMsg func(T) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		v, err := fetch(context.Background())
@@ -286,11 +251,9 @@ func openRepoCmd() tea.Cmd {
 }
 
 // loadListCmd fetches the first batch of commits and the total reachable
-// count. The two are independent reads on an already-open repo, so they
-// run concurrently via concurrent.RunConcurrently rather than one after
-// another. severity is fatal on the plain startup path (no list, nothing
-// to show) and nonFatal on the `<rev>`-jump path (the detail view is that
-// path's primary payload and can succeed independently of the list).
+// count, two independent reads run concurrently. severity is fatal on the
+// plain startup path (no list, nothing to show) and nonFatal on the
+// `<rev>`-jump path, whose detail view can succeed without the list.
 func loadListCmd(repo *git.Repo, severity errSeverity) tea.Cmd {
 	return runCmd(severity, func(ctx context.Context) (commitsLoadedMsg, error) {
 		var commits []git.Commit
@@ -306,9 +269,8 @@ func loadListCmd(repo *git.Repo, severity errSeverity) tea.Cmd {
 	}, func(m commitsLoadedMsg) tea.Msg { return m })
 }
 
-// loadWorktreeEntriesCmd's failure is always nonFatal: the rows it
-// produces are always supplementary to the list/detail view, regardless of
-// whether it happens to arrive before or after the list itself.
+// loadWorktreeEntriesCmd fetches the synthetic leading rows. Its failure is
+// always nonFatal: those rows are supplementary to the list/detail view.
 func loadWorktreeEntriesCmd(repo *git.Repo) tea.Cmd {
 	return runCmd(nonFatal, func(ctx context.Context) ([]git.WorktreeEntry, error) {
 		return repo.FetchWorktreeEntries(ctx)
@@ -318,12 +280,10 @@ func loadWorktreeEntriesCmd(repo *git.Repo) tea.Cmd {
 }
 
 // resolveRevPositionCmd resolves rev to a commit position within HEAD's
-// history for cursor placement. Any failure to resolve or place it (an
-// invalid revision, or one unreachable from HEAD) is reported as
-// revPositionMsg{found: false} rather than an errMsg: fetchDetailCmd
-// already surfaces an invalid revision as the user-visible error, so this
-// doesn't need to duplicate it — it only ever affects where the cursor
-// ends up.
+// history for cursor placement. Failure to resolve or place it reports
+// revPositionMsg{found: false} rather than an errMsg: fetchDetailCmd already
+// surfaces an invalid revision, and this only affects where the cursor ends
+// up.
 func resolveRevPositionCmd(repo *git.Repo, rev string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -340,17 +300,14 @@ func resolveRevPositionCmd(repo *git.Repo, rev string) tea.Cmd {
 }
 
 // moreCommitsFailedMsg reports a failed pagination fetch. It bypasses
-// errMsg/runCmd on purpose: clearing ListModel.loadingMore has to be tied
-// to *this* fetch's own failure, not to any errMsg — an unrelated error
-// (e.g. a failed search) arriving while a pagination fetch is genuinely
-// still in flight must not un-latch it, since that would let a duplicate
-// fetch for the same range through and AppendCommits would append the same
-// commits twice, corrupting every index after that point.
+// errMsg/runCmd so that clearing ListModel.loadingMore is tied to *this*
+// fetch's own failure: an unrelated error arriving while a pagination fetch
+// is still in flight must not un-latch it, which would let a duplicate fetch
+// for the same range append the same commits twice.
 type moreCommitsFailedMsg struct{ err error }
 
-// fetchMoreCmd deliberately doesn't go through runCmd — see
-// moreCommitsFailedMsg for why its failures need to identify themselves
-// separately.
+// fetchMoreCmd doesn't go through runCmd — see moreCommitsFailedMsg for why
+// its failures need to identify themselves separately.
 func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 	return func() tea.Msg {
 		commits, err := repo.FetchLogBatch(context.Background(), req.skip, req.limit)
@@ -361,18 +318,10 @@ func fetchMoreCmd(repo *git.Repo, req fetchRequest) tea.Cmd {
 	}
 }
 
-// openDetail installs detail as the active view, mirroring the shared
-// search state into it so an already-active search keeps working across
-// commits/entries (a freshly constructed DetailModel otherwise defaults to
-// an empty term and searchDismissed=false, which would drop the
-// highlighting, or make an already-dismissed search suddenly reappear, just
-// because a new commit/entry was opened). Unlike a "/" search submitted
-// while already viewing this commit (which jumps straight to the first
-// match, see submitSearch), opening a commit/entry only computes and
-// highlights matches — the cursor stays at the natural top of the view,
-// since jumping straight past the commit metadata into the diff/message
-// would be a surprising way for a view to open. n/N reach the first match
-// from here same as any other.
+// openDetail installs detail as the active view, carrying the shared search
+// state into it so an active search keeps working across commits/entries.
+// Opening only computes and highlights matches; the cursor stays at the top
+// of the view rather than jumping to the first match, which n/N still reach.
 func (m Model) openDetail(detail *git.CommitDetail) Model {
 	m.detail = m.newDetailModel(detail)
 	m.active = viewDetail
@@ -381,8 +330,7 @@ func (m Model) openDetail(detail *git.CommitDetail) Model {
 
 // newDetailModel builds a detail view over detail, sized and carrying the
 // shared search state — everything a DetailModel needs before it's shown,
-// wherever it's shown from (a commit opened from the list, a CLI start
-// target, or a jumplist entry being restored).
+// from wherever it's shown.
 func (m Model) newDetailModel(detail *git.CommitDetail) DetailModel {
 	d := NewDetailModel(detail, m.jl)
 	d.SetSize(m.width, m.contentHeight())
@@ -390,23 +338,21 @@ func (m Model) newDetailModel(detail *git.CommitDetail) DetailModel {
 	return d
 }
 
-// fetchDetailCmd's severity depends on the caller: fatal from the `<rev>`-
-// jump startup dispatch (the detail view is that path's whole payload),
-// nonFatal from Enter on a real commit in the list (which stays up if this
-// one fetch fails). paths is only ever the CLI's own pathspec, from that
-// same startup dispatch — see StartTarget.Paths for why a commit opened
-// from the list is never filtered.
+// fetchDetailCmd fetches one commit's metadata and diff. severity is fatal
+// from the `<rev>`-jump startup dispatch (the detail view is that path's
+// whole payload) and nonFatal from Enter in the list, which stays up if the
+// fetch fails. paths is only ever the CLI's own pathspec — see
+// StartTarget.Paths.
 func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity, paths ...string) tea.Cmd {
 	return runCmd(severity, func(ctx context.Context) (*git.CommitDetail, error) {
 		return repo.FetchCommitDetail(ctx, hash, paths...)
 	}, func(d *git.CommitDetail) tea.Msg { return commitDetailLoadedMsg{detail: d} })
 }
 
-// fetchEntryDetailCmd fetches a single synthetic entry's diff directly (for
-// a CLI `--staged`/`--diff` startup jump, which has no list to select the
-// row from) and opens it the same way any other detail view opens, via
-// commitDetailLoadedMsg. severity is hardcoded fatal since that startup
-// path has no list to fall back to.
+// fetchEntryDetailCmd fetches a single synthetic entry's diff directly, for a
+// CLI `--staged`/`--diff` startup jump that has no list to select the row
+// from, and opens it via commitDetailLoadedMsg like any other detail view.
+// Failure is fatal since that path has no list to fall back to.
 func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind, paths []string) tea.Cmd {
 	return runCmd(fatal, func(ctx context.Context) ([]git.File, error) {
 		return repo.FetchWorktreeEntry(ctx, kind, paths...)
@@ -426,20 +372,18 @@ type searchLoadedMsg struct {
 }
 
 // searchFailedMsg reports a failed list search. Like moreCommitsFailedMsg it
-// bypasses errMsg on purpose: clearing searchingTerm has to be tied to this
-// search's own failure, so an unrelated error can't leave the status bar
-// reporting a search that's still genuinely running — or stop reporting one
-// that is.
+// bypasses errMsg so clearing searchingTerm is tied to this search's own
+// failure, and an unrelated error can't stop the status bar reporting a
+// search that is still running.
 type searchFailedMsg struct {
 	term string
 	err  error
 }
 
-// searchCmd runs the queries a list search needs. They're two independent
-// git reads, so they overlap in one command the same way loadListCmd's do,
-// rather than racing back as two messages the model has to reassemble. The
-// hash order is only queried the first time — it can't change during a run
-// (see allHashes), so later searches are handed the cached one.
+// searchCmd runs the queries a list search needs, overlapping the two
+// independent git reads in one command rather than racing back as two
+// messages the model has to reassemble. The hash order is only queried the
+// first time; later searches are handed the cached one (see allHashes).
 func searchCmd(repo *git.Repo, term string, order []string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -461,9 +405,8 @@ func searchCmd(repo *git.Repo, term string, order []string) tea.Cmd {
 }
 
 // matchPositions maps a search's matched hashes to their positions in order,
-// ascending. Hash matches (HashesMatching, an in-memory filter over the same
-// order) are unioned in here rather than queried separately — see its doc
-// comment in internal/git.
+// ascending, unioning in the hash-prefix matches (HashesMatching, an
+// in-memory filter over that same order).
 func matchPositions(order []string, matched map[string]bool, term string) []int {
 	byHash := git.HashesMatching(order, term)
 	positions := make([]int, 0, len(matched)+len(byHash))
@@ -476,10 +419,8 @@ func matchPositions(order []string, matched map[string]bool, term string) []int 
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Any successful fetch retires a previously-shown non-fatal error: git
-	// is answering again, whatever specifically failed before. Checked
-	// once here rather than repeated in each success case below, so a
-	// future new success case can't forget it.
+	// Any successful fetch retires a previously-shown non-fatal error, checked
+	// once here rather than repeated in each success case below.
 	switch msg.(type) {
 	case commitsLoadedMsg, moreCommitsLoadedMsg, commitDetailLoadedMsg,
 		worktreeEntriesLoadedMsg, searchLoadedMsg:
@@ -499,22 +440,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repoOpenedMsg:
 		m.repo = msg.repo
 		if m.start.Staged {
-			// A commit-less repo is not an error here: there's no HEAD to
-			// diff the index against yet, but FetchWorktreeEntry already
-			// treats that as the empty tree, same as `git diff --cached`
-			// itself does.
+			// A commit-less repo is not an error here: FetchWorktreeEntry
+			// treats the missing HEAD as the empty tree, same as
+			// `git diff --cached` does.
 			return m, fetchEntryDetailCmd(msg.repo, git.EntryStaged, m.start.Paths)
 		}
 		if m.start.Diff {
 			return m, fetchEntryDetailCmd(msg.repo, git.EntryWorktree, m.start.Paths)
 		}
 		if m.start.Rev != "" {
-			// fetchDetailCmd passes the raw revision straight to `git log -1`
-			// (which already accepts any git-resolvable revision), so the
-			// detail view paints as soon as that returns, concurrently with
-			// the list loading and positioning itself behind it via
-			// resolveRevPositionCmd/pumpPendingJump. Severity split: see
-			// fetchDetailCmd's doc comment.
+			// fetchDetailCmd passes the raw revision straight to `git log -1`,
+			// so the detail view paints as soon as that returns, concurrently
+			// with the list loading and positioning itself behind it.
 			return m, tea.Batch(
 				fetchDetailCmd(msg.repo, m.start.Rev, fatal, m.start.Paths...),
 				loadListCmd(msg.repo, nonFatal),
@@ -533,7 +470,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetSize(m.width, m.contentHeight())
 		m.list.SetLeadingEntries(m.entries)
 		// The search state can already be set: the prompt is available as
-		// soon as the repo opens, which is a whole fetch before this message.
+		// soon as the repo opens, a whole fetch before this message.
 		m.list.SetSearchDisplay(m.searchTerm, m.searchDismissed)
 		m, matchCmd := m.applyListMatches(m.listMatches)
 		m, jumpCmd := m.pumpPendingJump()
@@ -541,9 +478,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
 		// A jump requested while this fetch was in flight was refused a fetch
-		// of its own (see RequestLoadUpTo) and is still waiting for a
-		// position this batch may not have reached. Now that the fetch is
-		// done, offer it again — otherwise the cursor silently never arrives.
+		// of its own (see RequestLoadUpTo) and may still be waiting for a
+		// position this batch didn't reach. Offer it again now, or the cursor
+		// silently never arrives.
 		if target, ok := m.list.pendingTarget(); ok {
 			return m, m.loadUpToCmd(target)
 		}
@@ -558,10 +495,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case revPositionMsg:
 		if !msg.found {
-			// Not reachable from HEAD (or couldn't be resolved at all) — the
-			// documented v1 fallback is to leave the cursor at the top
-			// rather than error; the detail view itself already opened (or
-			// will) from fetchDetailCmd regardless.
+			// Not reachable from HEAD, or not resolvable at all: leave the
+			// cursor at the top rather than error. The detail view opens from
+			// fetchDetailCmd regardless.
 			return m, nil
 		}
 		pos := msg.pos
@@ -598,9 +534,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // jumpOnResolve values: what the list should do once its match positions
-// arrive. Recorded at the moment the search is started, not read off the
-// active view when it resolves, since a search started only to light the
-// list's rows up must not also drag its cursor around.
+// arrive. Recorded when the search is started, not read off the active view
+// when it resolves, since a search started only to light up the list's rows
+// must not also drag its cursor around.
 const (
 	jumpNone      = 0
 	jumpNextMatch = 1  // land on the first match at or after the cursor
@@ -618,12 +554,9 @@ func (m Model) startListSearch(term string, jump int) (Model, tea.Cmd) {
 
 // ensureListSearch starts the list's queries if its match positions aren't
 // available for the active term yet. Nothing calls this speculatively: the
-// list's half of a search is repo-wide (two `git log` scans over all of
-// HEAD), so it's only worth running once something is actually about to use
-// it — the list becoming visible with the search still showing, or n/N
-// reviving it there. A search that stays inside one commit never pays for
-// it, and neither does the common exit path, where the first q/esc dismisses
-// the search before the second one returns to the list.
+// list's half of a search is two repo-wide `git log` scans, so it only runs
+// once something is about to use it — the list becoming visible with the
+// search still showing, or n/N reviving it there.
 //
 // jump says what to do when the results land (see jumpOnResolve); an
 // already-running search has its intent upgraded rather than being started
@@ -640,8 +573,8 @@ func (m Model) ensureListSearch(jump int) (Model, tea.Cmd) {
 		return m, nil
 	}
 	// setSearchDisplay drops listMatches on every term change and a resolved
-	// search always installs a non-nil slice (empty when it found nothing),
-	// so nil here means "not searched yet", not "searched, no matches".
+	// search always installs a non-nil slice, so nil here means "not searched
+	// yet", not "searched, no matches".
 	if m.listMatches != nil {
 		return m, nil
 	}
@@ -651,11 +584,8 @@ func (m Model) ensureListSearch(jump int) (Model, tea.Cmd) {
 // applyListMatches installs a resolved search's match positions on the list
 // and carries out whatever jump was asked for when it was started (see
 // jumpOnResolve), dispatching a targeted fetch when the match it lands on
-// isn't loaded yet. matches is also kept here as the canonical copy, so a
-// list model built later (see commitsLoadedMsg) can be handed the same set
-// rather than losing the search — which is why the jump isn't consumed until
-// there are commits to land it on: a search can resolve before the very
-// first batch of commits does.
+// isn't loaded yet. The jump isn't consumed until there are commits to land
+// it on, since a search can resolve before the first batch of them does.
 func (m Model) applyListMatches(matches []int) (Model, tea.Cmd) {
 	m.listMatches = matches
 	m.list.SetMatches(matches)
@@ -679,13 +609,9 @@ func (m Model) applyListMatches(matches []int) (Model, tea.Cmd) {
 }
 
 // loadUpToCmd dispatches the targeted fetch a deferred list jump to target
-// needs, or nil when there's nothing to fetch — RequestLoadUpTo already
-// refuses when the position is loaded or another fetch owns the wire (see
-// its doc comment), and every caller here has just been told its own jump
-// was deferred. The pairing is uniform enough across the four navigations
-// that can outrun the loaded range (a resolved search, a CLI revision jump,
-// n/N, and a jump re-offered once the fetch blocking it lands) to live in
-// one place.
+// needs, or nil when there's nothing to fetch — RequestLoadUpTo refuses when
+// the position is already loaded or another fetch is in flight. Shared by
+// every navigation that can outrun the loaded range.
 func (m Model) loadUpToCmd(target int) tea.Cmd {
 	if req, ok := m.list.RequestLoadUpTo(target); ok {
 		return fetchMoreCmd(m.repo, req)
@@ -693,12 +619,9 @@ func (m Model) loadUpToCmd(target int) tea.Cmd {
 	return nil
 }
 
-// pumpPendingJump applies a CLI-requested list position (`gitl <rev>`)
-// once both of its independent halves are available: the list itself
-// (commitsLoadedMsg constructs a fresh ListModel that would otherwise
-// discard anything applied before it existed) and the resolved position
-// (revPositionMsg, a concurrent fetch that can land in either order) — see
-// pendingJump's doc comment.
+// pumpPendingJump applies a CLI-requested list position (`gitl <rev>`) once
+// both of its independent halves are available: the list itself and the
+// resolved position. Called from whichever of the two lands last.
 func (m Model) pumpPendingJump() (Model, tea.Cmd) {
 	if m.pendingJump == nil || len(m.list.commits) == 0 {
 		return m, nil
@@ -740,9 +663,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Handled centrally, ahead of view routing, since popping a jumplist
-	// entry can require switching the active view — neither ListModel nor
-	// DetailModel can do that on its own (see jumplist's doc comment).
+	// Handled ahead of view routing, since popping a jumplist entry can
+	// require switching the active view.
 	if key.Matches(msg, DefaultKeyMap.JumpBack) {
 		return m.doJumpBack()
 	}
@@ -756,9 +678,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleListViewKey(msg)
 }
 
-// currentJumpPos captures the active view's current position as a jumpPos,
-// for recording onto the opposite stack when doJumpBack/doJumpForward moves
-// away from it.
+// currentJumpPos captures the active view's current position as a jumpPos.
 func (m Model) currentJumpPos() jumpPos {
 	if m.active == viewDetail {
 		return jumpPos{view: viewDetail, commit: m.detail.detail, cursorLine: m.detail.cursorLine}
@@ -766,11 +686,9 @@ func (m Model) currentJumpPos() jumpPos {
 	return jumpPos{view: viewList, listCursor: m.list.cursor}
 }
 
-// doJumpBack and doJumpForward step through the shared jumplist (see
-// jumplist's doc comment), vim's ctrl-o/ctrl-i: browser-back/forward-style,
-// each pushing the position it leaves onto the other stack so they exactly
-// undo one another. A no-op (nil cmd, unchanged model) when the relevant
-// stack is empty.
+// doJumpBack and doJumpForward step through the shared jumplist (ctrl-o/
+// ctrl-i), each pushing the position it leaves onto the other stack so they
+// exactly undo one another. A no-op when the relevant stack is empty.
 func (m Model) doJumpBack() (tea.Model, tea.Cmd) {
 	if len(m.jl.back) == 0 {
 		return m, nil
@@ -791,17 +709,11 @@ func (m Model) doJumpForward() (tea.Model, tea.Cmd) {
 	return m.gotoJumpPos(target)
 }
 
-// gotoJumpPos applies target, switching the active view if needed. A list
-// target always replays through ListModel.JumpTo, which already handles a
-// not-yet-loaded position by deferring (see pumpPendingJump for the CLI
-// startup path that also uses it) — every jumplist entry was, by
-// construction, the cursor's actual position at some past point, so it was
-// already loaded then and can only have grown available since. A detail
-// target reuses the already-fetched *git.CommitDetail directly (no re-fetch)
-// when it isn't the commit already active, computing search matches the
-// same non-jumping way openDetail does before landing the cursor exactly on
-// cursorLine — SetSearchDisplay computes matches without moving the cursor
-// precisely so a restore like this one lands where it means to.
+// gotoJumpPos applies pos, switching the active view if needed. A detail
+// target reuses the already-fetched *git.CommitDetail directly rather than
+// re-fetching it, and installs the search the same non-jumping way opening a
+// commit does — a jump to the first match would fight the cursorLine this
+// restore is trying to land on.
 func (m Model) gotoJumpPos(pos jumpPos) (Model, tea.Cmd) {
 	if pos.view == viewList {
 		m.active = viewList
@@ -819,9 +731,8 @@ func (m Model) gotoJumpPos(pos jumpPos) (Model, tea.Cmd) {
 }
 
 // handleDetailViewKey routes a key press while the detail view is active:
-// Back returns to the list (or quits outright, for a `gitl --staged`,
-// `gitl --diff`, or `gitl <rev>` startup jump — see quitOnBack), everything
-// else goes to the diff viewport.
+// Back returns to the list (or quits, see quitOnBack), everything else goes
+// to the diff viewport.
 func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, DefaultKeyMap.Back) {
 		if m.quitOnBack {
@@ -837,20 +748,19 @@ func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleListViewKey routes a key press while the list view is active: Back
 // quits (there's nowhere "back" to go from the list), Enter opens the
-// selected commit or synthetic entry, everything else goes to the list's
-// own cursor/scroll handling.
+// selected commit or synthetic entry, everything else goes to the list's own
+// cursor/scroll handling.
 func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, DefaultKeyMap.Back) {
 		m.quitting = true
 		return m, tea.Quit
 	}
 	if key.Matches(msg, DefaultKeyMap.Enter) {
-		// A synthetic entry's files are already loaded (from startup), so
-		// opening one needs no fetch — unlike a real commit, which is only
-		// ever loaded on demand. Either way, opening a commit/entry is
-		// itself a jump-worthy transition (see jumplist's doc comment): push
-		// the list position being left so ctrl-o can return to it, even
-		// before the detail view exists yet on the fetchDetailCmd path.
+		// A synthetic entry's files were already loaded at startup, so
+		// opening one needs no fetch; a commit is loaded on demand. Either
+		// way the transition is jump-worthy: push the list position being
+		// left so ctrl-o can return to it, even before the detail view
+		// exists on the fetchDetailCmd path.
 		if entry, ok := m.list.SelectedEntry(); ok {
 			m.jl.push(m.currentJumpPos())
 			return m.openDetail(git.EntryDetail(entry)), nil
@@ -868,12 +778,10 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleSearchPromptKey routes a key press while the search prompt is open.
-// Esc cancels (checked directly, not via DefaultKeyMap.Back, since Back is
-// also bound to "q" and a query must be able to contain a literal q), and so
-// does Backspace on an already-empty query (the common "one more backspace
-// closes the prompt" convention, e.g. browser address bars). Everything else
-// not handled here is forwarded to the text input so the query can contain
-// any character.
+// Esc cancels — checked directly, not via DefaultKeyMap.Back, which is also
+// bound to "q" and a query must be able to contain a literal q — and so does
+// Backspace on an already-empty query. Everything else is forwarded to the
+// text input so the query can contain any character.
 func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyEsc:
@@ -888,8 +796,7 @@ func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// cancelSearchPrompt closes the search prompt without submitting, shared by
-// both of handleSearchPromptKey's cancellation paths.
+// cancelSearchPrompt closes the search prompt without submitting.
 func (m Model) cancelSearchPrompt() (tea.Model, tea.Cmd) {
 	m.searchPromptOpen = false
 	m.searchInput.Blur()
@@ -897,15 +804,12 @@ func (m Model) cancelSearchPrompt() (tea.Model, tea.Cmd) {
 }
 
 // submitSearch closes the prompt on Enter and searches for the submitted
-// term. There is one search term and both views answer to it, but only the
-// view in front of the user is searched now: the detail view resolves
-// synchronously as setSearchDisplay installs the term, while the list's
-// repo-wide queries wait until something needs them (ensureListSearch).
-// Whichever view was active jumps to its first match; the other never moves
-// its cursor behind the user's back — the same surprise openDetail avoids
-// when a commit is opened with a search running. An empty term clears the
-// search entirely instead (a vim-:noh-like escape hatch) — unlike
-// dismissSearch, which only hides it.
+// term. Both views answer to it, but only the view in front of the user is
+// searched now: the detail view resolves synchronously as setSearchDisplay
+// installs the term, while the list's repo-wide queries wait until something
+// needs them (ensureListSearch). Only the active view jumps to its first
+// match; the other never moves its cursor behind the user's back. An empty
+// term clears the search entirely, unlike dismissSearch, which only hides it.
 func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	term := m.searchInput.Value()
 	m.searchPromptOpen = false
@@ -924,21 +828,18 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	return m.startListSearch(term, jumpNextMatch)
 }
 
-// setSearchDisplay is the sole writer of the canonical search term/
-// dismissed state, pushing both down to each view's own display mirror so
-// highlighting and the status bar stay consistent no matter which view is
-// active when the change happens or which view later becomes active. A
-// changed term retires the previous term's list matches here for the same
-// reason each view drops its own: a match set must never outlive the term it
-// describes.
+// setSearchDisplay is the sole writer of the canonical search term/dismissed
+// state, pushing both down to each view's display mirror so highlighting and
+// the status bar stay consistent whichever view is active. A changed term
+// retires the previous term's list matches: a match set must never outlive
+// the term it describes.
 func (m *Model) setSearchDisplay(term string, dismissed bool) {
 	if term != m.searchTerm {
 		m.listMatches = nil
 		// Whatever queries are in flight are for the term being replaced:
-		// forgetting the term they belong to discards their results when
+		// forgetting which term they belong to discards their results when
 		// they land (see searchLoadedMsg) and stops the status bar from
-		// reporting a search the user has already moved on from. A new
-		// search, if there is one, records its own immediately after.
+		// reporting a search the user has moved on from.
 		m.searchingTerm = ""
 	}
 	m.searchTerm = term
@@ -947,31 +848,28 @@ func (m *Model) setSearchDisplay(term string, dismissed bool) {
 	m.detail.SetSearchDisplay(term, dismissed)
 }
 
-// hasActiveSearch reports whether a search is currently active, gating n/N
-// and Esc/q-dismiss interception in handleKey. It's shared by both views —
-// see setSearchDisplay.
+// hasActiveSearch reports whether a search is active, gating n/N and the
+// Esc/q-dismiss interception in handleKey.
 func (m Model) hasActiveSearch() bool {
 	return m.searchTerm != ""
 }
 
-// dismissSearch hides the active search's highlighting without discarding
-// its term/matches (vim :noh-style) — the first Esc/q after a search goes
-// active is absorbed here instead of falling through to Back's normal
-// quit/go-back handling; n/N (via advanceMatch) revives it.
+// dismissSearch hides the active search's highlighting without discarding its
+// term/matches (vim :noh-style): the first Esc/q after a search goes active is
+// absorbed here instead of falling through to Back. n/N revives it.
 func (m Model) dismissSearch() (Model, tea.Cmd) {
 	m.setSearchDisplay(m.searchTerm, true)
 	return m, nil
 }
 
 // advanceMatch cycles the active view's search to the next (delta>0) or
-// previous match, reviving a dismissed search first. In the list view,
-// this may dispatch a targeted fetch if the newly-selected match isn't
-// loaded yet; the detail view is fully synchronous and never needs one.
+// previous match, reviving a dismissed search first. In the list view this
+// may dispatch a targeted fetch if the newly-selected match isn't loaded
+// yet; the detail view is synchronous and never needs one.
 func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
 	// Only reviving a dismissed search needs setSearchDisplay's own
-	// render/reflow: NextMatch/PrevMatch below always re-render themselves
-	// to show the newly active match, so calling it unconditionally would
-	// pay for a full re-render/reflow twice on every plain n/N press.
+	// render/reflow: NextMatch/PrevMatch below re-render anyway, so calling
+	// it unconditionally would pay for that twice on every n/N press.
 	if m.searchDismissed {
 		m.setSearchDisplay(m.searchTerm, false)
 	}
@@ -1022,16 +920,15 @@ func (m Model) View() string {
 }
 
 // contentHeight is how many rows remain for the list/detail views once the
-// bottom status bar's single row is reserved.
+// status bar's single row is reserved.
 func (m Model) contentHeight() int {
 	return max(m.height-1, 0)
 }
 
-// renderStatusBar renders the bottom status bar: the live query while the
-// search prompt is open, a loading indicator while the list's
-// position-finding queries are in flight, the active view's search
-// term/position, or — lowest priority, since any of the above is more
-// specific and more current — the most recent non-fatal fetch failure.
+// renderStatusBar renders the bottom status bar, in priority order: the live
+// query while the search prompt is open, a loading indicator while the list's
+// queries are in flight, the active view's search term/position, or the most
+// recent non-fatal fetch failure.
 func (m Model) renderStatusBar() string {
 	style := statusBarStyle
 	var content string
@@ -1060,10 +957,10 @@ func (m Model) renderStatusBar() string {
 }
 
 // statusBarErrorText renders err's message for the one-row status bar:
-// flattened to a single line (runGit folds raw, often multi-line stderr
-// into its error text, and an unflattened message would push the bar to
-// several rows and shove the layout off screen) and truncated to fit
-// width (statusBarStyle's own Padding(0, 1) accounts for the -2).
+// flattened to a single line (runGit folds often multi-line stderr into its
+// error text, which would otherwise push the bar to several rows and shove
+// the layout off screen) and truncated to fit width (statusBarStyle's
+// Padding(0, 1) accounts for the -2).
 func statusBarErrorText(err error, width int) string {
 	text := "error: " + strings.Join(strings.Fields(err.Error()), " ")
 	if width > 2 {

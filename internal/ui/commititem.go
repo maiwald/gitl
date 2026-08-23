@@ -11,20 +11,18 @@ import (
 
 const (
 	authorColumnWidth = 18
-	// narrowAuthorColumnWidth is used instead of authorColumnWidth once the
-	// author name has been abbreviateName-shortened for a narrow pane (see
-	// renderCommitRow) — abbreviateName caps its output at two 3-letter
-	// groups plus an optional "…" (e.g. "Ada Lov", or "Gra Bre…" for a
-	// name with more parts), so 8 chars ("Xxx Yyy…") is the true max width,
-	// with truncate's own ellipsis kept as a defensive no-op fallback.
+	// narrowAuthorColumnWidth replaces authorColumnWidth once the author
+	// name has been abbreviateName-shortened for a narrow pane.
+	// abbreviateName caps its output at two 3-letter groups plus an optional
+	// "…", so 8 chars ("Xxx Yyy…") is its true maximum width.
 	narrowAuthorColumnWidth = 8
 	// shaColumnWidth matches git's own default abbreviated-hash length (the
 	// same length `%h`/`git rev-parse --short` use), prioritizing space for
 	// the subject over a wider margin against same-prefix collisions.
 	shaColumnWidth = 7
 	// dateColumnWidth and clockColumnWidth match the "2006-01-02"/"15:04"
-	// formats renderCommitRow uses. Named here (rather than left implicit)
-	// so renderWorktreeRow's blank columns can't drift from these.
+	// formats renderCommitRow uses. Named so renderWorktreeRow's blank
+	// columns can't drift from them.
 	dateColumnWidth  = 10
 	clockColumnWidth = 5
 	// narrowListWidth is the pane-width breakpoint below which
@@ -36,21 +34,16 @@ const (
 
 // renderCommitRow renders a single commit list row: abbreviated sha, date,
 // local time, author, ref decorations, and the commit subject,
-// truncated/padded to width. searchTerm highlights matches in the sha,
-// author, and subject fields — the fields SearchCommitHashes/HashesMatching
-// actually search, plus the commit message body, which has nothing visible
-// here to highlight (a body-only match still counts and stays undimmed, it
-// just shows no highlighted span). A hash match beyond the visible
-// shaColumnWidth-character prefix is the same case: real match, nothing in
-// the truncated text to highlight. isActiveMatch picks a distinct style for
-// whichever match n/N currently points at.
+// truncated/padded to width. searchTerm highlights matches in the sha, author
+// and subject fields; a match in the message body, or in the hash beyond the
+// visible prefix, is a real match with nothing visible here to highlight.
+// isActiveMatch picks a distinct style for whichever match n/N points at.
 //
-// dimmed fades a row outside the search's real match set (from the actual
-// git query, not from re-scanning this row's own text — see
-// ListModel.render), making a body-only match (nothing to highlight)
-// distinguishable from a true non-match. Each field's base style comes
-// from rowFieldStyle, which is why dimming/selection are baked into each
-// field rather than applied as one outer style around the row.
+// dimmed fades a row outside the search's real match set (from the git query,
+// not from re-scanning this row's own text), which is what distinguishes such
+// a body-only match from a true non-match. Each field's base style comes from
+// rowFieldStyle, so dimming and selection are baked into the fields rather
+// than wrapped around the finished row.
 func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm string, isActiveMatch bool) string {
 	narrow := width < narrowListWidth
 
@@ -72,16 +65,14 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 	subjectBase := rowFieldStyle(normalRowStyle, dimmed, selected)
 	gap := rowGap(selected)
 
-	// date/clock are never search targets, so they're just rendered in
-	// their base style — sha, author, and subject go through highlightSpans
-	// below.
+	// date/clock are never search targets, so they're rendered in their base
+	// style; sha, author and subject go through highlightSpans below.
 
 	// when collapses date+clock into whichever single value is most useful
-	// for this row once the pane is narrow (see narrowListWidth): today's
-	// commits show the time, since the date is implied; anything else
-	// shows the date, since the time of day rarely matters at a glance.
-	// Padded to dateColumnWidth alone (not the full date+gap+clock width)
-	// since shrinking this column is the actual point of collapsing it.
+	// once the pane is narrow (see narrowListWidth): today's commits show
+	// the time, since the date is implied; anything else shows the date.
+	// Padded to dateColumnWidth alone, since shrinking the column is the
+	// point of collapsing it.
 	var when string
 	if narrow {
 		text := localDate.Format("2006-01-02")
@@ -95,11 +86,9 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 		when = date + gap(" ") + clock
 	}
 
-	// The cursor row shows no search highlighting — its own background is
-	// already the strongest signal on the screen, the same reasoning
-	// renderLineWithBaseSpans applies to a match under the detail view's
-	// cursor. An empty term is how highlightSpans expresses that: it renders
-	// the field in its base style and nothing else.
+	// The cursor row shows no search highlighting: its own background is
+	// already the strongest signal on screen, as in renderLineWithBaseSpans.
+	// An empty term is how highlightSpans expresses that.
 	term := searchTerm
 	if selected {
 		term = ""
@@ -121,12 +110,11 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 }
 
 // rowFieldStyle resolves a row field's base style against dimmed/selected
-// state: dimmed swaps in dimStyle wholesale (not a darkened base), then
-// selected merges in cursorRowBg. Applied per-field (and to literal
-// separators via rowGap) rather than as one style wrapped around the
-// finished row, since each field is independently Render()'d and its own
-// ANSI reset would cancel a single outer background the moment it fires.
-// Shared by renderCommitRow, formatRefs, and renderWorktreeRow.
+// state: dimmed swaps in dimStyle wholesale, then selected merges in
+// cursorRowBg. Applied per field (and to literal separators via rowGap)
+// rather than as one style around the finished row, since each field is
+// independently Render()'d and its ANSI reset would cancel a single outer
+// background the moment it fires.
 func rowFieldStyle(base lipgloss.Style, dimmed, selected bool) lipgloss.Style {
 	if dimmed {
 		base = dimStyle
@@ -155,12 +143,10 @@ func RenderCommitList(commits []git.Commit, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// formatRefs renders branch/tag/HEAD decorations as bracketed badges,
-// resolved via rowFieldStyle so a badge fades with the rest of a dimmed
-// row and carries the cursor background when selected. The join separator
-// below carries the same style for the same reset-hazard reason
-// (rowFieldStyle's doc comment), so multiple badges on one row don't leave
-// a gap in the cursor highlight between them.
+// formatRefs renders branch/tag/HEAD decorations as bracketed badges, styled
+// via rowFieldStyle so a badge fades with a dimmed row and carries the cursor
+// background when selected. The join separator carries the same style, for
+// rowFieldStyle's reset reason, so badges leave no gap in the highlight.
 func formatRefs(refs []string, selected, dimmed bool) string {
 	if len(refs) == 0 {
 		return ""
@@ -173,9 +159,9 @@ func formatRefs(refs []string, selected, dimmed bool) string {
 	return strings.Join(parts, style.Render(" "))
 }
 
-// shaPrefix returns the first shaColumnWidth characters of a full commit
-// hash, unabbreviated by git and unadorned by an ellipsis (unlike
-// truncate) since a partial hash is still a valid, meaningful prefix.
+// shaPrefix returns the first shaColumnWidth characters of a full commit hash,
+// with no ellipsis (unlike truncate), since a partial hash is still a valid
+// prefix.
 func shaPrefix(hash string) string {
 	if len(hash) <= shaColumnWidth {
 		return hash
@@ -183,9 +169,8 @@ func shaPrefix(hash string) string {
 	return hash[:shaColumnWidth]
 }
 
-// isToday reports whether t falls on the same calendar day as now, in t's
-// own location (renderCommitRow always calls this with an already-
-// .Local()-converted time, so both sides compare in local time).
+// isToday reports whether t falls on the same calendar day as now, in t's own
+// location.
 func isToday(t time.Time) bool {
 	y1, m1, d1 := t.Date()
 	y2, m2, d2 := time.Now().Date()

@@ -47,10 +47,9 @@ func runGitDiffExit(ctx context.Context, dir string, args ...string) (out []byte
 }
 
 // isExitCode reports whether err is (or wraps) a git process exiting with
-// exactly code — the "exit status is itself the answer" pattern several
-// commands in this package rely on: `git rev-parse --verify --quiet` (1 =
-// no such ref), `git diff --quiet` (1 = differences found), `git diff
-// --no-index` (same, but stdout still carries content).
+// exactly code — the "exit status is itself the answer" pattern behind `git
+// rev-parse --verify --quiet` (1 = no such ref) and `git diff --quiet` /
+// `--no-index` (1 = differences found).
 func isExitCode(err error, code int) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == code
@@ -86,10 +85,9 @@ func splitNullTerminated(out []byte) []string {
 	return splitRecords(out, "\x00")
 }
 
-// splitRecords is the shared body of both: git's record-per-entry output
-// always ends with a trailing separator (and, for some commands, a run of
-// them), so trim those off and drop any empty entry rather than reporting
-// one for each.
+// splitRecords is the shared body of both. git's record-per-entry output
+// always ends with a trailing separator, sometimes a run of them, so those are
+// trimmed and empty entries dropped rather than reported.
 func splitRecords(out []byte, sep string) []string {
 	text := strings.TrimRight(string(out), sep)
 	if text == "" {

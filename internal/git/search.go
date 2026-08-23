@@ -8,14 +8,12 @@ import (
 )
 
 // SearchCommitHashes returns the set of commit hashes reachable from HEAD
-// whose author name or full commit message (subject and body) contains
-// term, as a case-insensitive, literal substring match (not a regex).
-// Author and message are queried separately and unioned (OR semantics):
-// git log's own --author combined with --grep in one invocation applies
-// AND semantics, which isn't what we want here. Returns an empty, non-nil
-// set without invoking git when term is empty. The two queries are
-// independent subprocesses, so they run concurrently rather than one
-// after another.
+// whose author name or full commit message contains term, as a
+// case-insensitive literal substring match (not a regex). Author and message
+// are queried separately and unioned: git log's own --author plus --grep in
+// one invocation would AND them instead. Returns an empty, non-nil set without
+// invoking git when term is empty; otherwise the two queries, being
+// independent subprocesses, run concurrently.
 func (r *Repo) SearchCommitHashes(ctx context.Context, term string) (map[string]bool, error) {
 	if term == "" {
 		return map[string]bool{}, nil
@@ -50,10 +48,9 @@ func (r *Repo) logHashes(ctx context.Context, matchArg string) ([]string, error)
 	return splitLines(out), nil
 }
 
-// AllCommitHashes returns every commit hash reachable from HEAD, in the
-// same order FetchLogBatch uses, without the cost of formatting
-// author/date/ref-decoration for each one. It's used to map a matched
-// commit's hash to its absolute position in history.
+// AllCommitHashes returns every commit hash reachable from HEAD, in the same
+// order FetchLogBatch uses, without formatting author/date/ref-decoration for
+// each one. It maps a matched commit's hash to its position in history.
 func (r *Repo) AllCommitHashes(ctx context.Context) ([]string, error) {
 	out, err := runGit(ctx, r.Path, "log", "--format=%H")
 	if err != nil {
@@ -62,14 +59,11 @@ func (r *Repo) AllCommitHashes(ctx context.Context) ([]string, error) {
 	return splitLines(out), nil
 }
 
-// HashesMatching filters hashes to those containing term as a
-// case-insensitive substring — the same match semantics
-// SearchCommitHashes applies to author/message. It's a pure function (no
-// git subprocess) rather than a third case in SearchCommitHashes because
-// callers already have the full hash order in hand (fetched once via
-// AllCommitHashes and reused across searches, see allHashes's doc comment
-// in app.go) for mapping matches to list positions, so filtering it
-// in-memory avoids spawning a second git process just to search by hash.
+// HashesMatching filters hashes to those containing term as a case-insensitive
+// substring — the same match semantics SearchCommitHashes applies to
+// author/message. It's an in-memory filter rather than a third case in
+// SearchCommitHashes because callers already hold the full hash order (see
+// allHashes in app.go), so searching by hash costs no git process at all.
 // Returns an empty, non-nil set when term is empty.
 func HashesMatching(hashes []string, term string) map[string]bool {
 	matches := map[string]bool{}

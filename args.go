@@ -9,9 +9,8 @@ import (
 )
 
 // errFlagParse marks a failure the FlagSet has already reported itself
-// (message plus usage), so main can exit without printing it a second time.
-// The underlying error is wrapped alongside it, keeping flag.ErrHelp
-// recognizable.
+// (message plus usage), so main can exit without printing it twice. The
+// underlying error is wrapped alongside it, keeping flag.ErrHelp recognizable.
 var errFlagParse = errors.New("flag parse error")
 
 // options is everything gitl's command line can ask for: the two
@@ -23,13 +22,13 @@ type options struct {
 }
 
 // parseArgs registers gitl's flags on fs and parses a full argument vector
-// (os.Args[1:] in main, a literal one in tests) into options. fs is passed
-// in rather than built here so main can install its own usage/error
-// reporting on it while tests can stay quiet.
+// (os.Args[1:] in main, a literal one in tests) into options. fs is a
+// parameter so main can install its own usage/error reporting on it while
+// tests stay quiet.
 //
 // Flag parsing sees only the part of argv before a literal "--" (see
-// splitPathspecs), so what follows it is never mistaken for a flag no matter
-// what a path is named.
+// splitPathspecs), so what follows it is never mistaken for a flag, whatever a
+// path is named.
 func parseArgs(fs *flag.FlagSet, argv []string) (options, error) {
 	count := fs.Int("n", 0, "print the N most recent commits non-interactively and exit")
 	staged := fs.Bool("staged", false, "open the staged changes (index vs HEAD) directly; q exits")
@@ -87,8 +86,7 @@ func startTarget(staged, diff bool, args, sepPaths []string, sepSeen bool) (ui.S
 		if sepSeen && len(args) > 0 {
 			// Everything after "--" is a path, so a second argument still
 			// left here is a second revision — the one shape the rule above
-			// can't absorb. Under --staged/--diff there's no revision to
-			// compete with, so those keep taking every argument as a path.
+			// can't absorb.
 			return ui.StartTarget{}, errors.New("expected at most one revision argument before --")
 		}
 	}

@@ -53,11 +53,10 @@ func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 	})
 }
 
-// TestRevJumpUnreachableLeavesCursorAtTopWithoutError pins down the
-// documented v1 fallback: a revision that can't be resolved or isn't
-// reachable from HEAD (revPositionMsg{found: false}) leaves the cursor
-// wherever it already was, with no error surfaced (the detail view itself
-// still opens from fetchDetailCmd independently).
+// TestRevJumpUnreachableLeavesCursorAtTopWithoutError pins down the documented
+// fallback: a revision that can't be resolved or isn't reachable from HEAD
+// (revPositionMsg{found: false}) leaves the cursor wherever it already was,
+// with no error surfaced — the detail view still opens from fetchDetailCmd.
 func TestRevJumpUnreachableLeavesCursorAtTopWithoutError(t *testing.T) {
 	m := Model{start: StartTarget{Rev: "abc"}, jl: &jumplist{}}
 	m.width, m.height = 80, 24

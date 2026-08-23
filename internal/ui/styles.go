@@ -3,18 +3,15 @@ package ui
 import "github.com/charmbracelet/lipgloss"
 
 // cursorRowBg is the background applied to the row under the cursor. It is
-// merged into each field's own style (see renderCommitRow) rather than used
-// as a single flat replacement style, so a selected row stays tinted without
-// discarding the sha/date/author/ref foreground colors that distinguish
-// those fields on every other row.
+// merged into each field's own style rather than replacing it, so a selected
+// row stays tinted without losing the foreground colors that distinguish its
+// fields.
 const cursorRowBg = lipgloss.Color("238")
 
-// errFg is the foreground used for error text, shared by errStyle (the
-// full-screen fatal error) and statusBarErrStyle (a non-fatal error shown
-// in the status bar), so both read as the same kind of message. Uses the
-// basic ANSI red (see the dateStyle/shaStyle/authorStyle comment below)
-// rather than a 256-color value, so it renders as the terminal's own
-// themed red instead of a fixed hue.
+// errFg is the foreground for error text, shared by errStyle (a fatal error)
+// and statusBarErrStyle (a non-fatal one). Basic ANSI red rather than a
+// 256-color value, for the reason below, so it renders as the terminal's own
+// themed red.
 const errFg = lipgloss.Color("1")
 
 var (
@@ -61,11 +58,10 @@ var (
 			Foreground(lipgloss.Color("167"))
 
 	// diffAddEmphStyle and diffDeleteEmphStyle mark the intraline span that
-	// actually changed within a paired add/delete line (see intralineSpans
-	// in diffview.go): same hue as diffAddStyle/diffDeleteStyle plus a
-	// tinted background and bold weight, so the changed substring stands
-	// out against the rest of the line's flat color rather than replacing
-	// it with an unrelated color.
+	// changed within a paired add/delete line (see intralineSpans): the same
+	// hue as diffAddStyle/diffDeleteStyle plus a tinted background and bold
+	// weight, so the changed substring stands out against the rest of the
+	// line rather than recoloring it.
 	diffAddEmphStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("2")).
@@ -88,20 +84,18 @@ var (
 			Foreground(lipgloss.Color("252")).
 			Padding(0, 1)
 
-	// statusBarErrStyle is a whole-bar style swap (background plus errFg)
-	// for a non-fatal error, rather than nesting errStyle inside the bar's
-	// normal content — same reset hazard as rowFieldStyle, resolved the
-	// same way (swap the whole base style rather than layering).
+	// statusBarErrStyle swaps the whole bar's style for a non-fatal error
+	// rather than nesting errStyle inside the bar's content — the same reset
+	// hazard rowFieldStyle describes, resolved the same way.
 	statusBarErrStyle = statusBarStyle.Foreground(errFg)
 
 	// entryTitleStyle is the "Staged changes"/"Working tree" title in a
-	// synthetic leading row (worktreerow.go), bold so it draws the eye the
-	// way a real row's color-coded sha/date/author fields otherwise would.
+	// synthetic leading row, bold so it draws the eye the way a real row's
+	// color-coded fields do.
 	entryTitleStyle = lipgloss.NewStyle().Bold(true)
 
 	// dimStyle uses the terminal-native Faint attribute rather than a fixed
-	// color (see the dateStyle/shaStyle/authorStyle comment above) so a
-	// dimmed row still respects the user's own palette/contrast instead of
+	// color, so a dimmed row respects the user's own palette instead of
 	// fighting it with a hardcoded grey.
 	dimStyle = lipgloss.NewStyle().Faint(true)
 
@@ -116,9 +110,7 @@ var (
 )
 
 // matchStyle picks searchActiveMatchStyle for the n/N-selected match, else
-// searchMatchStyle — the one place this choice is made, shared by every
-// search-highlighting call site instead of each repeating the same
-// two-branch pick.
+// searchMatchStyle.
 func matchStyle(active bool) lipgloss.Style {
 	if active {
 		return searchActiveMatchStyle

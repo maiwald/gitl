@@ -18,13 +18,11 @@ type KeyMap struct {
 	Search       key.Binding
 	NextMatch    key.Binding
 	PrevMatch    key.Binding
-	// JumpBack and JumpForward step through a view's jumplist (see
-	// ListModel/DetailModel's jumpBack/jumpForward fields) — vim's ctrl+o/
-	// ctrl+i, chosen over other unused bindings so muscle memory carries
-	// over directly. JumpForward is bound to "tab", not "ctrl+i": the two
-	// are the same byte (0x09) at the terminal protocol level, and
-	// bubbletea's own key decoder reports it as tab (see its KeyTab
-	// comment, "also ctrl+i") — binding the literal string "ctrl+i" would
+	// JumpBack and JumpForward step through the shared jumplist (see
+	// jumplist in app.go), vim's ctrl+o/ctrl+i. JumpForward is bound to
+	// "tab", not "ctrl+i": the two are the same byte (0x09) at the terminal
+	// protocol level, and bubbletea's decoder reports it as tab (see its
+	// KeyTab comment, "also ctrl+i"), so the literal string "ctrl+i" would
 	// never match an actual keypress.
 	JumpBack    key.Binding
 	JumpForward key.Binding

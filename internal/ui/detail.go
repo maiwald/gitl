@@ -27,11 +27,10 @@ type DetailModel struct {
 	// sections covers the whole flattened content (commit metadata+message,
 	// the optional stats block, then each diff file) contiguously and in
 	// document order, so a scroll position maps to exactly one section —
-	// used for the sticky header's title and for [ / ] navigation. It's
-	// built from fileRanges (for the file entries) plus the header/stats
-	// boundaries already computed in reflow, so it's never present without
-	// fileRanges also being present (see the len(m.fileRanges) == 0 guards
-	// below, which double as "is there anything to be sticky about").
+	// used for the sticky header's title and for [ / ] navigation. Built
+	// from fileRanges, so it's never present without them (the
+	// len(m.fileRanges) == 0 guards below double as "is there anything to
+	// be sticky about").
 	sections       []detailSection
 	currentSection int
 
@@ -40,21 +39,17 @@ type DetailModel struct {
 	width, height int
 
 	// displayTerm and searchDismissed mirror the root Model's canonical search
-	// state (searchTerm/searchDismissed in app.go), pushed down via
-	// SetSearchDisplay — see the comment on ListModel's own copies for why a
-	// local mirror exists at all. displayTerm is what messageMatches/
-	// diffMatches below were computed from: SetSearchDisplay recomputes them
-	// whenever it changes, which is the one place that keeps a match set from
-	// outliving the term it belongs to.
+	// state, pushed down via SetSearchDisplay. displayTerm is what
+	// messageMatches/diffMatches were computed from: SetSearchDisplay
+	// recomputes them whenever it changes, so a match set never outlives the
+	// term it belongs to.
 	displayTerm     string
 	searchDismissed bool
 
-	// messageMatches and diffMatches together form one ordered sequence
-	// (message matches first, in document order, then diff matches in
-	// existing file/hunk/line order — where each file's own name match, if
-	// any, sorts ahead of its line matches, matching its header row's
-	// position above its hunks) that matchPos indexes into, so n/N sweeps a
-	// commit top to bottom the way you'd read it.
+	// messageMatches and diffMatches together form one ordered sequence that
+	// matchPos indexes into — message matches first, then diff matches in
+	// file/hunk/line order, each file's own name match ahead of its line
+	// matches — so n/N sweeps a commit top to bottom the way you'd read it.
 	messageMatches []MessageMatch
 	diffMatches    []DiffMatch
 	matchPos       int // index into the combined sequence; -1 when there are none
@@ -64,23 +59,15 @@ type DetailModel struct {
 
 	// cursorLine is a tig-style line cursor: an index into the same
 	// flattened content line space leftVP's scroll offset lives in (see
-	// contentLen). Distinct from leftVP.YOffset the way ListModel.cursor is
-	// distinct from vp.YOffset — movement keys move the cursor, and the
-	// viewport follows it (see setCursor's ensureCursorVisible call), not
-	// the reverse. Re-clamped to [0, contentLen-1] at the end of every
-	// reflow, so a resize that changes word-wrapping (and therefore shifts
-	// what each flattened line index means) can't leave it out of bounds —
-	// a known, accepted approximation: the cursor's *position* survives a
-	// resize, but not necessarily its intended *target*, the same tradeoff
-	// jumpBack/jumpForward positions (below) make.
+	// contentLen). Distinct from leftVP.YOffset — movement keys move the
+	// cursor and the viewport follows it (setCursor's ensureCursorVisible),
+	// not the reverse. Every reflow re-clamps it to [0, contentLen-1], so a
+	// resize that rewraps the content can't leave it out of bounds; its
+	// position survives a resize, but not necessarily its intended target.
 	cursorLine int
-	// contentLen is reflow's most recent flattened content length, cached
-	// so setCursor/jumpCursor can clamp without threading it through as a
-	// parameter. Deliberately excludes the trailing blank padding rows
-	// reflow appends past the real content so jumpToSection can always
-	// scroll a short trailing file's header to the very top of the
-	// viewport — the cursor has no business visiting that padding (see
-	// reflow, where this is captured before the padding is appended).
+	// contentLen is reflow's most recent flattened content length. It
+	// excludes the trailing blank padding reflow appends (see reflow), so
+	// the cursor can't wander into rows that hold no content.
 	contentLen int
 
 	// lines are the logical lines the last reflow assembled, in document
@@ -88,31 +75,27 @@ type DetailModel struct {
 	// background; content is what they rendered into (padding included), and
 	// lineStart[i] is the row lines[i] begins at. Keeping all three is what
 	// makes a cursor move cost two line renders and a join (repaintCursor)
-	// instead of a whole reflow — the same bargain ListModel makes with
-	// renderedRows, and with the same obligation: anything that changes what
-	// a line *says* (the term, the match set, the active match, the width,
-	// the commit) must go through reflow, which rebuilds all three together.
+	// instead of a whole reflow — with the obligation that anything changing
+	// what a line *says* must go through reflow, which rebuilds all three
+	// together.
 	//
 	// lineStart also defines the logical-line grid the cursor moves on: it
-	// only ever rests on one of these rows (setCursor snaps to blockStart),
+	// only ever rests on one of these rows (setCursor snaps to blockStart)
 	// and moves a whole line at a time, since a wrapped line is highlighted
-	// as one block and stepping row by row through it would leave presses
-	// looking like they did nothing.
+	// as one block.
 	lines     []lineRenderer
 	content   []string
 	lineStart []int
 
-	// jl is the shared, cross-view jumplist (vim's ctrl-o/ctrl-i) — see its
-	// doc comment in app.go for why it lives on the root Model rather than
-	// here. pushJump below is this model's only interaction with it: actual
-	// JumpBack/JumpForward key handling lives on the root Model instead,
-	// since popping an entry can require switching the active view.
+	// jl is the shared, cross-view jumplist (ctrl-o/ctrl-i), owned by the
+	// root Model. pushJump is this model's only interaction with it;
+	// traversal lives on Model.
 	jl *jumplist
 }
 
 // sectionKind distinguishes the three kinds of entry that can appear in
-// DetailModel.sections, since only sectionKindFile carries a fileIndex into
-// m.detail.Files — the other two always render a fixed title.
+// DetailModel.sections. Only sectionKindFile carries a fileIndex into
+// m.detail.Files; the other two render a fixed title.
 type sectionKind int
 
 const (
@@ -132,12 +115,9 @@ type detailSection struct {
 }
 
 // sectionAt returns the index into sections whose range contains lineIndex.
-// sections are contiguous and gapless in document order (unlike FileRange,
-// which only covers diff files), so the answer is simply the last section
-// whose startLine doesn't exceed lineIndex — clamped to the first section
-// for any line above it (there is none, since section 0 always starts at
-// 0) and to the last section for any line past the final one (e.g. the
-// bottom-padding rows reflow adds past the last file's content).
+// sections are contiguous and gapless in document order, so the answer is
+// the last section whose startLine doesn't exceed lineIndex, clamped at both
+// ends for a line outside the content (e.g. reflow's bottom padding).
 func sectionAt(sections []detailSection, lineIndex int) int {
 	if len(sections) == 0 {
 		return -1
@@ -146,8 +126,8 @@ func sectionAt(sections []detailSection, lineIndex int) int {
 	return clamp(idx, 0, len(sections)-1)
 }
 
-// NewDetailModel constructs a detail view for the given commit, sharing jl —
-// the root Model's single cross-view jumplist — for pushJump to record into.
+// NewDetailModel constructs a detail view for the given commit, sharing the
+// root Model's cross-view jumplist for pushJump to record into.
 func NewDetailModel(detail *git.CommitDetail, jl *jumplist) DetailModel {
 	return DetailModel{
 		detail:   detail,
@@ -171,12 +151,11 @@ func (m *DetailModel) reflow() {
 
 	diffWidth := m.width
 
-	// Every block contributes logical lines only — no block knows where its
-	// own lines land or which of them the cursor is on. That makes the index
-	// each block returns (a file's range, a match's line) a count of logical
-	// lines from where the block itself starts, which is what the two
-	// running offsets below record; renderRows then lays the lines out, and
-	// rowOf rebases every one of those indices onto the rows they produced.
+	// Every block contributes logical lines only, knowing neither where its
+	// lines land nor which of them the cursor is on. So the indices a block
+	// returns (a file's range, a match's line) count logical lines from the
+	// block's own start, which is what the offsets below record; renderRows
+	// then lays the lines out and rowOf rebases those indices onto rows.
 	var lines []lineRenderer
 	headerLines, messageMatchLines := m.renderHeaderBlock(diffWidth)
 	lines = append(lines, headerLines...)
@@ -223,16 +202,11 @@ func (m *DetailModel) reflow() {
 	}
 	m.leftVP.Height = max(m.leftVP.Height, 0)
 	// viewport.SetYOffset clamps to the content's own max scroll position,
-	// which is normally what you want (no blank space below the last
-	// line) — but it also means a short trailing file's landing line (see
-	// sectionContentStart: one line past its header) can be unreachable as
-	// the top-of-viewport line if what follows it doesn't fill a whole
-	// screen. Pad with blank lines so jumpToSection can always bring the
-	// last file's content to the top, the same way editors let you scroll
-	// the last line of a file to the top of the screen. contentLen, captured
-	// above, deliberately excludes this padding: the cursor has no business
-	// venturing into it, so G and the clamp just below bound themselves to
-	// the real content instead.
+	// which would leave a short trailing file's landing line (see
+	// sectionContentStart) unreachable as the top-of-viewport line. Pad with
+	// blank lines so jumpToSection can always bring the last file's content
+	// to the top. contentLen, captured above, excludes this padding, so G
+	// and the clamp below bound themselves to the real content.
 	if len(m.fileRanges) > 0 {
 		lastStart := m.fileRanges[len(m.fileRanges)-1].StartLine
 		if need := lastStart + 1 + m.leftVP.Height - len(m.content); need > 0 {
@@ -241,12 +215,9 @@ func (m *DetailModel) reflow() {
 	}
 
 	// A resize can shrink contentLen out from under an already-set
-	// cursorLine (rewrapping changes how many flattened lines the same
-	// content occupies) — clamp it back in range, and paint the cursor onto
-	// wherever it ended up, since renderRows above was given a position that
-	// no longer exists. See cursorLine's doc comment for why this doesn't
-	// try to preserve the cursor's original target across a rewrap, only its
-	// validity.
+	// cursorLine — clamp it back in range and paint the cursor onto wherever
+	// it ended up, since renderRows above was given a position that no
+	// longer exists.
 	if clamped := clamp(m.cursorLine, 0, m.contentLen-1); clamped != m.cursorLine {
 		m.cursorLine = clamped
 		m.patchLine(m.cursorLine, logicalAt(m.lineStart, m.cursorLine))
@@ -267,20 +238,17 @@ func (m DetailModel) rowOf(logical int) int {
 }
 
 // setContent hands the cached rows to the viewport. The join is O(total
-// content), forced by viewport.SetContent's API (it re-splits internally) —
-// what the cache saves is the styling upstream of it, which is the expensive
-// part, exactly as in ListModel.setContent.
+// content), forced by viewport.SetContent's API (it re-splits internally);
+// what the cache saves is the styling upstream of it.
 func (m *DetailModel) setContent() {
 	m.leftVP.SetContent(strings.Join(m.content, "\n"))
 }
 
 // repaintCursor re-renders the logical line the cursor left (from) and the
-// one it now sits on, splicing both into the cached content — the detail
-// view's analogue of ListModel.renderCursorMoved, and the reason moving the
+// one it now sits on, splicing both into the cached content, so moving the
 // cursor through a large diff doesn't re-render every line of it. Falls back
-// to a full reflow if the cache isn't what the current lines would have
-// produced, which can only happen if some other writer of the content forgot
-// to end in one.
+// to a full reflow when the cache isn't what the current lines would have
+// produced.
 func (m *DetailModel) repaintCursor(from int) {
 	if len(m.lineStart) == 0 || len(m.content) < m.contentLen {
 		m.reflow()
@@ -294,8 +262,7 @@ func (m *DetailModel) repaintCursor(from int) {
 
 // patchLine re-renders the logical line containing row pos, with the cursor
 // row's background when that line is cursor. A no-op for a row outside the
-// real content, which lets callers pass a stale cursor position (from a
-// model that hasn't reflowed, or a row in the trailing padding) without
+// real content, so callers can pass a stale cursor position without
 // special-casing it.
 func (m *DetailModel) patchLine(pos, cursor int) {
 	i := logicalAt(m.lineStart, pos)
@@ -306,10 +273,9 @@ func (m *DetailModel) patchLine(pos, cursor int) {
 }
 
 // renderDiffBlock describes this commit's diff (or the noDiffNotice
-// placeholder for a diff-less commit) at width, honoring the current
-// search state so the active diff match, if any, is styled distinctly.
-// Its returned coordinates count logical lines from the block's own start —
-// see reflow, which rebases them.
+// placeholder for a diff-less commit) at width, honoring the current search
+// state. Its returned coordinates count logical lines from the block's own
+// start — see reflow, which rebases them.
 func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRanges []FileRange, matchLines []int) {
 	if len(m.detail.Files) == 0 {
 		return []lineRenderer{clippedLine(binaryNoticeStyle, noDiffNotice(m.detail), width)}, nil, nil
@@ -318,21 +284,19 @@ func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRang
 }
 
 // renderHeaderBlock describes the commit metadata/message block at width,
-// honoring the current search state so the active message match, if any, is
-// styled distinctly. Its matchLines are logical line indices, which for this
-// block are also indices into headerLinesFor's own lines (one logical line
-// each, however many rows they wrap to).
+// honoring the current search state. Its matchLines are logical line
+// indices, which for this block are also indices into headerLinesFor's own
+// lines (one logical line each, however many rows they wrap to).
 func (m *DetailModel) renderHeaderBlock(width int) (lines []lineRenderer, matchLines []int) {
 	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
 	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, m.activeMatchIn(true), m.searchDismissed)
 }
 
 // buildSections assembles one reflow pass's sticky-header/[ ]-navigation
-// sections: the commit metadata block, optionally the stats block, then
-// each already rebased file range, in document order. statsStart and
-// diffStart are the rows those blocks begin at; they're equal when the
-// commit has no diff to summarize, which is exactly when there's no stats
-// section to emit.
+// sections: the commit metadata block, optionally the stats block, then each
+// already rebased file range, in document order. statsStart and diffStart
+// are the rows those blocks begin at, and are equal when the commit has no
+// diff to summarize — exactly when there's no stats section to emit.
 func buildSections(fileRanges []FileRange, statsStart, diffStart int) []detailSection {
 	sections := make([]detailSection, 0, len(fileRanges)+2)
 	sections = append(sections, detailSection{kind: sectionKindCommit, startLine: 0, endLine: statsStart})
@@ -345,28 +309,24 @@ func buildSections(fileRanges []FileRange, statsStart, diffStart int) []detailSe
 	return sections
 }
 
-// headerLinesFor builds the commit header's pre-wrap logical lines, one
-// entry per line (wrapping happens later, in renderHeaderLines, so its
-// matchLines bookkeeping stays exact — the same convention RenderDiff/
-// renderDiffLine use for diff content).
+// headerLinesFor builds the commit header's pre-wrap logical lines, one entry
+// per line; wrapping happens later, in renderHeaderLines, so matchLines
+// bookkeeping stays exact.
 //
-// authorLine and bodyStart mark the two regions eligible for search — the
-// author line and the message body — matching what
-// internal/git.SearchCommitHashes matches for list search's author/message
-// fields, deliberately excluding the hash/parent/date metadata lines: list
-// search also matches the commit hash (git.HashesMatching), but that's
-// useful for finding a commit in the list, not for searching within a
-// commit you're already viewing. spans (keyed by line index) marks the
-// hash/name/date substrings that get base coloring regardless of search
-// state.
+// authorLine and bodyStart mark the two regions eligible for search: the
+// author line and the message body, excluding the hash/parent/date metadata
+// lines. List search matches the hash too (git.HashesMatching), but that's
+// for finding a commit in the list, not for searching within a commit you're
+// already viewing. spans (keyed by line index) marks the hash/name/date
+// substrings that get base coloring regardless of search state.
 //
 // The body is indented 4 spaces, matching `git show`'s own convention.
 func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int, spans map[int][]baseSpan) {
 	spans = make(map[int][]baseSpan)
 
-	// A pseudo entry (working tree/staged) has no commit metadata to show —
-	// just a title and a dim description — and nothing eligible for message
-	// search, hence authorLine = -1 (see FindMessageMatches's guard).
+	// A pseudo entry (working tree/staged) has no commit metadata to show,
+	// just a title and a dim description, and nothing eligible for message
+	// search — hence authorLine = -1.
 	if d.IsPseudo() {
 		desc := entryDescription(d.Kind)
 		lines = append(lines, entryTitle(d.Kind), desc)
@@ -414,12 +374,10 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 // renderHeaderLines turns each logical header/message line into a
 // lineRenderer that word-wraps it to width via wrapStyledRows, which applies
 // base coloring (spans, from headerLinesFor) and search-match highlighting
-// per wrapped row — the wrap itself decided on the plain text, exactly like
-// RenderDiff/renderDiffLine. matchLines is parallel to matches: the logical
-// line each match sits on, computed from the full matches list regardless of
-// dismissed (see RenderDiff's doc comment for why suppressing style doesn't
-// need suppressing position tracking) — spans, unlike matches, are never
-// suppressed by dismissed, since they're not part of search at all.
+// per wrapped row — the wrap itself decided on the plain text. matchLines is
+// parallel to matches: the logical line each match sits on, tracked even when
+// dismissed suppresses the styling. spans are never suppressed, being no part
+// of search.
 func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool) (rendered []lineRenderer, matchLines []int) {
 	matchLines = make([]int, len(matches))
 	mi := 0
@@ -451,10 +409,8 @@ type MessageMatch struct {
 }
 
 // FindMessageMatches returns every occurrence of term in the header lines
-// eligible for search: the author line and every line from bodyStart
-// onward (see headerLinesFor) — deliberately not the hash/parent/date
-// lines (see headerLinesFor's doc comment for why hash is excluded here
-// even though list search matches it).
+// eligible for search: the author line and every line from bodyStart onward,
+// not the hash/parent/date lines (see headerLinesFor).
 func FindMessageMatches(lines []string, authorLine, bodyStart int, term string) []MessageMatch {
 	if term == "" {
 		return nil
@@ -479,17 +435,12 @@ func findMessageLineMatches(line, term string, lineIndex int) []MessageMatch {
 }
 
 // Update handles a navigation key press against the diff viewport. j/k,
-// ctrl-u/ctrl-d, and g/G move the line cursor (see cursorLine) rather than
-// scrolling directly — the viewport follows it (setCursor's
-// ensureCursorVisible call), the tig-style relationship ListModel already
-// has between its own cursor and vp.YOffset. [ / ] and g/G record a jumplist
-// entry first when they actually move the cursor (see pushJump); plain
-// j/k/ctrl-u/ctrl-d don't, matching vim's own jumplist (only "big" motions
-// are jump-worthy). ctrl-o/ctrl-i themselves aren't handled here — see the
-// root Model's doJumpBack/doJumpForward. Enter jumps straight to a file's
-// diff section when the cursor is on that file's row in the "Files
-// changed" stats block (see statsFileIndexAt/jumpToFile) and is a no-op
-// anywhere else, including on a file's own header row inside the diff.
+// ctrl-u/ctrl-d and g/G move the line cursor (see cursorLine) rather than
+// scrolling directly; the viewport follows it. [ / ] and g/G record a
+// jumplist entry when they actually move the cursor, plain j/k/ctrl-u/ctrl-d
+// don't, matching vim's own jumplist. ctrl-o/ctrl-i aren't handled here — see
+// the root Model. Enter jumps to a file's diff section when the cursor is on
+// that file's row in the stats block, and is a no-op anywhere else.
 func (m *DetailModel) Update(msg tea.KeyMsg) {
 	switch {
 	case key.Matches(msg, DefaultKeyMap.Up):
@@ -516,12 +467,12 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 }
 
 // moveCursor moves the cursor by delta lines without recording a jumplist
-// entry — plain motion, not a jump (see Update's doc comment).
+// entry — plain motion, not a jump.
 //
 // Downward motion never lands short of the next logical line: setCursor
 // snaps back to the start of whatever block it's given, so a plain j inside
-// a line that wrapped to several rows would otherwise snap right back where
-// it started and look like a dead key.
+// a line that wrapped to several rows would otherwise snap back where it
+// started and look like a dead key.
 func (m *DetailModel) moveCursor(delta int) {
 	pos := m.cursorLine + delta
 	if delta > 0 {
@@ -532,9 +483,8 @@ func (m *DetailModel) moveCursor(delta int) {
 
 // blockStart returns the first row of the logical line pos falls in;
 // blockEnd returns one past its last. Both fall back to pos itself for a row
-// outside the content (a model that hasn't reflowed, or the trailing
-// padding), so movement degrades to plain per-row stepping rather than
-// getting stuck.
+// outside the content, so movement degrades to plain per-row stepping rather
+// than getting stuck.
 func (m *DetailModel) blockStart(pos int) int {
 	i := logicalAt(m.lineStart, pos)
 	if i < 0 || pos >= m.contentLen {
@@ -555,11 +505,9 @@ func (m *DetailModel) blockEnd(pos int) int {
 }
 
 // jumpCursor moves the cursor straight to line, recording the jump first
-// (see pushJump) unless line is where the cursor already is — a no-op jump
-// has nothing worth returning to. Used for g/G; [ / ] and search jumps
-// instead go through jumpToSection/jumpToMatch, which land the target at
-// the very top of the viewport rather than merely scrolling it into view
-// (see setCursor vs. those two's direct leftVP.SetYOffset).
+// unless line is where the cursor already is. Used for g/G, which scroll the
+// target into view; [ / ] and search jumps go through landOnLine instead,
+// which puts the target at the very top of the viewport.
 func (m *DetailModel) jumpCursor(line int) {
 	if clamped := clamp(line, 0, m.contentLen-1); clamped != m.cursorLine {
 		m.pushJump(m.cursorLine)
@@ -568,10 +516,9 @@ func (m *DetailModel) jumpCursor(line int) {
 }
 
 // setCursor moves the cursor to pos (clamped in range, and snapped back to
-// the start of the logical line it lands in — see lineStart), repaints the
-// two lines whose highlight changed, then scrolls the viewport by the
-// minimum needed to keep the cursor visible — unlike jumpToSection/
-// jumpToMatch, which always land their target at the very top.
+// the start of the logical line it lands in), repaints the two lines whose
+// highlight changed, then scrolls the viewport by the minimum needed to keep
+// the cursor visible.
 func (m *DetailModel) setCursor(pos int) {
 	from := m.cursorLine
 	m.cursorLine = m.blockStart(clamp(pos, 0, m.contentLen-1))
@@ -580,12 +527,11 @@ func (m *DetailModel) setCursor(pos int) {
 	m.syncHighlightFromScroll()
 }
 
-// ensureCursorVisible scrolls the diff panel so the cursor line stays
-// within the visible viewport, the DetailModel analogue of ListModel's
-// ensureVisible. A wrapped line is highlighted as a whole block, so it's the
-// block's last row that has to come into view when moving down — except when
-// the block is taller than the viewport itself, where showing its start is
-// the best that can be done.
+// ensureCursorVisible scrolls the diff panel so the cursor line stays within
+// the visible viewport. A wrapped line is highlighted as a whole block, so
+// it's the block's last row that has to come into view when moving down —
+// except when the block is taller than the viewport, where showing its start
+// is the best that can be done.
 func (m *DetailModel) ensureCursorVisible() {
 	if m.leftVP.Height <= 0 {
 		return
@@ -602,18 +548,16 @@ func (m *DetailModel) ensureCursorVisible() {
 }
 
 // pushJump records pos — the cursor line about to be left — onto the shared
-// jumplist (see jl's doc comment), tagged with this model's own *git.
-// CommitDetail so a later cross-view JumpBack/JumpForward can tell which
-// commit/entry to reconstruct.
+// jumplist, tagged with this model's own *git.CommitDetail so a later
+// cross-view jump knows which commit/entry to reconstruct.
 func (m *DetailModel) pushJump(pos int) {
 	m.jl.push(jumpPos{view: viewDetail, commit: m.detail, cursorLine: pos})
 }
 
 // jumpToSection scrolls the diff panel directly to the section
-// currentSection+delta away (commit metadata, the stats block, or a diff
-// file — see DetailModel.sections), clamping at the first/last section (no
-// wraparound), and moves the cursor there too. A no-op on a diff-less
-// commit, where the commit section is the only one there is.
+// currentSection+delta away, clamping at the first/last section (no
+// wraparound), and moves the cursor there too. A no-op on a diff-less commit,
+// where the commit section is the only one there is.
 func (m *DetailModel) jumpToSection(delta int) {
 	if len(m.sections) <= 1 {
 		return
@@ -622,11 +566,9 @@ func (m *DetailModel) jumpToSection(delta int) {
 	m.landOnLine(sectionContentStart(m.sections[target]))
 }
 
-// jumpToFile scrolls the diff panel directly to the diff section for
-// fileIndex, the same landing point jumpToSection uses when reached via
-// [ / ] — used by the Enter-on-a-stats-row action (see statsFileIndexAt).
-// A no-op if fileIndex has no corresponding section (shouldn't happen: a
-// caller-side bounds check against m.detail.Files already guards this).
+// jumpToFile scrolls the diff panel to the diff section for fileIndex, the
+// same landing point [ / ] uses, for the Enter-on-a-stats-row action. A no-op
+// if fileIndex has no corresponding section.
 func (m *DetailModel) jumpToFile(fileIndex int) {
 	for _, s := range m.sections {
 		if s.kind == sectionKindFile && s.fileIndex == fileIndex {
@@ -636,11 +578,10 @@ func (m *DetailModel) jumpToFile(fileIndex int) {
 	}
 }
 
-// statsFileIndexAt reports which file, if any, the stats block's row at
-// line corresponds to — matching statLinesFor's own local line convention
-// (0 = the "Files changed" heading, 1..len(files) = one row per file) —
-// so ok is false for the heading row, the blank separator, and the totals
-// row, as well as for any line outside the stats block entirely.
+// statsFileIndexAt reports which file, if any, the stats block's row at line
+// corresponds to, following statLinesFor's layout (0 = the heading,
+// 1..len(files) = one row per file). ok is false for the heading, the totals
+// row, and any line outside the stats block.
 func (m *DetailModel) statsFileIndexAt(line int) (fileIndex int, ok bool) {
 	for _, s := range m.sections {
 		if s.kind != sectionKindStats {
@@ -656,9 +597,8 @@ func (m *DetailModel) statsFileIndexAt(line int) (fileIndex int, ok bool) {
 }
 
 // landOnLine scrolls directly to line, pushing a jump first if it actually
-// moves the cursor (see pushJump) — the "land the target at the very top
-// of the viewport" behavior shared by jumpToSection and jumpToFile, as
-// opposed to setCursor's minimal-scroll-to-keep-visible behavior.
+// moves the cursor, and lands the target at the very top of the viewport —
+// as opposed to setCursor, which scrolls the minimum to keep it visible.
 func (m *DetailModel) landOnLine(line int) {
 	if line != m.cursorLine {
 		m.pushJump(m.cursorLine)
@@ -670,13 +610,11 @@ func (m *DetailModel) landOnLine(line int) {
 	m.syncHighlightFromScroll()
 }
 
-// sectionContentStart returns the scroll position jumpToSection lands on:
-// one line past the section's own header/heading row for the stats block
-// and file sections, since that row would otherwise be indistinguishable
-// from the sticky bar showing the exact same title once landed there (see
-// renderStickyHeader) — for the commit section, its first content line
-// ("commit <hash>") isn't a literal duplicate of the sticky title
-// ("Commit"), so it still lands exactly at startLine (0).
+// sectionContentStart returns the scroll position jumpToSection lands on: one
+// line past the section's own header row for the stats and file sections,
+// which would otherwise duplicate the sticky bar's identical title. The
+// commit section's first line isn't such a duplicate, so it lands at
+// startLine.
 func sectionContentStart(s detailSection) int {
 	if s.kind == sectionKindCommit {
 		return s.startLine
@@ -694,15 +632,10 @@ func (m *DetailModel) syncHighlightFromScroll() {
 }
 
 // computeMatches finds every occurrence of term across this commit's header
-// and message (the author line and body — see headerLinesFor's doc comment
-// for why this deliberately excludes the hash, unlike list search) and its
-// diff content, message matches first in document order and diff matches
-// after (see messageMatches's doc comment) — without moving the cursor or
-// marking any match "current" (matchPos stays -1). Called only from
-// SetSearchDisplay, which owns the term this is keyed to; jumping to a match
-// is jumpToFirstMatch's separate job, since a view that opens (or is jumped
-// back to) with a search already active should highlight without landing the
-// cursor in the middle of a diff.
+// and message (see headerLinesFor) and its diff content, message matches
+// first, without moving the cursor or marking any match current. Jumping to a
+// match is jumpToFirstMatch's separate job, so a view that opens with a
+// search already active highlights without landing the cursor mid-diff.
 func (m *DetailModel) computeMatches(term string) {
 	if term == "" || m.detail == nil {
 		m.messageMatches, m.diffMatches = nil, nil
@@ -716,9 +649,8 @@ func (m *DetailModel) computeMatches(term string) {
 
 // jumpToFirstMatch selects the first match and scrolls to it — the jumping
 // half of submitting "/" while already viewing this commit, the compute half
-// being SetSearchDisplay's. Unlike list search this is fully synchronous: the
-// whole commit is already in memory once it's open, so there's no async
-// loading to wait for.
+// being SetSearchDisplay's. Unlike list search it's synchronous: the whole
+// commit is already in memory.
 func (m *DetailModel) jumpToFirstMatch() {
 	if m.totalMatches() > 0 {
 		m.setMatchPos(0)
@@ -726,12 +658,11 @@ func (m *DetailModel) jumpToFirstMatch() {
 	m.jumpToMatch()
 }
 
-// setMatchPos makes match pos the active one and re-renders. Which match is
-// active is baked into the content (matchStyle picks a distinct style for
-// it), and both the match being left and the one being taken up can be
-// anywhere in the commit — so unlike a cursor move, which repaintCursor
-// resolves in two lines, this genuinely needs the whole reflow. That reflow
-// is also what makes the match lines jumpToMatch reads below current.
+// setMatchPos makes match pos the active one and reflows. Which match is
+// active is baked into the content, and both the match being left and the one
+// being taken up can be anywhere in the commit, so unlike a cursor move this
+// needs the whole reflow — which is also what makes the match lines
+// jumpToMatch reads current.
 func (m *DetailModel) setMatchPos(pos int) {
 	m.matchPos = pos
 	m.reflow()
@@ -739,12 +670,10 @@ func (m *DetailModel) setMatchPos(pos int) {
 
 func (m DetailModel) totalMatches() int { return len(m.messageMatches) + len(m.diffMatches) }
 
-// matchSegment reports which half of the combined message+diff match
-// sequence matchPos falls in (see messageMatches's doc comment), and idx's
-// position within that segment — the one place that boundary arithmetic
-// lives, instead of being reimplemented at each of its call sites. Only
-// meaningful for matchPos >= 0; callers with a "no active match" case
-// (matchPos < 0) must still guard that separately before indexing with idx.
+// matchSegment reports which half of the combined message+diff match sequence
+// matchPos falls in, and its position within that segment. Only meaningful
+// for matchPos >= 0; callers must guard the "no active match" case themselves
+// before indexing with idx.
 func (m DetailModel) matchSegment() (inMessage bool, idx int) {
 	if m.matchPos < len(m.messageMatches) {
 		return true, m.matchPos
@@ -754,9 +683,8 @@ func (m DetailModel) matchSegment() (inMessage bool, idx int) {
 
 // activeMatchIn resolves which match one of the two rendered blocks should
 // style as the active (n/N-selected) one: an index into that block's own
-// match slice, or -1 for "none of mine" — because the active match is in the
-// other block, because there is no active match yet, or because the search
-// is dismissed, in which case no match is styled at all anywhere.
+// match slice, or -1 when the active match is in the other block, there is
+// none yet, or the search is dismissed.
 func (m DetailModel) activeMatchIn(message bool) int {
 	if m.searchDismissed || m.matchPos < 0 {
 		return -1
@@ -767,9 +695,9 @@ func (m DetailModel) activeMatchIn(message bool) int {
 	return -1
 }
 
-// NextMatch and PrevMatch cycle to the following/preceding match (across
-// the combined message+diff sequence), wrapping at both ends, and report
-// the new 1-based position and total count.
+// NextMatch and PrevMatch cycle to the following/preceding match across the
+// combined message+diff sequence, wrapping at both ends, and report the new
+// 1-based position and total count.
 func (m *DetailModel) NextMatch() (pos, total int) { return m.stepMatch(1) }
 func (m *DetailModel) PrevMatch() (pos, total int) { return m.stepMatch(-1) }
 
@@ -784,15 +712,12 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 }
 
 // jumpToMatch scrolls the diff panel to the current match, whether it's a
-// message match (within the header block) or a diff match. It renders
-// nothing itself: the newly active match was styled by setMatchPos's reflow,
-// which is also what produced the match lines read here, so the landing is
-// an ordinary cursor move (landOnLine) rather than a second pass over the
-// whole commit.
+// message match or a diff match. It renders nothing itself: setMatchPos's
+// reflow already styled the newly active match and produced the match lines
+// read here, so the landing is an ordinary cursor move.
 //
 // Every step pushes a jump, not just the initial search — see
-// applyCurrentMatch's doc comment in list.go for why that's a deliberate
-// departure from vim.
+// applyCurrentMatch in list.go.
 func (m *DetailModel) jumpToMatch() {
 	if m.matchPos < 0 {
 		return
@@ -809,12 +734,9 @@ func (m *DetailModel) jumpToMatch() {
 }
 
 // SetSearchDisplay installs the term to highlight and whether highlighting is
-// currently dismissed, then re-renders. A changed term recomputes this
-// commit's matches (synchronously — everything it needs is already in
-// memory), which is what keeps them from outliving the term they were found
-// for: the root Model pushes every search-state change down here, including
-// ones made while some *other* view was active. Clearing the search is just
-// the term going empty.
+// dismissed, then reflows. A changed term recomputes this commit's matches
+// synchronously, so they never outlive the term they were found for. Clearing
+// the search is just the term going empty.
 func (m *DetailModel) SetSearchDisplay(term string, dismissed bool) {
 	if term != m.displayTerm {
 		m.displayTerm = term
@@ -830,13 +752,11 @@ func (m DetailModel) MatchPosition() (pos, total int) {
 	return matchPosition(m.matchPos, m.totalMatches())
 }
 
-// noDiffNotice explains an empty diff. A view opened with a CLI pathspec
-// (see StartTarget.Paths) names it, so "nothing here" can't be misread as
-// "nothing anywhere" when the rest of the diff was simply filtered out.
-// Plain text: renderDiffBlock hands it to clippedLine, which styles it
-// (binaryNoticeStyle) and truncates it to one row like every other content
-// line — a long pathspec would otherwise wrap this notice across rows the
-// model counts as one.
+// noDiffNotice explains an empty diff, naming the CLI pathspec (see
+// StartTarget.Paths) when there is one, so "nothing here" can't be misread as
+// "nothing anywhere". It returns plain text: renderDiffBlock hands it to
+// clippedLine, which styles and truncates it to one row like every other
+// content line.
 func noDiffNotice(d *git.CommitDetail) string {
 	paths, scope := strings.Join(d.Paths, ", "), ""
 	if paths != "" {
@@ -867,15 +787,14 @@ func (m DetailModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, m.renderStickyHeader(), m.leftVP.View())
 }
 
-// renderStickyHeader renders the sticky row's title for "Commit" (the
-// metadata/message block), statsSectionTitle (matching the stats block's
-// own in-content heading, see statsview.go), or a diff file's header.
+// renderStickyHeader renders the sticky row's title: "Commit" for the
+// metadata/message block, statsSectionTitle for the stats block, or a diff
+// file's header.
 //
-// Looked up one line behind YOffset, not currentSection: a section's own
-// header row renders byte-for-byte identical to its sticky title, so
-// showing it a line early would duplicate a title that's still on screen.
-// jumpToSection's landing position (sectionContentStart) already accounts
-// for this, so a [ / ] jump shows the new title immediately.
+// Looked up one line behind YOffset, not from currentSection: a section's own
+// header row renders identically to its sticky title, so switching a line
+// early would show that title twice. sectionContentStart accounts for this,
+// so a [ / ] jump still shows the new title immediately.
 func (m DetailModel) renderStickyHeader() string {
 	s := m.sections[sectionAt(m.sections, m.leftVP.YOffset-1)]
 	switch s.kind {

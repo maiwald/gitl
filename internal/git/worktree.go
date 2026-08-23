@@ -20,10 +20,10 @@ const (
 	EntryWorktree
 )
 
-// WorktreeEntry is one synthetic list entry (working tree or staged
-// changes) together with the diff behind it. Paths is the pathspec the diff
-// was limited to, empty when it wasn't — see CommitDetail.Paths, which it
-// feeds via EntryDetail.
+// WorktreeEntry is one synthetic list entry (working tree or staged changes)
+// together with the diff behind it. Paths is the pathspec the diff was limited
+// to, empty when it wasn't — see CommitDetail.Paths, which it feeds via
+// EntryDetail.
 type WorktreeEntry struct {
 	Kind  EntryKind
 	Files []File
@@ -38,12 +38,11 @@ func (r *Repo) HasStagedChanges(ctx context.Context, paths ...string) (bool, err
 	return differs, err
 }
 
-// HasWorktreeChanges reports whether worktreeDiff would have anything to
-// show within paths (everything, given none): tracked files differing from
-// the index, or untracked files. Checked separately (rather than just
-// calling worktreeDiff and looking at the result) so a CLI `--diff`
-// pre-flight can answer without paying for a full untracked-file diff
-// synthesis just to find out the answer is "no".
+// HasWorktreeChanges reports whether worktreeDiff would have anything to show
+// within paths (everything, given none): tracked files differing from the
+// index, or untracked files. Checked separately from worktreeDiff so a CLI
+// `--diff` pre-flight can answer without paying for a full untracked-file diff
+// synthesis to find out the answer is "no".
 func (r *Repo) HasWorktreeChanges(ctx context.Context, paths ...string) (bool, error) {
 	var trackedDiffers bool
 	var untracked []string
@@ -74,12 +73,11 @@ func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind, paths ...
 
 // FetchWorktreeEntries returns every synthetic entry that currently has
 // something to show, working tree first (furthest from HEAD) then staged.
-// Deliberately unfiltered by pathspec even on a run started with one: these
-// are the commit list's leading rows, and the list itself is never restricted
-// to the CLI's paths — only the startup detail view is.
-// Entries with no changes are omitted entirely, mirroring how `git status`
-// omits empty sections. The two diffs are independent git invocations, so
-// they run concurrently rather than one after another.
+// Unfiltered by pathspec even on a run started with one: these are the commit
+// list's leading rows, and the list itself is never restricted to the CLI's
+// paths. Entries with no changes are omitted, mirroring how `git status` omits
+// empty sections. The two diffs are independent git invocations, so they run
+// concurrently.
 func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error) {
 	var worktreeFiles, stagedFiles []File
 	err := concurrent.RunConcurrently(
@@ -100,23 +98,20 @@ func (r *Repo) FetchWorktreeEntries(ctx context.Context) ([]WorktreeEntry, error
 	return entries, nil
 }
 
-// EntryDetail wraps a synthetic entry's files as a CommitDetail so the
-// detail view renders it with exactly the same machinery a real commit
-// uses; the commit metadata fields are deliberately left zero.
+// EntryDetail wraps a synthetic entry's files as a CommitDetail so the detail
+// view renders it with the same machinery a real commit uses. The commit
+// metadata fields are left zero.
 func EntryDetail(e WorktreeEntry) *CommitDetail {
 	return &CommitDetail{Kind: e.Kind, Files: e.Files, Paths: e.Paths}
 }
 
 // stagedDiff diffs the index against HEAD with copy detection
-// (`--find-copies-harder`, matching `git diff --cached --find-copies-harder`)
-// — unlike the worktree diff, a newly staged file genuinely can appear as
-// "added" here, so there's something for copy detection to pair against.
-// The "-harder" variant (vs. plain --find-copies) also catches a copy whose
-// source file wasn't itself touched, at the cost of scanning every
-// unmodified file in the tree as a candidate source rather than just the
-// files already in the diff — acceptable here since this fetches once per
-// detail-view open, not on every keystroke. On an unborn HEAD (no commits
-// yet) git already treats this as a diff against the empty tree, so no
+// (--find-copies-harder). Unlike the worktree diff, a newly staged file can
+// appear as "added" here, so there's something for copy detection to pair
+// against. The "-harder" variant also catches a copy whose source file wasn't
+// touched, at the cost of scanning every unmodified file in the tree as a
+// candidate source — affordable for a fetch that happens once per detail-view
+// open. On an unborn HEAD git diffs against the empty tree by itself, so no
 // explicit fallback is needed.
 func (r *Repo) stagedDiff(ctx context.Context, paths []string) ([]File, error) {
 	return r.diffFiles(ctx, paths, "--cached", "--find-copies-harder")
@@ -124,16 +119,14 @@ func (r *Repo) stagedDiff(ctx context.Context, paths []string) ([]File, error) {
 
 // worktreeDiff diffs tracked files against the index, then appends one
 // synthesized added-file entry per untracked file, so the working-tree view
-// covers everything `git status` would flag as new (not just what plain
-// `git diff` shows). The tracked diff and the untracked-file scan are
-// independent git invocations, so they run concurrently.
+// covers everything `git status` would flag as new, not just what plain `git
+// diff` shows. The tracked diff and the untracked-file scan are independent
+// git invocations, so they run concurrently.
 //
-// Unlike stagedDiff/FetchCommitDetail, this diff has no copy-detection flag:
-// both sides (index and working tree) are restricted to already-tracked
-// paths, so a path can never appear as "added" for copy detection to pair
-// against — a genuinely new path is untracked, which never reaches this git
-// invocation at all (it's handled by untrackedFiles below instead). Passing
-// --find-copies here would be a pure no-op.
+// Unlike stagedDiff, this diff passes no copy-detection flag: both sides are
+// restricted to already-tracked paths, so nothing can appear as "added" for
+// copy detection to pair against — a genuinely new path is untracked, and
+// untrackedFiles handles those.
 func (r *Repo) worktreeDiff(ctx context.Context, paths []string) ([]File, error) {
 	var files, untracked []File
 	err := concurrent.RunConcurrently(
@@ -153,19 +146,15 @@ func (r *Repo) worktreeDiff(ctx context.Context, paths []string) ([]File, error)
 const maxUntrackedDiffs = 200
 
 // untrackedDiffConcurrency bounds how many of those subprocess calls run at
-// once. Per-process spawn overhead varies a lot by machine (antivirus/
-// sandboxing can make it far slower than on a typical dev box), and running
-// them one at a time lets that overhead add up linearly across every
-// untracked file — which is what made the working-tree view visibly slower
-// to appear than the commit list in a repo with more than a few untracked
-// files. Unbounded fan-out isn't the fix either: it would spawn as many
-// concurrent git processes as there are untracked files (up to
-// maxUntrackedDiffs), which could thrash on a constrained system.
+// once. Per-process spawn overhead varies a lot by machine, and serializing
+// the calls lets it add up linearly across every untracked file; unbounded
+// fan-out would instead spawn up to maxUntrackedDiffs git processes at once
+// and could thrash a constrained system.
 const untrackedDiffConcurrency = 16
 
-// untrackedFiles returns one synthesized File per untracked path, rendered
-// as an added-file diff against /dev/null — the same approach lazygit/tig
-// use for showing untracked files alongside a real diff.
+// untrackedFiles returns one synthesized File per untracked path, rendered as
+// an added-file diff against /dev/null — the same approach lazygit and tig use
+// to show untracked files alongside a real diff.
 func (r *Repo) untrackedFiles(ctx context.Context, pathspec []string) ([]File, error) {
 	paths, err := r.untrackedPaths(ctx, pathspec)
 	if err != nil {
@@ -201,14 +190,12 @@ func (r *Repo) untrackedPaths(ctx context.Context, pathspec []string) ([]string,
 	return splitNullTerminated(out), nil
 }
 
-// untrackedDiff synthesizes an added-file diff for a single untracked path
-// via `git diff --no-index` against /dev/null. Path/OldPath/Status are
-// overwritten unconditionally regardless of what the parser produced, so
-// the result can't be affected by however go-gitdiff happens to parse a
-// /dev/null header. If the diff can't be run or parsed at all (an
-// unreadable path, a symlink, a fifo) — or the path is empty, which
-// produces no textual delta to parse — this degrades to a hunk-less
-// added-file entry rather than failing the whole worktree fetch.
+// untrackedDiff synthesizes an added-file diff for a single untracked path via
+// `git diff --no-index` against /dev/null. Path/OldPath/Status are overwritten
+// unconditionally, so the result doesn't depend on how go-gitdiff parses a
+// /dev/null header. A diff that can't be run or parsed at all (an unreadable
+// path, a symlink, a fifo, or an empty file with no textual delta) degrades to
+// a hunk-less added-file entry rather than failing the whole worktree fetch.
 func (r *Repo) untrackedDiff(ctx context.Context, path string) File {
 	out, _, err := runGitDiffExit(ctx, r.Path, diffArgs("--no-index", "--", "/dev/null", path)...)
 	if err != nil {

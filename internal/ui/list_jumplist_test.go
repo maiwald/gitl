@@ -2,13 +2,10 @@ package ui
 
 import "testing"
 
-// ListModel no longer owns JumpBack/JumpForward traversal or a seeded
-// jumplist of its own — both moved to the root Model's shared jumplist (see
-// jumplist's doc comment in app.go), since popping an entry can require
-// switching the active view. These tests pin down ListModel's remaining
-// half of the contract: which motions push a jumplist entry (via pushJump,
-// into the shared jl) and which don't. Traversal (JumpBack/JumpForward) and
-// cross-view behavior are covered at the Model level in app_jumplist_test.go.
+// These tests cover ListModel's half of the jumplist contract: which motions
+// push an entry onto the shared jl (via pushJump) and which don't. Traversal
+// and cross-view behavior belong to the root Model and are covered in
+// app_jumplist_test.go.
 
 // TestListModelTopPushesJump pins down that 'g' (Top) records a jumplist
 // entry for the position it moved away from.

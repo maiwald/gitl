@@ -22,9 +22,9 @@ const fallbackListWidth = 120
 
 func main() {
 	// ContinueOnError rather than ExitOnError so a bad argument *combination*
-	// (which the FlagSet knows nothing about) can be reported from the same
-	// place as a bad flag. The FlagSet keeps printing its own parse failures
-	// and usage, so those arrive here already reported — see errFlagParse.
+	// (which the FlagSet knows nothing about) exits through the same path as
+	// a bad flag. The FlagSet still prints its own parse failures, so those
+	// arrive here already reported — see errFlagParse.
 	fs := flag.NewFlagSet("gitl", flag.ContinueOnError)
 	fs.Usage = func() { printUsage(fs) }
 	opts, err := parseArgs(fs, os.Args[1:])
@@ -67,7 +67,7 @@ func main() {
 }
 
 // exitWithError reports a failure that leaves gitl nothing to show and exits
-// nonzero — every runtime (as opposed to command-line) failure in main.
+// nonzero — every runtime, as opposed to command-line, failure in main.
 func exitWithError(err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
@@ -99,8 +99,8 @@ Flags:
 
 // versionString reports the module version go install embedded (a tag like
 // "v1.3.0", or a pseudo-version on an untagged commit). A plain `go build`
-// from a local checkout has no such metadata, so that case falls back to
-// "dev" rather than printing Go's uninformative "(devel)".
+// from a local checkout has no such metadata, and reports "dev" rather than
+// Go's uninformative "(devel)".
 func versionString() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
@@ -109,21 +109,18 @@ func versionString() string {
 	return info.Main.Version
 }
 
-// openCWDRepo opens the repository rooted at the current working directory,
-// the only place gitl's CLI needs a hardcoded "." — internal/git itself
-// stays path-agnostic.
+// openCWDRepo opens the repository rooted at the current working directory —
+// the only place gitl's CLI hardcodes ".", keeping internal/git path-agnostic.
 func openCWDRepo(ctx context.Context) (*git.Repo, error) {
 	return git.OpenRepo(ctx, ".")
 }
 
-// hasChanges is the pre-flight for --staged/--diff: an empty index/worktree
+// hasChanges is the pre-flight for --staged/--diff: an empty index or worktree
 // exits quietly, the way `git diff` prints nothing and succeeds, instead of
-// flashing an alt-screen TUI just to immediately say there's nothing to
-// show. check is passed as a method expression, e.g.
-// (*git.Repo).HasStagedChanges, and is asked only about paths when the
-// command line gave any — so `gitl --diff untouched.go` is as silent as
-// `git diff -- untouched.go` is. Only a failure to answer at all is
-// reported, and exits nonzero.
+// flashing an alt-screen TUI just to say there's nothing to show. check is a
+// method expression, e.g. (*git.Repo).HasStagedChanges, asked only about paths
+// when the command line gave any. Only a failure to answer at all is reported,
+// and exits nonzero.
 func hasChanges(check func(*git.Repo, context.Context, ...string) (bool, error), paths []string) bool {
 	ctx := context.Background()
 	repo, err := openCWDRepo(ctx)
@@ -149,8 +146,8 @@ func printCommits(n int) error {
 	}
 	if !hasCommits {
 		// Nothing to print, and nothing to say about it — same as the
-		// --staged/--diff pre-flight (see hasChanges). The guard itself stays:
-		// FetchLogBatch on an unborn HEAD would fail rather than print
+		// --staged/--diff pre-flight (see hasChanges). The guard is still
+		// needed: FetchLogBatch on an unborn HEAD fails rather than printing
 		// nothing.
 		return nil
 	}

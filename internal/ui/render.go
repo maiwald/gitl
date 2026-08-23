@@ -22,14 +22,13 @@ func clamp(v, lo, hi int) int {
 // lineRenderer renders one logical line of a view's content, plain or with
 // the cursor row's background merged in. It returns a slice because a
 // word-wrapped line occupies several visual rows — and both renderings always
-// occupy the same number of them (see wrapRanges), which is what lets a
-// cursor move re-render one line in place instead of everything around it.
+// occupy the same number of them (see wrapRanges), which is what lets a cursor
+// move re-render one line in place instead of everything around it.
 //
-// Content assembled as renderers rather than finished rows is what makes the
-// cursor a property applied at render time: each block describes its lines
-// once, and where each one lands (and which one the cursor is on) is decided
-// afterwards, in renderRows, instead of being threaded through every block's
-// own local line space.
+// Describing lines as renderers rather than finished rows is what makes the
+// cursor a property applied at render time: a block describes its lines once,
+// and renderRows decides afterwards where each lands and which one the cursor
+// is on.
 type lineRenderer func(cursor bool) []string
 
 // clippedLine is the lineRenderer for a line rendered in one uniform style
@@ -71,11 +70,10 @@ func renderRows(lines []lineRenderer, cursorLine int) (rows []string, lineStart 
 	return rows, lineStart
 }
 
-// logicalAt reports which logical line the flattened row pos belongs to,
-// given each logical line's starting row, or -1 when pos is above the content
-// entirely. lineStart is ascending, so the answer is the last entry that
-// doesn't exceed pos — a row past the end therefore reports the final line,
-// which is what the callers that ask about trailing padding want.
+// logicalAt reports which logical line the flattened row pos belongs to, given
+// each logical line's starting row, or -1 when pos is above the content
+// entirely. A row past the end reports the final line, which is what callers
+// asking about trailing padding want.
 func logicalAt(lineStart []int, pos int) int {
 	if len(lineStart) == 0 || pos < lineStart[0] {
 		return -1
@@ -85,14 +83,13 @@ func logicalAt(lineStart []int, pos int) int {
 
 // halfPage is how far ctrl-u/ctrl-d move in a viewport of the given height:
 // half a screen, floored at 1 so they still move something on a one- or
-// two-row viewport. Shared with DetailModel, whose cursor pages the same way.
+// two-row viewport.
 func halfPage(height int) int {
 	return max(height/2, 1)
 }
 
-// matchPosition reports pos as a 1-based position within total, or (0, 0)
-// when there are no matches — the shared shape behind both ListModel's and
-// DetailModel's MatchPosition methods.
+// matchPosition reports pos as a 1-based position within total, or (0, 0) when
+// there are no matches.
 func matchPosition(pos, total int) (int, int) {
 	if total == 0 {
 		return 0, 0
@@ -101,11 +98,9 @@ func matchPosition(pos, total int) (int, int) {
 }
 
 // stepMatchPos advances pos by delta within total matches, wrapping at both
-// ends — the shared arithmetic behind both views' n/N. A negative pos means
-// no match is active yet (a view that has matches but was never jumped into
-// one, see SetMatches/computeMatches): n selects the first match from there
-// and N the last, rather than letting -1 through the modulo, which would
-// land N two short of the end.
+// ends. A negative pos means no match is active yet: n selects the first match
+// from there and N the last, rather than letting -1 through the modulo, which
+// would land N two short of the end.
 func stepMatchPos(pos, delta, total int) int {
 	if pos < 0 {
 		if delta > 0 {
@@ -121,14 +116,12 @@ func stepMatchPos(pos, delta, total int) int {
 // since lipgloss's Width/MaxWidth degenerate at zero.
 //
 // Inline is what makes "single line" true: Width on its own word-wraps, so
-// text longer than width (a hunk header carrying a long function context, a
-// deeply nested file path) would come back as several lines inside what
-// every caller counts as one entry in the flattened line space — silently
-// shifting every display row below it out of step with the line indices the
-// cursor, FileRanges and scroll positions all use. MaxWidth still truncates,
-// and Width still pads the row out (Inline only suppresses padding set via
-// Padding, not the alignment fill), so a cursor-merged style still colors
-// the full row.
+// text longer than width would come back as several display lines inside what
+// every caller counts as one entry in the flattened line space, shifting every
+// row below it out of step with the line indices the cursor, FileRanges and
+// scroll positions use. MaxWidth still truncates, and Width still pads the row
+// out (Inline only suppresses padding set via Padding, not the alignment
+// fill), so a cursor-merged style still colors the full row.
 func renderClipped(style lipgloss.Style, text string, width int) string {
 	if width <= 0 {
 		return style.Render(text)
@@ -137,12 +130,9 @@ func renderClipped(style lipgloss.Style, text string, width int) string {
 }
 
 // renderClippedStyled truncates content that may already contain
-// independently-Render()'d spans (ANSI resets embedded) to width via padRow
-// — see padRow's doc comment for why Width+MaxWidth reflow can't be used
-// here. cursor fills the padding with the cursor row's background instead
-// of plain spaces, for a stats-table row the detail view's cursor is
-// currently on (see statsview.go's renderStatLine); otherwise the fill is
-// unstyled plain spaces.
+// independently-Render()'d spans (ANSI resets embedded) to width via padRow —
+// see padRow for why Width+MaxWidth can't be used here. cursor fills the
+// padding with the cursor row's background instead of plain spaces.
 func renderClippedStyled(content string, width int, cursor bool) string {
 	if width <= 0 {
 		return content
@@ -150,11 +140,10 @@ func renderClippedStyled(content string, width int, cursor bool) string {
 	return padRow(content, width, cursor)
 }
 
-// rowFillStyle is the style a row's own background is painted with: plain
-// normally, or the cursor row's background (selectedRowStyle) for the row
-// under the cursor. It's padRow's fill below, and also what a row's literal
-// gap/separator text is rendered in (see rowGap in commititem.go), so a
-// selected row's highlight has no gaps between its fields.
+// rowFillStyle is the style a row's background is painted with: plain
+// normally, or selectedRowStyle for the row under the cursor. It's padRow's
+// fill, and also what a row's literal gap/separator text is rendered in (see
+// rowGap in commititem.go), so a selected row's highlight has no holes in it.
 func rowFillStyle(cursor bool) lipgloss.Style {
 	if cursor {
 		return selectedRowStyle
@@ -162,21 +151,19 @@ func rowFillStyle(cursor bool) lipgloss.Style {
 	return normalRowStyle
 }
 
-// padRow truncates row to width and pads any remainder with trailing
-// spaces, in the cursor row's background when cursor is set (see
-// rowFillStyle). MaxWidth alone (no Width) truncates in place; combining
-// Width with MaxWidth would run row — which already contains several
+// padRow truncates row to width and pads any remainder with trailing spaces,
+// in the cursor row's background when cursor is set. MaxWidth alone truncates
+// in place; adding Width would run row — which already contains several
 // independently-Rendered, reset-terminated spans — through lipgloss's
-// paragraph reflow, miscounting cell positions across those resets and
-// risking a hard-wrap mid-field, so padding to width is done by hand
-// instead.
+// paragraph reflow, miscounting cell positions across those resets and risking
+// a hard-wrap mid-field. Hence the padding by hand.
 func padRow(row string, width int, cursor bool) string {
 	style := rowFillStyle(cursor)
 	// A plain fill contributes nothing but the truncation itself, so a row
 	// already within width comes back from that Render byte-for-byte
 	// unchanged — skip it, and pad with plain spaces for the same reason.
 	// The cursor's fill does carry a style, so its row is always rendered.
-	// (This is the hot path: a reflow pads every line of the commit.)
+	// (Hot path: a reflow pads every line of the commit.)
 	plain := !cursor
 	w := lipgloss.Width(row)
 	if !plain || w > width {
@@ -195,17 +182,15 @@ func padRow(row string, width int, cursor bool) string {
 }
 
 // lipglossTabWidth mirrors lipgloss's own default tab handling (Render
-// replaces each tab with this many spaces before wrapping). wrapRanges
-// applies the same expansion up front so its byte offsets describe the text
-// lipgloss would actually lay out, rather than a pre-expansion one whose
-// columns no longer line up.
+// replaces each tab with this many spaces before wrapping). wrapRanges applies
+// the same expansion up front so its byte offsets describe the text lipgloss
+// would actually lay out.
 const lipglossTabWidth = 4
 
 // expandTabs replaces tabs with lipglossTabWidth spaces, also returning a
-// mapping from each byte offset in text to its offset in the result (nil
-// when there was nothing to expand, i.e. the identity mapping — see
-// shiftSpans), so span and match offsets computed against the original text
-// can follow it.
+// mapping from each byte offset in text to its offset in the result (nil for
+// the identity mapping, when there was nothing to expand), so span and match
+// offsets computed against the original text can follow it.
 func expandTabs(text string) (string, offsetMap) {
 	if !strings.Contains(text, "\t") {
 		return text, nil
@@ -228,13 +213,12 @@ func expandTabs(text string) (string, offsetMap) {
 // would, returning each resulting visual row as a byte range into text.
 //
 // The wrap has to be computed on plain text, never on an already-styled
-// string: lipgloss's wrapper only treats a space as a word boundary while
-// the style in effect is "blank", and a background color isn't — so the same
-// line carrying the cursor row's background wraps as one unbreakable word,
-// landing on a different number of rows than the identical line without it.
-// Since a logical line's row count defines the flattened line space the
-// cursor, FileRanges and match positions all index into, that difference
-// isn't cosmetic: it desyncs the whole view.
+// string: lipgloss's wrapper only treats a space as a word boundary while the
+// style in effect is "blank", and a background color isn't — so the same line
+// carrying the cursor row's background wraps as one unbreakable word, onto a
+// different number of rows than the identical line without it. A logical
+// line's row count defines the flattened line space the cursor, FileRanges and
+// match positions index into, so that difference desyncs the whole view.
 //
 // Ranges exclude the spaces the wrapper consumed at a break (and the
 // padding it adds to short rows) — every caller re-pads to width itself.
@@ -243,11 +227,10 @@ func wrapRanges(text string, width int) [][2]int {
 		return [][2]int{{0, len(text)}}
 	}
 	// A line that already fits comes back from the wrapper as itself, padded
-	// out to width — so measure first and skip the render, which is the
-	// expensive half of laying a line out and which a reflow pays once per
-	// line of the entire commit. Trimming the trailing spaces is what the
-	// general path below would do to that single row anyway (whether the
-	// wrapper added them or the line carried its own).
+	// out to width — so measure first and skip the render, the expensive
+	// half of laying a line out, which a reflow pays once per line of the
+	// entire commit. Trimming the trailing spaces is what the general path
+	// below would do to that single row anyway.
 	if !strings.Contains(text, "\n") && lipgloss.Width(text) <= width {
 		return [][2]int{{0, len(strings.TrimRight(text, " "))}}
 	}
@@ -269,15 +252,13 @@ func wrapRanges(text string, width int) [][2]int {
 }
 
 // wrapStyledRows word-wraps text to width and styles each visual row
-// separately — spans and matches clipped and rebased to that row, the cursor
-// background merged in per span (renderLineWithBaseSpans), then padded to
-// full width so the fill is a freshly rendered span rather than a doomed
-// re-wrap of an already-ANSI'd string (see padRow).
+// separately: spans and matches clipped and rebased to that row, the cursor
+// background merged in per span (renderLineWithBaseSpans), then padded to full
+// width (padRow).
 //
 // Wrapping first and styling second is what keeps a cursor row's wrapped
-// height identical to the same line's without it — see wrapRanges. It also
-// means no caller needs to strip lipgloss's plain padding back off before
-// re-padding, since nothing was padded before styling ran.
+// height identical to the same line's without it — see wrapRanges — and means
+// no caller has to strip lipgloss's plain padding back off before re-padding.
 func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, width int, cursor bool) []string {
 	text, expanded := expandTabs(text)
 	spans = shiftSpans(spans, expanded)
@@ -296,17 +277,15 @@ func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lip
 	return rows
 }
 
-// offsetMap relocates a byte offset in one version of a line's plain text
-// onto another version of it: past a rendering prefix the offsets were
-// computed without (shiftBy), or through tab expansion (expandTabs). A nil
-// offsetMap is the identity, which shiftSpans/shiftMatches take as "nothing
-// to do" rather than copying the slice for no reason.
+// offsetMap relocates a byte offset in one version of a line's plain text onto
+// another: past a rendering prefix the offsets were computed without
+// (shiftBy), or through tab expansion (expandTabs). A nil offsetMap is the
+// identity, which shiftSpans/shiftMatches take as "nothing to do".
 type offsetMap func(int) int
 
 // shiftBy is the offsetMap for text about to be rendered behind an n-byte
 // prefix — a diff line's +/-/space marker, or a file header's status glyph —
-// which spans and matches are always computed without (see DiffMatch's and
-// intralineSpans's coordinate conventions).
+// which spans and matches are always computed without.
 func shiftBy(n int) offsetMap {
 	return func(i int) int { return i + n }
 }
@@ -390,13 +369,10 @@ func truncate(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
-// blankLine renders one of the blank separator rows reflow splices between
-// the header/stats/diff blocks: plain empty when isCursor is false (as
-// before), or a full-width row filled with the cursor background when it's
-// the line the cursor is currently on — these separators live outside
-// renderHeaderBlock/renderDiffBlock/statLinesFor, so they need their own
-// cursor check rather than inheriting one from whichever block they sit
-// between.
+// blankLine renders one of the blank separator rows reflow splices between the
+// header/stats/diff blocks: plain empty, or a full-width row filled with the
+// cursor background when it's the line the cursor is on. The separators live
+// outside every block, so they carry their own cursor check.
 func blankLine(width int, isCursor bool) string {
 	if !isCursor {
 		return ""
@@ -404,13 +380,11 @@ func blankLine(width int, isCursor bool) string {
 	return padRow("", width, true)
 }
 
-// cursorMerged merges the cursor row's background into base when isCursor
-// is true, else returns base unchanged. Only safe for a row rendered with a
-// single, uniform style (a file/hunk header, the binary notice) — content
-// that composites independently-rendered spans (diff/header text lines)
-// instead threads the cursor flag into renderLineWithBaseSpans, which
-// merges the background per-span before any Render() call fires (see
-// CLAUDE.md's "style plain-text spans before any .Render() call" rule).
+// cursorMerged merges the cursor row's background into base when isCursor is
+// true, else returns base unchanged. Only safe for a row rendered in a single
+// uniform style; content that composites independently-rendered spans threads
+// the cursor flag into renderLineWithBaseSpans instead, which merges the
+// background per-span before any Render() call fires.
 func cursorMerged(base lipgloss.Style, isCursor bool) lipgloss.Style {
 	if isCursor {
 		return base.Background(cursorRowBg)
@@ -418,11 +392,10 @@ func cursorMerged(base lipgloss.Style, isCursor bool) lipgloss.Style {
 	return base
 }
 
-// baseSpan is a byte-offset [start,end) run of a header line rendered with
-// a specific non-match base style (e.g. the author's name colored
-// authorStyle), computed once per logical line in headerLinesFor alongside
-// its plain text so it composes with search-match highlighting the same
-// way a single uniform base already does for diff lines.
+// baseSpan is a byte-offset [start,end) run of a header line rendered in a
+// specific non-match base style (e.g. the author's name in authorStyle),
+// computed alongside the line's plain text in headerLinesFor so it composes
+// with search-match highlighting.
 type baseSpan struct {
 	start, end int
 	style      lipgloss.Style
@@ -437,23 +410,16 @@ type lineMatch struct {
 }
 
 // renderLineWithBaseSpans composites per-column base coloring (spans) with
-// search-match spans (matches) into one already-styled string: walks the
-// boundary points from both span lists, and for each resulting piece
-// renders with whichever match style covers it, else whichever baseSpan
-// covers it, else base — a match always wins over a base span on overlap
-// (e.g. a search hit inside the author's name still shows the search
-// highlight, not the name's blue). base is the fallback for text outside
-// every span and match: colorless for header/message lines (spans already
-// cover every colored substring there), or a diff line's op color
-// (diffAddStyle/diffDeleteStyle/diffContextStyle) when called from
-// renderDiffLine with no spans at all.
+// search-match spans (matches) into one already-styled string: it walks the
+// boundary points of both span lists and renders each resulting piece with
+// whichever match style covers it, else whichever baseSpan covers it, else
+// base. A match always wins over a base span on overlap. base is the fallback
+// for text outside every span and match: colorless for header/message lines,
+// or a diff line's op color when called from renderDiffLine with no spans.
 //
 // cursor merges the cursor row's background into whatever style would
-// otherwise apply at each position, except inside a match: a match's own
-// background is already the line's strongest signal, and layering the
-// (much subtler) cursor background on top of it would only mute it for no
-// benefit — so the cursor background applies everywhere on the line
-// *except* a matched span.
+// otherwise apply, except inside a match, whose own background is already the
+// line's strongest signal and would only be muted by it.
 func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, cursor bool) string {
 	bounds := map[int]bool{0: true, len(text): true}
 	for _, s := range spans {
@@ -503,10 +469,9 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch,
 
 // highlightSpans splits text at case-insensitive occurrences of term,
 // rendering unmatched runs with base and matched runs with match, then
-// concatenating the already-rendered pieces — the same nested-style pattern
-// renderLineWithBaseSpans uses (style a plain-text span, then render it),
-// reduced to the one-term case a list row needs. Returns
-// base.Render(text) unchanged when term is empty.
+// concatenating the already-rendered pieces — renderLineWithBaseSpans's
+// pattern reduced to the one-term case a list row needs. Returns
+// base.Render(text) when term is empty.
 func highlightSpans(text, term string, base, match lipgloss.Style) string {
 	if term == "" {
 		return base.Render(text)
