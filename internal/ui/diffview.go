@@ -7,67 +7,47 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
-// FileRange marks where a single file's rendered lines live within the
-// flattened diff content produced by RenderDiff, so a scroll position (a
-// line index into that content) can be mapped back to "which file".
+// FileRange marks where a single file's lines live within the diff content
+// produced by RenderDiff, so a scroll position can be mapped back to "which
+// file". RenderDiff states it in logical lines; DetailModel.reflow rebases it
+// onto the flattened rows those lines rendered into, which is the form every
+// other reader of a FileRange (sections, the sticky header) works in.
 type FileRange struct {
 	FileIndex int
 	StartLine int
 	EndLine   int // exclusive
 }
 
-// RenderDiff flattens a commit's parsed diff files into one styled slice of
-// lines suitable for a single scrollable viewport, along with the line
-// range each file occupies within that flattened content. matches (from
-// FindDiffMatches, in the same file/hunk/line traversal order this function
-// uses) are highlighted inline unless dismissed is true — a DiffMatchFileName
-// match highlights within that file's header row, a DiffMatchLine match
-// within the diff line it belongs to. activeMatch indexes into matches for
-// the one that should stand out with a distinct style (-1 for none; ignored
-// when dismissed).
+// RenderDiff describes a commit's parsed diff files as one flat sequence of
+// logical lines — file header, optional binary notice, then each hunk's
+// header and lines — suitable for a single scrollable viewport, along with
+// the range of them each file occupies. matches (from FindDiffMatches, in
+// the same file/hunk/line traversal order this function uses) are
+// highlighted inline unless dismissed is true — a DiffMatchFileName match
+// highlights within that file's header, a DiffMatchLine match within the
+// diff line it belongs to. activeMatch indexes into matches for the one that
+// should stand out with a distinct style (-1 for none; ignored when
+// dismissed).
 //
-// cursorLine, if it falls within this diff's own flattened line space
-// (negative or past the end otherwise selects nothing — the caller doesn't
-// need to guard the call, just offset its own coordinate into this
-// function's local space), gets the cursor row background merged into
-// whichever line it lands on. A logical diff line that wraps to several
-// visual rows is only known to fully occupy [lineStart, lineStart+n) after
-// it's been rendered once, so each line is rendered once at plain, and
-// only re-rendered (once) with the cursor flag set if cursorLine turns out
-// to fall in its range — see renderDiffLine.
+// Nothing here knows where its lines land on screen or which one the cursor
+// is on: every coordinate it returns counts logical lines, and each line
+// comes back as a lineRenderer the caller renders once it has decided both
+// (see renderRows). That's what lets a cursor move re-render a single line
+// rather than the whole diff.
 //
 // matchLines is always computed from the full matches list regardless of
-// dismissed, since word-wrapping (which determines line positions) is
-// ANSI-aware and doesn't depend on whether a span is styled — so a
-// dismissed match still lands correctly once n/N revives it. It's
-// parallel to matches: the flattened line index where each match's line
-// starts (enough to bring it into view).
-//
-// starts is parallel to the returned lines: true where a line begins a
-// logical diff line, false on the continuation rows a wrapped one spilled
-// into, so the cursor can move a whole wrapped line at a time (see
-// DetailModel.blockEnd) instead of stepping through rows the highlight
-// covers as one block anyway.
-func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool, cursorLine int) ([]string, []FileRange, []int, []bool) {
-	var lines []string
-	var starts []bool
+// dismissed, since a line's position doesn't depend on whether a span within
+// it is styled — so a dismissed match still lands correctly once n/N revives
+// it. It's parallel to matches: the logical line each match sits on.
+func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool) ([]lineRenderer, []FileRange, []int) {
+	var lines []lineRenderer
 	ranges := make([]FileRange, 0, len(files))
 	matchLines := make([]int, len(matches))
 	mi := 0
 
-	// appendBlock adds one logical line's rendered rows: the first begins the
-	// block, any further ones continue it.
-	appendBlock := func(rows ...string) {
-		lines = append(lines, rows...)
-		for i := range rows {
-			starts = append(starts, i == 0)
-		}
-	}
-
 	for fi, f := range files {
 		start := len(lines)
 
-		fileHeaderRow := len(lines)
 		var headerMatches []lineMatch
 		for mi < len(matches) && matches[mi].Kind == DiffMatchFileName && matches[mi].FileIndex == fi {
 			if !dismissed {
@@ -75,20 +55,19 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 					start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
 				})
 			}
-			matchLines[mi] = fileHeaderRow
+			matchLines[mi] = len(lines)
 			mi++
 		}
-		appendBlock(renderFileHeader(f, width, cursorLine == fileHeaderRow, headerMatches))
+		lines = append(lines, func(cursor bool) []string {
+			return []string{renderFileHeader(f, width, cursor, headerMatches)}
+		})
 		if f.Binary {
-			binaryRow := len(lines)
-			appendBlock(renderClipped(cursorMerged(binaryNoticeStyle, cursorLine == binaryRow), "Binary file, diff not shown", width))
+			lines = append(lines, clippedLine(binaryNoticeStyle, "Binary file, diff not shown", width))
 		}
 		for hi, h := range f.Hunks {
-			hunkHeaderRow := len(lines)
-			appendBlock(renderClipped(cursorMerged(hunkHeaderStyle, cursorLine == hunkHeaderRow), h.Header, width))
+			lines = append(lines, clippedLine(hunkHeaderStyle, h.Header, width))
 			hunkSpans := intralineSpans(h)
 			for li, l := range h.Lines {
-				lineStart := len(lines)
 				var lineMatches []lineMatch
 				for mi < len(matches) && matches[mi].Kind == DiffMatchLine && matches[mi].FileIndex == fi && matches[mi].HunkIndex == hi && matches[mi].LineIndex == li {
 					if !dismissed {
@@ -96,19 +75,18 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 							start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
 						})
 					}
-					matchLines[mi] = lineStart
+					matchLines[mi] = len(lines)
 					mi++
 				}
-				rendered := renderDiffLine(l, width, hunkSpans[li], lineMatches, false)
-				if cursorLine >= lineStart && cursorLine < lineStart+len(rendered) {
-					rendered = renderDiffLine(l, width, hunkSpans[li], lineMatches, true)
-				}
-				appendBlock(rendered...)
+				spans := hunkSpans[li]
+				lines = append(lines, func(cursor bool) []string {
+					return renderDiffLine(l, width, spans, lineMatches, cursor)
+				})
 			}
 		}
 		ranges = append(ranges, FileRange{FileIndex: fi, StartLine: start, EndLine: len(lines)})
 	}
-	return lines, ranges, matchLines, starts
+	return lines, ranges, matchLines
 }
 
 // DiffMatchKind distinguishes a DiffMatch found in a file's own displayed

@@ -19,6 +19,70 @@ func clamp(v, lo, hi int) int {
 	return min(max(v, lo), hi)
 }
 
+// lineRenderer renders one logical line of a view's content, plain or with
+// the cursor row's background merged in. It returns a slice because a
+// word-wrapped line occupies several visual rows — and both renderings always
+// occupy the same number of them (see wrapRanges), which is what lets a
+// cursor move re-render one line in place instead of everything around it.
+//
+// Content assembled as renderers rather than finished rows is what makes the
+// cursor a property applied at render time: each block describes its lines
+// once, and where each one lands (and which one the cursor is on) is decided
+// afterwards, in renderRows, instead of being threaded through every block's
+// own local line space.
+type lineRenderer func(cursor bool) []string
+
+// clippedLine is the lineRenderer for a line rendered in one uniform style
+// and truncated (never wrapped) to width — a hunk header, a binary-file
+// notice, the stats block's heading.
+func clippedLine(style lipgloss.Style, text string, width int) lineRenderer {
+	return func(cursor bool) []string {
+		return []string{renderClipped(cursorMerged(style, cursor), text, width)}
+	}
+}
+
+// blankRow is the lineRenderer for a blank separator row between two content
+// blocks (see blankLine).
+func blankRow(width int) lineRenderer {
+	return func(cursor bool) []string {
+		return []string{blankLine(width, cursor)}
+	}
+}
+
+// renderRows renders every logical line in document order and then, once it
+// knows where each one landed, re-renders whichever line contains cursorLine
+// with the cursor row's background. Returns the flattened rows and, parallel
+// to lines, the row each logical line starts at.
+//
+// A cursorLine outside the content selects nothing, so callers don't have to
+// bound it themselves.
+func renderRows(lines []lineRenderer, cursorLine int) (rows []string, lineStart []int) {
+	lineStart = make([]int, len(lines))
+	for i, render := range lines {
+		lineStart[i] = len(rows)
+		rows = append(rows, render(false)...)
+	}
+	if cursorLine >= 0 && cursorLine < len(rows) {
+		i := logicalAt(lineStart, cursorLine)
+		// Same row count either way, so the cursor rendering overwrites the
+		// plain one in place and nothing below it shifts.
+		copy(rows[lineStart[i]:], lines[i](true))
+	}
+	return rows, lineStart
+}
+
+// logicalAt reports which logical line the flattened row pos belongs to,
+// given each logical line's starting row, or -1 when pos is above the content
+// entirely. lineStart is ascending, so the answer is the last entry that
+// doesn't exceed pos — a row past the end therefore reports the final line,
+// which is what the callers that ask about trailing padding want.
+func logicalAt(lineStart []int, pos int) int {
+	if len(lineStart) == 0 || pos < lineStart[0] {
+		return -1
+	}
+	return sort.Search(len(lineStart), func(i int) bool { return lineStart[i] > pos }) - 1
+}
+
 // halfPage is how far ctrl-u/ctrl-d move in a viewport of the given height:
 // half a screen, floored at 1 so they still move something on a one- or
 // two-row viewport. Shared with DetailModel, whose cursor pages the same way.

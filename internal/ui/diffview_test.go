@@ -40,9 +40,34 @@ func fixtureDiffFiles() []git.File {
 	}
 }
 
+// renderDiffRows lays a diff out the way DetailModel.reflow does — every
+// logical line rendered, with the one containing cursorLine carrying the
+// cursor background — and rebases RenderDiff's logical coordinates onto the
+// rows they produced, which is the flattened shape these tests assert on.
+func renderDiffRows(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool, cursorLine int) (rows []string, ranges []FileRange, matchRows []int) {
+	lines, logicalRanges, matchLines := RenderDiff(files, width, matches, activeMatch, dismissed)
+	rows, lineStart := renderRows(lines, cursorLine)
+
+	rowOf := func(logical int) int {
+		if logical < len(lineStart) {
+			return lineStart[logical]
+		}
+		return len(rows)
+	}
+	ranges = make([]FileRange, len(logicalRanges))
+	for i, r := range logicalRanges {
+		ranges[i] = FileRange{FileIndex: r.FileIndex, StartLine: rowOf(r.StartLine), EndLine: rowOf(r.EndLine)}
+	}
+	matchRows = make([]int, len(matchLines))
+	for i, ln := range matchLines {
+		matchRows[i] = rowOf(ln)
+	}
+	return rows, ranges, matchRows
+}
+
 func TestRenderDiffProducesContiguousRanges(t *testing.T) {
 	files := fixtureDiffFiles()
-	lines, ranges, _, _ := RenderDiff(files, 80, nil, -1, false, -1)
+	lines, ranges, _ := renderDiffRows(files, 80, nil, -1, false, -1)
 
 	if len(ranges) != 2 {
 		t.Fatalf("got %d ranges, want 2", len(ranges))
@@ -87,7 +112,7 @@ func TestRenderDiffWrapsLongLinesAndKeepsRangesContiguous(t *testing.T) {
 		},
 	}
 
-	lines, ranges, _, _ := RenderDiff(files, 20, nil, -1, false, -1)
+	lines, ranges, _ := renderDiffRows(files, 20, nil, -1, false, -1)
 
 	// The long line must have wrapped into more than one rendered row.
 	if ranges[0].EndLine-ranges[0].StartLine <= 3 { // header + hunk header + short line + wrapped long line(s)
@@ -256,7 +281,7 @@ func TestRenderDiffHighlightsMatchesAndMarksActiveOneDistinctly(t *testing.T) {
 		t.Fatalf("got %d matches, want 2", len(matches))
 	}
 
-	lines, _, matchLines, _ := RenderDiff(files, 80, matches, 0, false, -1)
+	lines, _, matchLines := renderDiffRows(files, 80, matches, 0, false, -1)
 
 	if !strings.Contains(lines[matchLines[0]], searchActiveMatchStyle.Render("needle")) {
 		t.Errorf("line %d = %q, want the active match styled with searchActiveMatchStyle", matchLines[0], lines[matchLines[0]])
@@ -285,7 +310,7 @@ func TestRenderDiffMatchLinesFallWithinCorrespondingFileRange(t *testing.T) {
 		},
 	}
 	matches := FindDiffMatches(files, "needle")
-	_, ranges, matchLines, _ := RenderDiff(files, 80, matches, -1, false, -1)
+	_, ranges, matchLines := renderDiffRows(files, 80, matches, -1, false, -1)
 
 	if len(matches) != 2 || len(matchLines) != 2 {
 		t.Fatalf("got %d matches / %d matchLines, want 2/2", len(matches), len(matchLines))
@@ -302,7 +327,7 @@ func TestRenderFileHeaderShowsRenameArrow(t *testing.T) {
 	files := []git.File{
 		{OldPath: "old.txt", Path: "new.txt", Status: git.StatusRenamed},
 	}
-	lines, _, _, _ := RenderDiff(files, 80, nil, -1, false, -1)
+	lines, _, _ := renderDiffRows(files, 80, nil, -1, false, -1)
 	if len(lines) == 0 {
 		t.Fatal("expected at least one rendered line")
 	}
@@ -464,7 +489,7 @@ func TestRenderDiffAppliesIntralineEmphasisStyles(t *testing.T) {
 			},
 		}},
 	}}
-	lines, _, _, _ := RenderDiff(files, 0, nil, -1, false, -1)
+	lines, _, _ := renderDiffRows(files, 0, nil, -1, false, -1)
 	if len(lines) != 4 { // file header + hunk header + delete + add
 		t.Fatalf("got %d lines, want 4 (file header, hunk header, delete, add)", len(lines))
 	}
@@ -537,7 +562,7 @@ func TestRenderDiffRowsNeverEmbedNewlines(t *testing.T) {
 	}}
 
 	for _, cursorLine := range []int{-1, 0, 1, 2} {
-		lines, ranges, _, _ := RenderDiff(files, width, nil, -1, false, cursorLine)
+		lines, ranges, _ := renderDiffRows(files, width, nil, -1, false, cursorLine)
 		for i, row := range lines {
 			if strings.Contains(row, "\n") {
 				t.Errorf("cursorLine %d: row %d spans %d display lines: %q",

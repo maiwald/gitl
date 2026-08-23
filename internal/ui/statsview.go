@@ -27,13 +27,13 @@ const statsSectionTitle = "Files changed"
 // same columns. A blank line separates it from the per-file rows (the same
 // convention detail.go's reflow uses between blocks).
 //
-// cursorLine, in this block's own local line space (0 = the "Files
-// changed" heading, 1..len(files) the per-file rows, then the blank
-// separator, then the totals row — negative or past the end selects
-// nothing), gets the cursor row background merged into whichever line it
-// lands on, the same treatment RenderDiff/renderHeaderLines give their own
-// content.
-func statLinesFor(files []git.File, width int, cursorLine int) []string {
+// Each row comes back as a lineRenderer, so which one the cursor is on is
+// decided by the caller once it knows where they landed (see renderRows) —
+// the same arrangement RenderDiff/renderHeaderLines use for their own
+// content. The rows are in this block's own order: the "Files changed"
+// heading, one per file, a blank separator, then the totals row — a local
+// line convention statsFileIndexAt (detail.go) depends on.
+func statLinesFor(files []git.File, width int) []lineRenderer {
 	if len(files) == 0 {
 		return nil
 	}
@@ -62,14 +62,22 @@ func statLinesFor(files []git.File, width int, cursorLine int) []string {
 	summaryLabel := fmt.Sprintf("%d %s changed", len(files), pluralize(len(files), "file", "files"))
 	nameWidth = max(nameWidth, len(summaryLabel))
 
-	lines := make([]string, 0, len(files)+3)
-	lines = append(lines, renderClipped(cursorMerged(fileHeaderStyle, cursorLine == 0), statsSectionTitle, width))
+	lines := make([]lineRenderer, 0, len(files)+3)
+	lines = append(lines, clippedLine(fileHeaderStyle, statsSectionTitle, width))
 	for i, f := range files {
-		lines = append(lines, renderStatLine(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], width, cursorLine == i+1))
+		lines = append(lines, statRow(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], width))
 	}
-	lines = append(lines, blankLine(width, cursorLine == len(lines)))
-	lines = append(lines, renderStatLine(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, width, cursorLine == len(lines)))
+	lines = append(lines, blankRow(width))
+	lines = append(lines, statRow(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, width))
 	return lines
+}
+
+// statRow is the lineRenderer for one row of the stats table (see
+// renderStatLine, which does the rendering once the cursor is known).
+func statRow(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int) lineRenderer {
+	return func(cursor bool) []string {
+		return []string{renderStatLine(label, binary, nameWidth, addWidth, delWidth, addCount, delCount, width, cursor)}
+	}
 }
 
 // formatCountParts renders a file's or totals row's addition/deletion

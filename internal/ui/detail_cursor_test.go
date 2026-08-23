@@ -320,7 +320,7 @@ func TestDetailModelCursorMovesWholeWrappedLines(t *testing.T) {
 	seen := map[int]bool{}
 	for prev := -1; m.cursorLine != prev; {
 		prev = m.cursorLine
-		if !m.lineStarts[m.cursorLine] {
+		if m.blockStart(m.cursorLine) != m.cursorLine {
 			t.Fatalf("cursor stopped at line %d, which continues a wrapped line", m.cursorLine)
 		}
 		if seen[m.cursorLine] {
@@ -344,7 +344,7 @@ func TestDetailModelCursorMovesWholeWrappedLines(t *testing.T) {
 		if m.cursorLine >= before {
 			t.Fatalf("Up from line %d did not move (now %d)", before, m.cursorLine)
 		}
-		if !m.lineStarts[m.cursorLine] {
+		if m.blockStart(m.cursorLine) != m.cursorLine {
 			t.Fatalf("Up stopped at line %d, which continues a wrapped line", m.cursorLine)
 		}
 	}

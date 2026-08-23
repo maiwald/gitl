@@ -82,13 +82,19 @@ type DetailModel struct {
 	// viewport — the cursor has no business visiting that padding (see
 	// reflow, where this is captured before the padding is appended).
 	contentLen int
-	// lineStarts is parallel to that content: true where a flattened line
-	// begins a logical line, false on the continuation rows a word-wrapped
-	// one spilled into. The cursor only ever rests on a start (setCursor
-	// snaps), and moves a whole logical line at a time — a wrapped line is
-	// highlighted as one block, so stepping row by row through it would
-	// leave presses looking like they did nothing.
-	lineStarts []bool
+
+	// content is what the last reflow's logical lines rendered into
+	// (padding included), and lineStart[i] is the row the i'th logical line
+	// begins at — the two halves of one renderRows call, always rebuilt
+	// together.
+	//
+	// lineStart defines the logical-line grid the cursor moves on: it only
+	// ever rests on one of these rows (setCursor snaps to blockStart), and
+	// moves a whole line at a time, since a wrapped line is highlighted as
+	// one block and stepping row by row through it would leave presses
+	// looking like they did nothing.
+	content   []string
+	lineStart []int
 
 	// jl is the shared, cross-view jumplist (vim's ctrl-o/ctrl-i) — see its
 	// doc comment in app.go for why it lives on the root Model rather than
@@ -159,41 +165,60 @@ func (m *DetailModel) reflow() {
 
 	diffWidth := m.width
 
-	// The header/message is wrapped the same way diff lines are (each
-	// visual row its own entry) so the line offset applied to fileRanges
-	// below stays exact regardless of terminal width — see the FileRange
-	// convention in diffview.go. Each block is rendered immediately before
-	// it's added, so where it lands (b.len()) is also where its own local
-	// line space starts — which is what the cursor coordinate handed to it
-	// has to be measured from.
-	var b contentBuilder
-	wrappedHeader, messageMatchLines, headerStarts := m.renderHeaderBlock(diffWidth)
-	b.addBlock(wrappedHeader, headerStarts)
-	b.addLines(blankLine(diffWidth, m.cursorLine == b.len()))
+	// Every block contributes logical lines only — no block knows where its
+	// own lines land or which of them the cursor is on. That makes the index
+	// each block returns (a file's range, a match's line) a count of logical
+	// lines from where the block itself starts, which is what the two
+	// running offsets below record; renderRows then lays the lines out, and
+	// rowOf rebases every one of those indices onto the rows they produced.
+	var lines []lineRenderer
+	headerLines, messageMatchLines := m.renderHeaderBlock(diffWidth)
+	lines = append(lines, headerLines...)
+	lines = append(lines, blankRow(diffWidth))
 
-	statLines := statLinesFor(m.detail.Files, diffWidth, m.cursorLine-b.len())
+	statsStart := len(lines)
+	statLines := statLinesFor(m.detail.Files, diffWidth)
 	if len(statLines) > 0 {
-		b.addLines(statLines...)
-		b.addLines(blankLine(diffWidth, m.cursorLine == b.len()))
+		lines = append(lines, statLines...)
+		lines = append(lines, blankRow(diffWidth))
 	}
 
-	offset := b.len()
-	diffLines, fileRanges, rawDiffMatchLines, diffStarts := m.renderDiffBlock(diffWidth, m.cursorLine-offset)
-	b.addBlock(diffLines, diffStarts)
+	diffStart := len(lines)
+	diffLines, fileRanges, diffMatchLines := m.renderDiffBlock(diffWidth)
+	lines = append(lines, diffLines...)
 
-	content := b.lines
-	m.lineStarts = b.starts
+	m.content, m.lineStart = renderRows(lines, m.cursorLine)
+	m.contentLen = len(m.content)
+
+	// A resize can shrink contentLen out from under an already-set
+	// cursorLine (rewrapping changes how many flattened lines the same
+	// content occupies) — clamp it back in range and lay the lines out
+	// again, since the pass above was given a cursor position that no
+	// longer exists. See cursorLine's doc comment for why this doesn't try
+	// to preserve the cursor's original target across a rewrap, only its
+	// validity.
+	if clamped := clamp(m.cursorLine, 0, m.contentLen-1); clamped != m.cursorLine {
+		m.cursorLine = clamped
+		m.content, m.lineStart = renderRows(lines, m.cursorLine)
+	}
 
 	m.fileRanges = make([]FileRange, len(fileRanges))
 	for i, r := range fileRanges {
-		m.fileRanges[i] = FileRange{FileIndex: r.FileIndex, StartLine: r.StartLine + offset, EndLine: r.EndLine + offset}
+		m.fileRanges[i] = FileRange{
+			FileIndex: r.FileIndex,
+			StartLine: m.rowOf(diffStart + r.StartLine),
+			EndLine:   m.rowOf(diffStart + r.EndLine),
+		}
 	}
-	m.sections = buildSections(m.fileRanges, len(wrappedHeader), len(statLines) > 0, offset)
+	m.sections = buildSections(m.fileRanges, m.rowOf(statsStart), m.rowOf(diffStart))
 
-	m.messageMatchLines = messageMatchLines
-	m.diffMatchLines = make([]int, len(rawDiffMatchLines))
-	for i, ln := range rawDiffMatchLines {
-		m.diffMatchLines[i] = ln + offset
+	m.messageMatchLines = make([]int, len(messageMatchLines))
+	for i, ln := range messageMatchLines {
+		m.messageMatchLines[i] = m.rowOf(ln)
+	}
+	m.diffMatchLines = make([]int, len(diffMatchLines))
+	for i, ln := range diffMatchLines {
+		m.diffMatchLines[i] = m.rowOf(diffStart + ln)
 	}
 
 	m.leftVP.Width = diffWidth
@@ -202,13 +227,6 @@ func (m *DetailModel) reflow() {
 		m.leftVP.Height--
 	}
 	m.leftVP.Height = max(m.leftVP.Height, 0)
-	// contentLen is captured here, before the padding appended below: that
-	// padding exists only so the viewport can scroll a short trailing
-	// file's header to the very top (see the comment on the append just
-	// below), and the cursor has no business venturing into it — G, and
-	// the end-of-reflow clamp further down, both bound themselves to this
-	// value, not to len(content) after padding.
-	m.contentLen = len(content)
 	// viewport.SetYOffset clamps to the content's own max scroll position,
 	// which is normally what you want (no blank space below the last
 	// line) — but it also means a short trailing file's landing line (see
@@ -216,93 +234,67 @@ func (m *DetailModel) reflow() {
 	// the top-of-viewport line if what follows it doesn't fill a whole
 	// screen. Pad with blank lines so jumpToSection can always bring the
 	// last file's content to the top, the same way editors let you scroll
-	// the last line of a file to the top of the screen.
+	// the last line of a file to the top of the screen. contentLen, captured
+	// above, deliberately excludes this padding: the cursor has no business
+	// venturing into it, so G and the clamp just below bound themselves to
+	// the real content instead.
 	if len(m.fileRanges) > 0 {
 		lastStart := m.fileRanges[len(m.fileRanges)-1].StartLine
-		if need := lastStart + 1 + m.leftVP.Height - len(content); need > 0 {
-			content = append(content, make([]string, need)...)
+		if need := lastStart + 1 + m.leftVP.Height - len(m.content); need > 0 {
+			m.content = append(m.content, make([]string, need)...)
 		}
 	}
-	m.leftVP.SetContent(strings.Join(content, "\n"))
 
-	// A resize can shrink contentLen out from under an already-set
-	// cursorLine (rewrapping changes how many flattened lines the same
-	// content occupies) — clamp it back in range. See cursorLine's doc
-	// comment for why this doesn't try to preserve the cursor's original
-	// target across a rewrap, only its validity.
-	m.cursorLine = clamp(m.cursorLine, 0, m.contentLen-1)
-
+	// The join is O(total content), forced by viewport.SetContent's API (it
+	// re-splits internally) — what renderRows saves is the styling upstream
+	// of it, which is the expensive part, exactly as in ListModel.
+	m.leftVP.SetContent(strings.Join(m.content, "\n"))
 	m.syncHighlightFromScroll()
 }
 
-// contentBuilder accumulates one reflow pass's flattened content and its
-// parallel line-start map (see DetailModel.lineStarts) together, so the two
-// can't drift: every row that goes into one goes into the other in the same
-// call. len() doubles as "where does the next block start", which is the
-// coordinate a block's own cursor line and its FileRanges are measured from.
-type contentBuilder struct {
-	lines  []string
-	starts []bool
-}
-
-// addBlock appends a block that word-wraps internally, carrying its own
-// line-start map (renderHeaderLines' and RenderDiff's `starts` returns).
-func (b *contentBuilder) addBlock(rows []string, starts []bool) {
-	b.lines = append(b.lines, rows...)
-	b.starts = append(b.starts, starts...)
-}
-
-// addLines appends rows that are each a logical line of their own: the blank
-// separators between blocks, and the stats rows, which are clipped to width
-// rather than wrapped (see renderClipped).
-func (b *contentBuilder) addLines(rows ...string) {
-	b.lines = append(b.lines, rows...)
-	for range rows {
-		b.starts = append(b.starts, true)
+// rowOf is the row a logical line begins at, or contentLen for the
+// one-past-the-end index an exclusive range carries. Only meaningful after
+// renderRows has run for the current reflow.
+func (m DetailModel) rowOf(logical int) int {
+	if logical < len(m.lineStart) {
+		return m.lineStart[logical]
 	}
+	return m.contentLen
 }
 
-func (b *contentBuilder) len() int { return len(b.lines) }
-
-// renderDiffBlock renders this commit's diff (or the noDiffNotice
+// renderDiffBlock describes this commit's diff (or the noDiffNotice
 // placeholder for a diff-less commit) at width, honoring the current
 // search state so the active diff match, if any, is styled distinctly.
-// cursorLine is already translated into this block's own local line space
-// (see reflow) — negative or past the end simply selects no line, so
-// callers don't need to guard the call themselves.
-func (m *DetailModel) renderDiffBlock(width int, cursorLine int) (lines []string, fileRanges []FileRange, matchLines []int, starts []bool) {
+// Its returned coordinates count logical lines from the block's own start —
+// see reflow, which rebases them.
+func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRanges []FileRange, matchLines []int) {
 	if len(m.detail.Files) == 0 {
-		return []string{noDiffNotice(m.detail)}, nil, nil, []bool{true}
+		return []lineRenderer{clippedLine(binaryNoticeStyle, noDiffNotice(m.detail), width)}, nil, nil
 	}
-	return RenderDiff(m.detail.Files, width, m.diffMatches, m.activeMatchIn(false), m.searchDismissed, cursorLine)
+	return RenderDiff(m.detail.Files, width, m.diffMatches, m.activeMatchIn(false), m.searchDismissed)
 }
 
-// renderHeaderBlock renders the commit metadata/message block at width,
-// honoring the current search state so the active message match, if any,
-// is styled distinctly. m.cursorLine is passed through unadjusted: the
-// header block always starts at flattened line 0, so its local line space
-// already matches m.cursorLine's — a cursor position past the header
-// simply exceeds every header line's range and selects nothing here (see
-// renderHeaderLines).
-func (m *DetailModel) renderHeaderBlock(width int) (wrapped []string, matchLines []int, starts []bool) {
+// renderHeaderBlock describes the commit metadata/message block at width,
+// honoring the current search state so the active message match, if any, is
+// styled distinctly. Its matchLines are logical line indices, which for this
+// block are also indices into headerLinesFor's own lines (one logical line
+// each, however many rows they wrap to).
+func (m *DetailModel) renderHeaderBlock(width int) (lines []lineRenderer, matchLines []int) {
 	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
-	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, m.activeMatchIn(true), m.searchDismissed, m.cursorLine)
+	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, m.activeMatchIn(true), m.searchDismissed)
 }
 
 // buildSections assembles one reflow pass's sticky-header/[ ]-navigation
 // sections: the commit metadata block, optionally the stats block, then
-// each already offset-adjusted file range, in document order. headerLen is
-// len(wrappedHeader); offset is the flattened line index where diff
-// content begins (see reflow).
-func buildSections(fileRanges []FileRange, headerLen int, hasStats bool, offset int) []detailSection {
-	metaEnd := offset
-	if hasStats {
-		metaEnd = headerLen + 1
-	}
+// each already rebased file range, in document order. statsStart and
+// diffStart are the rows those blocks begin at; they're equal when the
+// commit has no diff to summarize, which is exactly when there's no stats
+// section to emit.
+func buildSections(fileRanges []FileRange, statsStart, diffStart int) []detailSection {
 	sections := make([]detailSection, 0, len(fileRanges)+2)
-	sections = append(sections, detailSection{kind: sectionKindCommit, startLine: 0, endLine: metaEnd})
-	if hasStats {
-		sections = append(sections, detailSection{kind: sectionKindStats, startLine: metaEnd, endLine: offset})
+	sections = append(sections, detailSection{kind: sectionKindCommit, startLine: 0, endLine: statsStart})
+	if statsStart < diffStart {
+		sections = append(sections, detailSection{kind: sectionKindStats, startLine: statsStart, endLine: diffStart})
 	}
 	for _, r := range fileRanges {
 		sections = append(sections, detailSection{kind: sectionKindFile, fileIndex: r.FileIndex, startLine: r.StartLine, endLine: r.EndLine})
@@ -376,29 +368,19 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 	return lines, authorLine, bodyStart, spans
 }
 
-// renderHeaderLines word-wraps each logical header/message line to width via
-// wrapStyledRows, which applies base coloring (spans, from headerLinesFor)
-// and search-match highlighting per wrapped row — the wrap itself decided on
-// the plain text, exactly like RenderDiff/renderDiffLine. matchLines is
-// parallel to matches: the wrapped-line index each match's logical line
-// starts at, computed from the full matches list regardless of dismissed
-// (see RenderDiff's doc comment for why suppressing style doesn't need
-// suppressing position tracking) — spans, unlike matches, are never
-// suppressed by dismissed, since they're not part of search at all. starts
-// marks which of the wrapped rows begin a logical line, exactly like
-// RenderDiff's own.
-//
-// cursorLine gets the cursor row background merged in wherever it lands,
-// using the same "render once plain to learn the wrapped-row range, then
-// once more with the cursor flag if it's actually in range" two-pass
-// convention RenderDiff/renderDiffLine use: the two passes now always
-// produce the same row count (see wrapRanges), so the range learned from
-// the first still describes the second.
-func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool, cursorLine int) (wrapped []string, matchLines []int, starts []bool) {
+// renderHeaderLines turns each logical header/message line into a
+// lineRenderer that word-wraps it to width via wrapStyledRows, which applies
+// base coloring (spans, from headerLinesFor) and search-match highlighting
+// per wrapped row — the wrap itself decided on the plain text, exactly like
+// RenderDiff/renderDiffLine. matchLines is parallel to matches: the logical
+// line each match sits on, computed from the full matches list regardless of
+// dismissed (see RenderDiff's doc comment for why suppressing style doesn't
+// need suppressing position tracking) — spans, unlike matches, are never
+// suppressed by dismissed, since they're not part of search at all.
+func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool) (rendered []lineRenderer, matchLines []int) {
 	matchLines = make([]int, len(matches))
 	mi := 0
 	for li, line := range lines {
-		lineStart := len(wrapped)
 		var lineMatches []lineMatch
 		for mi < len(matches) && matches[mi].LineIndex == li {
 			if !dismissed {
@@ -406,22 +388,15 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 					start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeIdx,
 				})
 			}
-			matchLines[mi] = lineStart
+			matchLines[mi] = li
 			mi++
 		}
-		render := func(cursor bool) []string {
-			return wrapStyledRows(line, spans[li], lineMatches, lipgloss.NewStyle(), width, cursor)
-		}
-		rows := render(false)
-		if cursorLine >= lineStart && cursorLine < lineStart+len(rows) {
-			rows = render(true)
-		}
-		wrapped = append(wrapped, rows...)
-		for i := range rows {
-			starts = append(starts, i == 0)
-		}
+		lineSpans := spans[li]
+		rendered = append(rendered, func(cursor bool) []string {
+			return wrapStyledRows(line, lineSpans, lineMatches, lipgloss.NewStyle(), width, cursor)
+		})
 	}
-	return wrapped, matchLines, starts
+	return rendered, matchLines
 }
 
 // MessageMatch identifies one case-insensitive occurrence of a search term
@@ -512,29 +487,28 @@ func (m *DetailModel) moveCursor(delta int) {
 	m.setCursor(pos)
 }
 
-// blockStart returns the first flattened line of the logical line pos falls
-// in; blockEnd returns one past its last. Both fall back to pos itself when
-// there's no line-start map yet (a model that hasn't reflowed), so movement
-// still degrades to plain per-row stepping rather than getting stuck.
+// blockStart returns the first row of the logical line pos falls in;
+// blockEnd returns one past its last. Both fall back to pos itself for a row
+// outside the content (a model that hasn't reflowed, or the trailing
+// padding), so movement degrades to plain per-row stepping rather than
+// getting stuck.
 func (m *DetailModel) blockStart(pos int) int {
-	if pos < 0 || pos >= len(m.lineStarts) {
+	i := logicalAt(m.lineStart, pos)
+	if i < 0 || pos >= m.contentLen {
 		return pos
 	}
-	for pos > 0 && !m.lineStarts[pos] {
-		pos--
-	}
-	return pos
+	return m.lineStart[i]
 }
 
 func (m *DetailModel) blockEnd(pos int) int {
-	if pos < 0 || pos >= len(m.lineStarts) {
+	i := logicalAt(m.lineStart, pos)
+	if i < 0 || pos >= m.contentLen {
 		return pos + 1
 	}
-	end := pos + 1
-	for end < len(m.lineStarts) && !m.lineStarts[end] {
-		end++
+	if i+1 < len(m.lineStart) {
+		return m.lineStart[i+1]
 	}
-	return end
+	return m.contentLen
 }
 
 // jumpCursor moves the cursor straight to line, recording the jump first
@@ -551,9 +525,8 @@ func (m *DetailModel) jumpCursor(line int) {
 }
 
 // setCursor moves the cursor to pos (clamped in range, and snapped back to
-// the start of the logical line it lands in — see lineStarts), re-renders so
-// the cursor highlight lands on the right line, then scrolls the viewport by
-// the minimum needed to keep the cursor visible — unlike jumpToSection/
+// the start of the logical line it lands in — see lineStart), then scrolls
+// the viewport by the minimum needed to keep the cursor visible — unlike jumpToSection/
 // jumpToMatch, which always land their target at the very top.
 func (m *DetailModel) setCursor(pos int) {
 	m.cursorLine = m.blockStart(clamp(pos, 0, m.contentLen-1))
@@ -702,9 +675,18 @@ func (m *DetailModel) computeMatches(term string) {
 // loading to wait for.
 func (m *DetailModel) jumpToFirstMatch() {
 	if m.totalMatches() > 0 {
-		m.matchPos = 0
+		m.setMatchPos(0)
 	}
 	m.jumpToMatch()
+}
+
+// setMatchPos makes match pos the active one and re-renders. Which match is
+// active is baked into the content (matchStyle picks a distinct style for
+// it), so taking up a new one needs a reflow. That reflow is also what makes
+// the match lines jumpToMatch reads below current.
+func (m *DetailModel) setMatchPos(pos int) {
+	m.matchPos = pos
+	m.reflow()
 }
 
 func (m DetailModel) totalMatches() int { return len(m.messageMatches) + len(m.diffMatches) }
@@ -748,26 +730,17 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 	if total == 0 {
 		return 0, 0
 	}
-	m.matchPos = stepMatchPos(m.matchPos, delta, total)
+	m.setMatchPos(stepMatchPos(m.matchPos, delta, total))
 	m.jumpToMatch()
 	return m.matchPos + 1, total
 }
 
 // jumpToMatch scrolls the diff panel to the current match, whether it's a
-// message match (within the header block) or a diff match, and re-renders
-// so the newly active match gets its distinct style — that re-render is
-// landOnLine's own reflow, which has to run anyway to bake the cursor
-// highlight into the line being landed on. Re-running reflow at all on a
-// match change (rather than patching just the affected lines) is the same
-// cost already paid on every resize, and it's pure in-memory string work
-// with no I/O — but paying it twice per n/N press isn't, so this reads the
-// match's line out of the *previous* reflow rather than forcing a fresh one
-// first.
-//
-// That's sound because messageMatchLines/diffMatchLines depend only on the
-// match set and the wrap width, and every writer of either (SetSearchDisplay,
-// SetSize) ends in a reflow — so they already describe the current matches by
-// the time any of this model's match navigation can reach them.
+// message match (within the header block) or a diff match. It renders
+// nothing itself: the newly active match was styled by setMatchPos's reflow,
+// which is also what produced the match lines read here, so the landing is
+// an ordinary cursor move (landOnLine) rather than a second pass over the
+// whole commit.
 //
 // Every step pushes a jump, not just the initial search — see
 // applyCurrentMatch's doc comment in list.go for why that's a deliberate
@@ -812,6 +785,10 @@ func (m DetailModel) MatchPosition() (pos, total int) {
 // noDiffNotice explains an empty diff. A view opened with a CLI pathspec
 // (see StartTarget.Paths) names it, so "nothing here" can't be misread as
 // "nothing anywhere" when the rest of the diff was simply filtered out.
+// Plain text: renderDiffBlock hands it to clippedLine, which styles it
+// (binaryNoticeStyle) and truncates it to one row like every other content
+// line — a long pathspec would otherwise wrap this notice across rows the
+// model counts as one.
 func noDiffNotice(d *git.CommitDetail) string {
 	paths, scope := strings.Join(d.Paths, ", "), ""
 	if paths != "" {
@@ -819,17 +796,17 @@ func noDiffNotice(d *git.CommitDetail) string {
 	}
 	switch d.Kind {
 	case git.EntryStaged:
-		return binaryNoticeStyle.Render("No staged changes" + scope + ".")
+		return "No staged changes" + scope + "."
 	case git.EntryWorktree:
-		return binaryNoticeStyle.Render("No uncommitted changes" + scope + ".")
+		return "No uncommitted changes" + scope + "."
 	}
 	if d.IsMerge() {
-		return binaryNoticeStyle.Render("Merge commit: diff not shown (viewing merge diffs isn't supported yet).")
+		return "Merge commit: diff not shown (viewing merge diffs isn't supported yet)."
 	}
 	if paths != "" {
-		return binaryNoticeStyle.Render("No changes to " + paths + " in this commit.")
+		return "No changes to " + paths + " in this commit."
 	}
-	return binaryNoticeStyle.Render("No changes in this commit.")
+	return "No changes in this commit."
 }
 
 func (m DetailModel) View() string {
