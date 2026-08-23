@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -366,5 +367,111 @@ func TestDetailModelWrappedCursorBlockIsFullyVisible(t *testing.T) {
 				m.cursorLine, last, m.leftVP.YOffset, m.leftVP.YOffset+m.leftVP.Height)
 		}
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+}
+
+// TestDetailModelCursorPatchMatchesFullReflow pins down the bargain
+// repaintCursor makes: moving the cursor re-renders only the two logical
+// lines whose highlight changed and splices them into the cached content, so
+// that content must stay byte-for-byte identical to what a full reflow at
+// the same cursor position would have produced. Anything that made a line's
+// rendering depend on state a patch doesn't refresh — or that shifted a
+// wrapped line's row count under the cursor — would show up here as a
+// divergence.
+//
+// The walk covers plain motion (j), a section jump ([ / ]), and a match step
+// (n), the three ways the cursor gets somewhere.
+func TestDetailModelCursorPatchMatchesFullReflow(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithLongLines(), &jumplist{})
+	m.SetSize(60, 8)
+	m.SetSearchDisplay("context", false)
+
+	press := func(msg tea.KeyMsg) { m.Update(msg) }
+	steps := []struct {
+		name string
+		do   func()
+	}{
+		{"down", func() { press(tea.KeyMsg{Type: tea.KeyDown}) }},
+		{"down", func() { press(tea.KeyMsg{Type: tea.KeyDown}) }},
+		{"down", func() { press(tea.KeyMsg{Type: tea.KeyDown}) }},
+		{"next file", func() { press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}) }},
+		{"next match", func() { m.NextMatch() }},
+		{"up", func() { press(tea.KeyMsg{Type: tea.KeyUp}) }},
+		{"bottom", func() { press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}}) }},
+		{"top", func() { press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}) }},
+	}
+	for _, step := range steps {
+		step.do()
+		patched := append([]string(nil), m.content...)
+		at := m.cursorLine
+
+		m.reflow()
+		if at != m.cursorLine {
+			t.Fatalf("after %s: reflow moved the cursor from %d to %d", step.name, at, m.cursorLine)
+		}
+		if len(patched) != len(m.content) {
+			t.Fatalf("after %s: patched content has %d rows, a full reflow produces %d", step.name, len(patched), len(m.content))
+		}
+		for i := range patched {
+			if patched[i] != m.content[i] {
+				t.Fatalf("after %s (cursor at %d): row %d differs\n patched: %q\n reflown: %q",
+					step.name, at, i, patched[i], m.content[i])
+			}
+		}
+	}
+}
+
+// fixtureBigDetail builds a commit large enough for the difference between
+// re-rendering one line and re-rendering all of them to be obvious.
+func fixtureBigDetail(files, linesPerHunk int) *git.CommitDetail {
+	d := &git.CommitDetail{
+		Commit: git.Commit{Hash: strings.Repeat("a", 40), Subject: "subject"},
+		Body:   "subject\n\nbody\n",
+	}
+	for f := 0; f < files; f++ {
+		hunk := git.Hunk{Header: "@@ -1,20 +1,20 @@ func something()"}
+		for i := 0; i < linesPerHunk; i++ {
+			op := git.OpContext
+			switch {
+			case i%5 == 0:
+				op = git.OpAdd
+			case i%7 == 0:
+				op = git.OpDelete
+			}
+			hunk.Lines = append(hunk.Lines, git.DiffLine{
+				Op:   op,
+				Text: fmt.Sprintf("\tsomeCall(arg%d, other) // a fairly typical line of source code", i),
+			})
+		}
+		d.Files = append(d.Files, git.File{
+			Path:   fmt.Sprintf("internal/pkg/file%d.go", f),
+			Status: git.StatusModified,
+			Hunks:  []git.Hunk{hunk},
+		})
+	}
+	return d
+}
+
+// BenchmarkDetailCursorMove and BenchmarkDetailReflow are the measurement
+// behind repaintCursor: a cursor move must cost a couple of line renders
+// plus the viewport handoff, not a re-render of the whole commit. On an
+// 8000-line diff the two differ by an order of magnitude, and if they ever
+// converge again, something has started reflowing on every keypress.
+func BenchmarkDetailCursorMove(b *testing.B) {
+	m := NewDetailModel(fixtureBigDetail(40, 200), &jumplist{})
+	m.SetSize(100, 40)
+	down := tea.KeyMsg{Type: tea.KeyDown}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.Update(down)
+	}
+}
+
+func BenchmarkDetailReflow(b *testing.B) {
+	m := NewDetailModel(fixtureBigDetail(40, 200), &jumplist{})
+	m.SetSize(100, 40)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.reflow()
 	}
 }

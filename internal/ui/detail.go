@@ -83,16 +83,22 @@ type DetailModel struct {
 	// reflow, where this is captured before the padding is appended).
 	contentLen int
 
-	// content is what the last reflow's logical lines rendered into
-	// (padding included), and lineStart[i] is the row the i'th logical line
-	// begins at — the two halves of one renderRows call, always rebuilt
-	// together.
+	// lines are the logical lines the last reflow assembled, in document
+	// order, each able to re-render itself with or without the cursor row's
+	// background; content is what they rendered into (padding included), and
+	// lineStart[i] is the row lines[i] begins at. Keeping all three is what
+	// makes a cursor move cost two line renders and a join (repaintCursor)
+	// instead of a whole reflow — the same bargain ListModel makes with
+	// renderedRows, and with the same obligation: anything that changes what
+	// a line *says* (the term, the match set, the active match, the width,
+	// the commit) must go through reflow, which rebuilds all three together.
 	//
-	// lineStart defines the logical-line grid the cursor moves on: it only
-	// ever rests on one of these rows (setCursor snaps to blockStart), and
-	// moves a whole line at a time, since a wrapped line is highlighted as
-	// one block and stepping row by row through it would leave presses
+	// lineStart also defines the logical-line grid the cursor moves on: it
+	// only ever rests on one of these rows (setCursor snaps to blockStart),
+	// and moves a whole line at a time, since a wrapped line is highlighted
+	// as one block and stepping row by row through it would leave presses
 	// looking like they did nothing.
+	lines     []lineRenderer
 	content   []string
 	lineStart []int
 
@@ -187,20 +193,9 @@ func (m *DetailModel) reflow() {
 	diffLines, fileRanges, diffMatchLines := m.renderDiffBlock(diffWidth)
 	lines = append(lines, diffLines...)
 
+	m.lines = lines
 	m.content, m.lineStart = renderRows(lines, m.cursorLine)
 	m.contentLen = len(m.content)
-
-	// A resize can shrink contentLen out from under an already-set
-	// cursorLine (rewrapping changes how many flattened lines the same
-	// content occupies) — clamp it back in range and lay the lines out
-	// again, since the pass above was given a cursor position that no
-	// longer exists. See cursorLine's doc comment for why this doesn't try
-	// to preserve the cursor's original target across a rewrap, only its
-	// validity.
-	if clamped := clamp(m.cursorLine, 0, m.contentLen-1); clamped != m.cursorLine {
-		m.cursorLine = clamped
-		m.content, m.lineStart = renderRows(lines, m.cursorLine)
-	}
 
 	m.fileRanges = make([]FileRange, len(fileRanges))
 	for i, r := range fileRanges {
@@ -245,10 +240,19 @@ func (m *DetailModel) reflow() {
 		}
 	}
 
-	// The join is O(total content), forced by viewport.SetContent's API (it
-	// re-splits internally) — what renderRows saves is the styling upstream
-	// of it, which is the expensive part, exactly as in ListModel.
-	m.leftVP.SetContent(strings.Join(m.content, "\n"))
+	// A resize can shrink contentLen out from under an already-set
+	// cursorLine (rewrapping changes how many flattened lines the same
+	// content occupies) — clamp it back in range, and paint the cursor onto
+	// wherever it ended up, since renderRows above was given a position that
+	// no longer exists. See cursorLine's doc comment for why this doesn't
+	// try to preserve the cursor's original target across a rewrap, only its
+	// validity.
+	if clamped := clamp(m.cursorLine, 0, m.contentLen-1); clamped != m.cursorLine {
+		m.cursorLine = clamped
+		m.patchLine(m.cursorLine, logicalAt(m.lineStart, m.cursorLine))
+	}
+
+	m.setContent()
 	m.syncHighlightFromScroll()
 }
 
@@ -260,6 +264,45 @@ func (m DetailModel) rowOf(logical int) int {
 		return m.lineStart[logical]
 	}
 	return m.contentLen
+}
+
+// setContent hands the cached rows to the viewport. The join is O(total
+// content), forced by viewport.SetContent's API (it re-splits internally) —
+// what the cache saves is the styling upstream of it, which is the expensive
+// part, exactly as in ListModel.setContent.
+func (m *DetailModel) setContent() {
+	m.leftVP.SetContent(strings.Join(m.content, "\n"))
+}
+
+// repaintCursor re-renders the logical line the cursor left (from) and the
+// one it now sits on, splicing both into the cached content — the detail
+// view's analogue of ListModel.renderCursorMoved, and the reason moving the
+// cursor through a large diff doesn't re-render every line of it. Falls back
+// to a full reflow if the cache isn't what the current lines would have
+// produced, which can only happen if some other writer of the content forgot
+// to end in one.
+func (m *DetailModel) repaintCursor(from int) {
+	if len(m.lineStart) == 0 || len(m.content) < m.contentLen {
+		m.reflow()
+		return
+	}
+	cursor := logicalAt(m.lineStart, m.cursorLine)
+	m.patchLine(from, cursor)
+	m.patchLine(m.cursorLine, cursor)
+	m.setContent()
+}
+
+// patchLine re-renders the logical line containing row pos, with the cursor
+// row's background when that line is cursor. A no-op for a row outside the
+// real content, which lets callers pass a stale cursor position (from a
+// model that hasn't reflowed, or a row in the trailing padding) without
+// special-casing it.
+func (m *DetailModel) patchLine(pos, cursor int) {
+	i := logicalAt(m.lineStart, pos)
+	if i < 0 || pos >= m.contentLen {
+		return
+	}
+	copy(m.content[m.lineStart[i]:], m.lines[i](i == cursor))
 }
 
 // renderDiffBlock describes this commit's diff (or the noDiffNotice
@@ -525,12 +568,14 @@ func (m *DetailModel) jumpCursor(line int) {
 }
 
 // setCursor moves the cursor to pos (clamped in range, and snapped back to
-// the start of the logical line it lands in — see lineStart), then scrolls
-// the viewport by the minimum needed to keep the cursor visible — unlike jumpToSection/
+// the start of the logical line it lands in — see lineStart), repaints the
+// two lines whose highlight changed, then scrolls the viewport by the
+// minimum needed to keep the cursor visible — unlike jumpToSection/
 // jumpToMatch, which always land their target at the very top.
 func (m *DetailModel) setCursor(pos int) {
+	from := m.cursorLine
 	m.cursorLine = m.blockStart(clamp(pos, 0, m.contentLen-1))
-	m.reflow()
+	m.repaintCursor(from)
 	m.ensureCursorVisible()
 	m.syncHighlightFromScroll()
 }
@@ -618,8 +663,9 @@ func (m *DetailModel) landOnLine(line int) {
 	if line != m.cursorLine {
 		m.pushJump(m.cursorLine)
 	}
+	from := m.cursorLine
 	m.cursorLine = m.blockStart(line)
-	m.reflow()
+	m.repaintCursor(from)
 	m.leftVP.SetYOffset(line)
 	m.syncHighlightFromScroll()
 }
@@ -682,8 +728,10 @@ func (m *DetailModel) jumpToFirstMatch() {
 
 // setMatchPos makes match pos the active one and re-renders. Which match is
 // active is baked into the content (matchStyle picks a distinct style for
-// it), so taking up a new one needs a reflow. That reflow is also what makes
-// the match lines jumpToMatch reads below current.
+// it), and both the match being left and the one being taken up can be
+// anywhere in the commit — so unlike a cursor move, which repaintCursor
+// resolves in two lines, this genuinely needs the whole reflow. That reflow
+// is also what makes the match lines jumpToMatch reads below current.
 func (m *DetailModel) setMatchPos(pos int) {
 	m.matchPos = pos
 	m.reflow()
