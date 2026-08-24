@@ -249,8 +249,13 @@ func (r *Repo) worktreeSummary(ctx context.Context) (EntrySummary, error) {
 // it would silently miscount every rename as two records. Plain --numstat
 // quotes any path containing a newline, making it exactly one record per line,
 // and the path itself is irrelevant to a count either way.
+//
+// -M is passed for the same reason diffArgs passes it, and to keep a row's
+// counts agreeing with its detail view: without it, a user with
+// diff.renames=false would see a rename counted as two files here and shown
+// as one file there.
 func (r *Repo) numstatSummary(ctx context.Context, args ...string) (EntrySummary, error) {
-	out, err := runGit(ctx, r.Path, append([]string{"diff", "--numstat"}, args...)...)
+	out, err := runGit(ctx, r.Path, append([]string{"diff", "--numstat", "-M"}, args...)...)
 	if err != nil {
 		return EntrySummary{}, err
 	}

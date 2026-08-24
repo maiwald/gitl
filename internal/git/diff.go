@@ -13,8 +13,13 @@ import (
 // package uses, plus any trailing arguments. It builds a fresh slice each call
 // rather than appending to a package var, since diffFiles and untrackedDiff
 // run concurrently and would otherwise share a backing array.
+//
+// -M is passed explicitly rather than relying on git's default, which a user
+// can turn off with diff.renames=false — runGit inherits their config, so
+// without it a moved file would show as a delete plus an add for them and as
+// a rename for everyone else.
 func diffArgs(extra ...string) []string {
-	return append([]string{"diff", "--no-color", "-U3"}, extra...)
+	return append([]string{"diff", "--no-color", "-U3", "-M"}, extra...)
 }
 
 // pathspecArgs returns the `-- <path>...` tail that limits a git invocation

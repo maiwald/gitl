@@ -162,6 +162,45 @@ func TestFetchWorktreeEntryStagedShowsACopiedFileAsAdded(t *testing.T) {
 	}
 }
 
+// TestFetchWorktreeEntryStagedDetectsRenameWithRenamesOff pins the explicit
+// -M in diffArgs and numstatSummary: the fixture turns diff.renames off, which
+// runGit inherits, so without the flag a staged move would come back as a
+// delete plus an add in the diff and as two files in the row's counts.
+func TestFetchWorktreeEntryStagedDetectsRenameWithRenamesOff(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	ctx := context.Background()
+	dir := repo.Path
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "diff.renames", "false")
+	content := []byte("line one\nline two\nline three\nline four\n")
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), content, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "tracked.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "give tracked.txt real content")
+	runGitCmd(t, dir, fixtureCommitEnv, "mv", "tracked.txt", "moved.txt")
+
+	files, err := repo.FetchWorktreeEntry(ctx, EntryStaged)
+	if err != nil {
+		t.Fatalf("FetchWorktreeEntry(EntryStaged): %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("got files = %+v, want one file", files)
+	}
+	f := files[0]
+	if f.Path != "moved.txt" || f.OldPath != "tracked.txt" || f.Status != StatusRenamed {
+		t.Errorf("file = %+v, want moved.txt renamed from tracked.txt", f)
+	}
+
+	summary, err := repo.stagedSummary(ctx)
+	if err != nil {
+		t.Fatalf("stagedSummary: %v", err)
+	}
+	want := EntrySummary{Kind: EntryStaged, Files: 1}
+	if summary != want {
+		t.Errorf("stagedSummary = %+v, want %+v — the rename counts as one file", summary, want)
+	}
+}
+
 func TestFetchWorktreeEntryWorktree(t *testing.T) {
 	repo := initFixtureRepoWithFile(t)
 	dir := repo.Path

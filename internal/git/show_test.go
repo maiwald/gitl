@@ -195,6 +195,50 @@ func TestFetchCommitDetailShowsACopiedFileAsAdded(t *testing.T) {
 	}
 }
 
+// TestFetchCommitDetailDetectsRenameWithRenamesOff pins the explicit -M in
+// diffArgs: the fixture turns diff.renames off, which runGit inherits, so
+// without the flag a moved file would come back as a delete plus an add.
+func TestFetchCommitDetailDetectsRenameWithRenamesOff(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	runGitCmd(t, dir, fixtureCommitEnv, "config", "diff.renames", "false")
+	if err := os.WriteFile(filepath.Join(dir, "source.txt"), []byte("one\ntwo\nthree\nfour\n"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "source.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "add source.txt")
+
+	runGitCmd(t, dir, fixtureCommitEnv, "mv", "source.txt", "moved.txt")
+	if err := os.WriteFile(filepath.Join(dir, "moved.txt"), []byte("one\ntwo\nthree\nFOUR\n"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "moved.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "move source.txt to moved.txt")
+
+	repo, err := OpenRepo(ctx, dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	detail, err := repo.FetchCommitDetail(ctx, headHash(t, dir))
+	if err != nil {
+		t.Fatalf("FetchCommitDetail: %v", err)
+	}
+	if len(detail.Files) != 1 {
+		t.Fatalf("Files = %v, want 1 file", detail.Files)
+	}
+	f := detail.Files[0]
+	if f.Path != "moved.txt" || f.OldPath != "source.txt" || f.Status != StatusRenamed {
+		t.Errorf("file = %+v, want moved.txt renamed from source.txt", f)
+	}
+	if f.Additions != 1 || f.Deletions != 1 {
+		t.Errorf("Additions=%d Deletions=%d, want 1/1 — only the edit made in passing", f.Additions, f.Deletions)
+	}
+}
+
 // TestFetchCommitDetailLimitedToPaths covers `gitl <rev> <path>`: the diff
 // is restricted to the pathspec, while the commit's own metadata is not.
 func TestFetchCommitDetailLimitedToPaths(t *testing.T) {
