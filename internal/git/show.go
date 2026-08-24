@@ -59,9 +59,7 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string, paths ...stri
 		if len(detail.Parents) == 1 {
 			from = detail.Parents[0]
 		}
-		// --find-copies-harder: see stagedDiff (worktree.go) for what the
-		// "-harder" variant buys and costs.
-		files, err := r.diffFiles(ctx, paths, from, detail.Hash, "--find-copies-harder")
+		files, err := r.diffFiles(ctx, paths, from, detail.Hash)
 		if err != nil {
 			return nil, err
 		}

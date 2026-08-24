@@ -126,12 +126,12 @@ func TestFetchWorktreeEntryStaged(t *testing.T) {
 	}
 }
 
-// TestFetchWorktreeEntryStagedDetectsCopyFromUntouchedSource pins down that
-// stagedDiff uses --find-copies-harder specifically (not plain
-// --find-copies): source.txt isn't itself staged, so only "-harder" scans
-// it as a candidate copy source. See stagedDiff's doc comment for the cost
-// tradeoff this flag accepts.
-func TestFetchWorktreeEntryStagedDetectsCopyFromUntouchedSource(t *testing.T) {
+// TestFetchWorktreeEntryStagedShowsACopiedFileAsAdded pins down that
+// stagedDiff passes no copy-detection flag: copy.txt is a brand-new staged
+// file whose content happens to match tracked.txt, and it reads as a plain
+// added file with all of its lines, not as an empty delta against
+// tracked.txt.
+func TestFetchWorktreeEntryStagedShowsACopiedFileAsAdded(t *testing.T) {
 	repo := initFixtureRepoWithFile(t)
 	dir := repo.Path
 	content := []byte("line one\nline two\nline three\nline four\n")
@@ -154,8 +154,11 @@ func TestFetchWorktreeEntryStagedDetectsCopyFromUntouchedSource(t *testing.T) {
 		t.Fatalf("got files = %+v, want one file", files)
 	}
 	f := files[0]
-	if f.Path != "copy.txt" || f.OldPath != "tracked.txt" || f.Status != StatusCopied {
-		t.Errorf("file = %+v, want copy.txt copied from tracked.txt", f)
+	if f.Path != "copy.txt" || f.OldPath != "" || f.Status != StatusAdded {
+		t.Errorf("file = %+v, want copy.txt added with no source", f)
+	}
+	if f.Additions != 4 || f.Deletions != 0 {
+		t.Errorf("Additions=%d Deletions=%d, want 4/0 — the whole file", f.Additions, f.Deletions)
 	}
 }
 
@@ -659,14 +662,12 @@ func TestStagedSummaryOnUnbornHead(t *testing.T) {
 	}
 }
 
-// TestStagedSummaryCountsACopyAsAnAddition pins the divergence the summary
-// deliberately accepts, on the same fixture
-// TestFetchWorktreeEntryStagedDetectsCopyFromUntouchedSource uses: opening the
-// row pays for --find-copies-harder and sees one copied file with no added
-// lines, while the row itself skips that scan — a cost proportional to the
-// whole repository, paid on every startup — and reports the copy's content as
-// additions. Restoring the flag here to make the two agree is exactly the
-// change this test exists to catch.
+// TestStagedSummaryCountsACopyAsAnAddition is the row-counts half of
+// TestFetchWorktreeEntryStagedShowsACopiedFileAsAdded, on the same fixture:
+// neither the row nor the diff behind it does copy detection, so both read a
+// copied file as a whole added file and report the same totals. Adding
+// --find-copies-harder to either one alone is what would split them apart
+// again.
 func TestStagedSummaryCountsACopyAsAnAddition(t *testing.T) {
 	repo := initFixtureRepoWithFile(t)
 	ctx := context.Background()

@@ -14,13 +14,11 @@ A terminal UI for browsing git history, with vim-style navigation.
 - **Commit detail** — full metadata and commit message, plus a highlighted,
   scrollable diff with a sticky header showing which file is currently in
   view.
-- **Copy/rename detection** — staged changes (`--staged`) and commit diffs
-  detect renamed and copied files (`git diff --find-copies-harder`),
-  showing a rename/copy instead of a full delete+add, even when the copy's
-  source file wasn't itself touched by the change. The plain working-tree
-  diff (`--diff`) doesn't use this: every path it compares is already
-  tracked, so nothing can appear as "added" for copy detection to pair
-  against.
+- **Rename detection** — a moved file shows as a rename (`old -> new`) with
+  just the edits made along the way, instead of a full delete+add. Copy
+  detection is deliberately not enabled: a newly added file that happens to
+  resemble an existing one shows as added, with all of its content, rather
+  than as a near-empty delta against a file it was never related to.
 - **Vim-style keys** throughout — `hjkl`/arrows, `ctrl-d`/`ctrl-u` half-page
   paging, `g`/`G` to jump to top/bottom.
 - **Search** — `/` to search, `n`/`N` to cycle matches (wrapping at both

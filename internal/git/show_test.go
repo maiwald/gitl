@@ -151,12 +151,11 @@ func TestFetchCommitDetailNormalCommitDiff(t *testing.T) {
 	}
 }
 
-// TestFetchCommitDetailDetectsCopyFromUntouchedSource pins down that a
-// commit diff uses --find-copies-harder specifically (not plain
-// --find-copies): source.txt isn't touched by the commit being diffed, so
-// only "-harder" scans it as a candidate copy source. See stagedDiff's doc
-// comment (worktree.go) for the cost tradeoff this flag accepts.
-func TestFetchCommitDetailDetectsCopyFromUntouchedSource(t *testing.T) {
+// TestFetchCommitDetailShowsACopiedFileAsAdded pins down that a commit diff
+// passes no copy-detection flag: copy.txt is a brand-new file whose content
+// happens to match an existing one, and it reads as a plain added file with
+// all of its lines, not as a near-empty delta against source.txt.
+func TestFetchCommitDetailShowsACopiedFileAsAdded(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
@@ -188,8 +187,11 @@ func TestFetchCommitDetailDetectsCopyFromUntouchedSource(t *testing.T) {
 		t.Fatalf("Files = %v, want 1 file", detail.Files)
 	}
 	f := detail.Files[0]
-	if f.Path != "copy.txt" || f.OldPath != "source.txt" || f.Status != StatusCopied {
-		t.Errorf("file = %+v, want copy.txt copied from source.txt", f)
+	if f.Path != "copy.txt" || f.OldPath != "" || f.Status != StatusAdded {
+		t.Errorf("file = %+v, want copy.txt added with no source", f)
+	}
+	if f.Additions != 4 || f.Deletions != 0 {
+		t.Errorf("Additions=%d Deletions=%d, want 4/0 — the whole file", f.Additions, f.Deletions)
 	}
 }
 

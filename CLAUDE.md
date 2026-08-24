@@ -395,12 +395,9 @@ before every commit — don't commit red.
   refresh key, so edits made in another terminal while gitl is running aren't
   reflected.
 - A leading row's counts and the stats shown by opening it come from different
-  git invocations, and are allowed to disagree in two places — both pinned by
-  tests in `worktree_test.go`, since restoring the agreement means putting the
-  cost this split removed back on every startup. `stagedDiff` pays for
-  `--find-copies-harder`, which costs time proportional to the whole
-  repository, so a staged copy reads as a plain added file in the row and as a
-  zero-line copy in the detail view. And only the first `maxUntrackedDiffs`
+  git invocations, and are allowed to disagree in one place — pinned by a test
+  in `worktree_test.go`, since restoring the agreement means putting the cost
+  this split removed back on every startup. Only the first `maxUntrackedDiffs`
   (200) untracked files get their own `git diff --no-index` call, so beyond
   that an untracked file appears in the opened diff marked `StatusAdded` but
   without hunks (and contributing no lines to that view's stats), while the

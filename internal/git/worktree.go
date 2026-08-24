@@ -117,16 +117,10 @@ func EntryDetail(e WorktreeEntry) *CommitDetail {
 	return &CommitDetail{Kind: e.Kind, Files: e.Files, Paths: e.Paths}
 }
 
-// stagedDiff diffs the index against HEAD with copy detection
-// (--find-copies-harder). Unlike the worktree diff, a newly staged file can
-// appear as "added" here, so there's something for copy detection to pair
-// against. The "-harder" variant also catches a copy whose source file wasn't
-// touched, at the cost of scanning every unmodified file in the tree as a
-// candidate source — affordable for a fetch that happens once per detail-view
-// open. On an unborn HEAD git diffs against the empty tree by itself, so no
-// explicit fallback is needed.
+// stagedDiff diffs the index against HEAD. On an unborn HEAD git diffs
+// against the empty tree by itself, so no explicit fallback is needed.
 func (r *Repo) stagedDiff(ctx context.Context, paths []string) ([]File, error) {
-	return r.diffFiles(ctx, paths, "--cached", "--find-copies-harder")
+	return r.diffFiles(ctx, paths, "--cached")
 }
 
 // worktreeDiff diffs tracked files against the index, then appends one
@@ -134,11 +128,6 @@ func (r *Repo) stagedDiff(ctx context.Context, paths []string) ([]File, error) {
 // covers everything `git status` would flag as new, not just what plain `git
 // diff` shows. The tracked diff and the untracked-file scan are independent
 // git invocations, so they run concurrently.
-//
-// Unlike stagedDiff, this diff passes no copy-detection flag: both sides are
-// restricted to already-tracked paths, so nothing can appear as "added" for
-// copy detection to pair against — a genuinely new path is untracked, and
-// untrackedFiles handles those.
 func (r *Repo) worktreeDiff(ctx context.Context, paths []string) ([]File, error) {
 	var files, untracked []File
 	err := concurrent.RunConcurrently(
@@ -224,12 +213,8 @@ func (r *Repo) untrackedDiff(ctx context.Context, path string) File {
 	return f
 }
 
-// stagedSummary counts the index against HEAD. Unlike stagedDiff it passes no
-// copy-detection flag: --find-copies-harder costs time proportional to the
-// whole repository rather than to the diff, which stagedDiff can afford once
-// per detail-view open but this can't, running as it does on every startup.
-// The row's counts can therefore differ from the stats the entry's own detail
-// view shows — a staged copy reads as a whole added file here.
+// stagedSummary counts the index against HEAD, matching what stagedDiff
+// assembles.
 func (r *Repo) stagedSummary(ctx context.Context) (EntrySummary, error) {
 	s, err := r.numstatSummary(ctx, "--cached")
 	s.Kind = EntryStaged
