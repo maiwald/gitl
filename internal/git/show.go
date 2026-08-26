@@ -44,11 +44,7 @@ func (d CommitDetail) IsPseudo() bool { return d.Kind != EntryCommit }
 // <path>...` limits its own; the metadata half is unaffected, so a commit
 // that touches none of the paths still opens, just with an empty diff.
 func (r *Repo) FetchCommitDetail(ctx context.Context, hash string, paths ...string) (*CommitDetail, error) {
-	out, err := runGit(ctx, r.Path, "log", "-1", "--date=iso-strict", "--pretty=format:"+commitDetailFormat, hash)
-	if err != nil {
-		return nil, err
-	}
-	detail, err := parseCommitDetail(out)
+	detail, err := r.FetchCommitMeta(ctx, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +63,19 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string, paths ...stri
 	}
 
 	return detail, nil
+}
+
+// FetchCommitMeta retrieves a commit's metadata and message body without its
+// diff, in gitl's own machine-readable format. Split out of FetchCommitDetail
+// for pager mode, which has the diff already — git piped it in — but needs the
+// header, and reads only the commit hash out of that pipe rather than trying
+// to parse git's human-formatted one (see pipe.go).
+func (r *Repo) FetchCommitMeta(ctx context.Context, hash string) (*CommitDetail, error) {
+	out, err := runGit(ctx, r.Path, "log", "-1", "--date=iso-strict", "--pretty=format:"+commitDetailFormat, hash)
+	if err != nil {
+		return nil, err
+	}
+	return parseCommitDetail(out)
 }
 
 func parseCommitDetail(out []byte) (*CommitDetail, error) {
