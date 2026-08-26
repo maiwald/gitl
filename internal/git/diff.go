@@ -90,18 +90,30 @@ type File struct {
 }
 
 // ParseUnifiedDiff parses git diff/show output into structured files, hunks,
-// and lines, classifying each line as context, addition, or deletion.
+// and lines, classifying each line as context, addition, or deletion. It
+// discards anything preceding the first file — gitl's own invocations ask for
+// a bare diff, so there is nothing there. Use ParsePatch where there might be
+// (see pipe.go).
 func ParseUnifiedDiff(r io.Reader) ([]File, error) {
-	gitFiles, _, err := gitdiff.Parse(r)
+	files, _, err := ParsePatch(r)
+	return files, err
+}
+
+// ParsePatch is ParseUnifiedDiff plus everything that preceded the first
+// file's diff, which for `git show` output is the commit header and message.
+// gitl never asks git for that shape itself; it arrives when gitl is used as
+// a pager and git hands it whatever the user's command produced.
+func ParsePatch(r io.Reader) (files []File, preamble string, err error) {
+	gitFiles, preamble, err := gitdiff.Parse(r)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	files := make([]File, 0, len(gitFiles))
+	files = make([]File, 0, len(gitFiles))
 	for _, gf := range gitFiles {
 		files = append(files, convertFile(gf))
 	}
-	return files, nil
+	return files, preamble, nil
 }
 
 func convertFile(gf *gitdiff.File) File {

@@ -175,3 +175,52 @@ index e69de29..3b18e51 100644
 		t.Errorf("file order = [%s, %s], want [a.txt, b.txt]", files[0].Path, files[1].Path)
 	}
 }
+
+// TestParsePatchReturnsShowPreamble pins the split gitl's pager mode depends
+// on: everything before the first file — for `git show`, the commit header
+// and message — comes back separately rather than being discarded.
+func TestParsePatchReturnsShowPreamble(t *testing.T) {
+	patch := `commit 31cfe2074df3dffbf5903ba3d55f5f653220f045
+Author: T <t@t>
+Date:   Wed Aug 26 18:55:00 2026 +0200
+
+    branch moves
+
+diff --git a/f.txt b/f.txt
+index df967b9..1f2cd5a 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1 +1,2 @@
+ base
++onbranch
+`
+	files, preamble, err := ParsePatch(strings.NewReader(patch))
+	if err != nil {
+		t.Fatalf("ParsePatch: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "f.txt" {
+		t.Fatalf("files = %+v, want one entry for f.txt", files)
+	}
+	if !strings.HasPrefix(preamble, "commit 31cfe207") {
+		t.Errorf("preamble = %q, want it to start with the commit header", preamble)
+	}
+	if strings.Contains(preamble, "diff --git") {
+		t.Errorf("preamble = %q, want it to stop before the first file", preamble)
+	}
+}
+
+// TestParsePatchWithoutADiffIsAllPreamble covers what a pager receives for
+// `git show HEAD:file` or `git status`: no diff at all, so everything is
+// preamble and gitl has something to show verbatim rather than nothing.
+func TestParsePatchWithoutADiffIsAllPreamble(t *testing.T) {
+	files, preamble, err := ParsePatch(strings.NewReader("On branch master\nnothing to commit\n"))
+	if err != nil {
+		t.Fatalf("ParsePatch: %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("files = %+v, want none", files)
+	}
+	if preamble != "On branch master\nnothing to commit\n" {
+		t.Errorf("preamble = %q, want the input verbatim", preamble)
+	}
+}
