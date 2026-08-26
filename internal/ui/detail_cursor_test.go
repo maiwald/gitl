@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -452,11 +453,51 @@ func fixtureBigDetail(files, linesPerHunk int) *git.CommitDetail {
 	return d
 }
 
+// TestDetailCursorMoveCostIsIndependentOfCommitSize is the other half of
+// repaintCursor's bargain: not just "don't re-render every line on a keypress"
+// but "don't re-read them either". The benchmarks below only ever compare a
+// cursor move against a reflow of the *same* commit, so they stayed happy
+// while bubbles/viewport re-joined and re-split the whole content and measured
+// every line of it with ansi.StringWidth on every handoff — 90% of a keypress,
+// and what made a held-down j outrun the input reader.
+//
+// Bytes, not allocation count: that regression moved a megabyte per keystroke
+// in a constant number of allocations, so AllocsPerRun would have sat at 77
+// through all of it.
+func TestDetailCursorMoveCostIsIndependentOfCommitSize(t *testing.T) {
+	perMove := func(files int) uint64 {
+		m := NewDetailModel(fixtureBigDetail(files, 200), &jumplist{})
+		m.SetSize(100, 40)
+		down := tea.KeyMsg{Type: tea.KeyDown}
+		return bytesPerRun(100, func() { m.Update(down) })
+	}
+	small, big := perMove(2), perMove(40)
+	if big > 2*small {
+		t.Fatalf("a cursor move allocates %d bytes on a 40-file commit against %d on a 2-file one; something on the keypress path scales with the whole commit", big, small)
+	}
+}
+
+// bytesPerRun is testing.AllocsPerRun's missing counterpart: bytes allocated
+// per call to f, averaged over runs. f is called once first so one-time lazy
+// work inside it isn't billed to the measurement.
+func bytesPerRun(runs int, f func()) uint64 {
+	f()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for range runs {
+		f()
+	}
+	runtime.ReadMemStats(&after)
+	return (after.TotalAlloc - before.TotalAlloc) / uint64(runs)
+}
+
 // BenchmarkDetailCursorMove and BenchmarkDetailReflow are the measurement
-// behind repaintCursor: a cursor move must cost a couple of line renders
-// plus the viewport handoff, not a re-render of the whole commit. On an
-// 8000-line diff the two differ by an order of magnitude, and if they ever
-// converge again, something has started reflowing on every keypress.
+// behind repaintCursor: a cursor move must cost a couple of line renders and
+// an O(1) viewport handoff, not a re-render of the whole commit. On an
+// 8000-line diff the two differ by three orders of magnitude (~11 µs against
+// ~30 ms), and if they ever converge, something has started reflowing on every
+// keypress.
 func BenchmarkDetailCursorMove(b *testing.B) {
 	m := NewDetailModel(fixtureBigDetail(40, 200), &jumplist{})
 	m.SetSize(100, 40)

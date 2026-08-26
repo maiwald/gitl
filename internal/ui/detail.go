@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/maiwald/gitl/internal/git"
@@ -34,7 +33,7 @@ type DetailModel struct {
 	sections       []detailSection
 	currentSection int
 
-	leftVP viewport.Model
+	leftVP rowViewport
 
 	width, height int
 
@@ -74,8 +73,8 @@ type DetailModel struct {
 	// order, each able to re-render itself with or without the cursor row's
 	// background; content is what they rendered into (padding included), and
 	// lineStart[i] is the row lines[i] begins at. Keeping all three is what
-	// makes a cursor move cost two line renders and a join (repaintCursor)
-	// instead of a whole reflow — with the obligation that anything changing
+	// makes a cursor move cost two line renders (repaintCursor) instead of a
+	// whole reflow — with the obligation that anything changing
 	// what a line *says* must go through reflow, which rebuilds all three
 	// together.
 	//
@@ -131,7 +130,6 @@ func sectionAt(sections []detailSection, lineIndex int) int {
 func NewDetailModel(detail *git.CommitDetail, jl *jumplist) DetailModel {
 	return DetailModel{
 		detail:   detail,
-		leftVP:   viewport.New(0, 0),
 		matchPos: -1,
 		jl:       jl,
 	}
@@ -195,13 +193,12 @@ func (m *DetailModel) reflow() {
 		m.diffMatchLines[i] = m.rowOf(diffStart + ln)
 	}
 
-	m.leftVP.Width = diffWidth
 	m.leftVP.Height = m.height
 	if len(m.fileRanges) > 0 {
 		m.leftVP.Height--
 	}
 	m.leftVP.Height = max(m.leftVP.Height, 0)
-	// viewport.SetYOffset clamps to the content's own max scroll position,
+	// rowViewport.SetYOffset clamps to the content's own max scroll position,
 	// which would leave a short trailing file's landing line (see
 	// sectionContentStart) unreachable as the top-of-viewport line. Pad with
 	// blank lines so jumpToSection can always bring the last file's content
@@ -237,11 +234,14 @@ func (m DetailModel) rowOf(logical int) int {
 	return m.contentLen
 }
 
-// setContent hands the cached rows to the viewport. The join is O(total
-// content), forced by viewport.SetContent's API (it re-splits internally);
-// what the cache saves is the styling upstream of it.
+// setContent hands the cached rows to the viewport, which borrows the slice
+// rather than copying it. So a line patched in place (patchLine) is already
+// visible without this call; what needs it is a reflow, which builds a fresh
+// slice, and the padding append below it, which may move the backing array.
+// It's also where a scroll offset left past the end of shrunken content gets
+// pinned back to the bottom.
 func (m *DetailModel) setContent() {
-	m.leftVP.SetContent(strings.Join(m.content, "\n"))
+	m.leftVP.SetRows(m.content)
 }
 
 // repaintCursor re-renders the logical line the cursor left (from) and the
