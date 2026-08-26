@@ -11,6 +11,8 @@ func entryTitle(k git.EntryKind) string {
 		return "Staged changes"
 	case git.EntryWorktree:
 		return "Working tree"
+	case git.EntryPiped:
+		return "Diff"
 	default:
 		return ""
 	}
@@ -24,6 +26,8 @@ func entryDescription(k git.EntryKind) string {
 		return "Changes staged for commit (index vs HEAD)."
 	case git.EntryWorktree:
 		return "Uncommitted changes in the working tree, including untracked files."
+	case git.EntryPiped:
+		return "Diff read from standard input."
 	default:
 		return ""
 	}

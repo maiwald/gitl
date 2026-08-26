@@ -978,3 +978,39 @@ func TestDetailModelStatsMatchesClearWithTheTerm(t *testing.T) {
 		t.Errorf("totalMatches = %d after clearing the search, want 0", m.totalMatches())
 	}
 }
+
+// TestPipedEntryShowsItsPreambleVerbatim pins what a pager receives when the
+// piped header names no commit gitl can look up — `git status`, a reconfigured
+// --pretty format: the text is shown as it arrived rather than reshaped, and
+// all of it is searchable, since it's the only description of the diff there
+// is.
+func TestPipedEntryShowsItsPreambleVerbatim(t *testing.T) {
+	d := &git.CommitDetail{
+		Kind:     git.EntryPiped,
+		Preamble: "On branch master\nChanges not staged for commit:\n",
+	}
+	lines, authorLine, bodyStart, _ := headerLinesFor(d)
+
+	want := []string{"On branch master", "Changes not staged for commit:"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("header lines = %q, want %q", lines, want)
+	}
+	if authorLine != -1 {
+		t.Errorf("authorLine = %d, want -1 — a piped header has no author field to search", authorLine)
+	}
+	if bodyStart != 0 {
+		t.Errorf("bodyStart = %d, want 0 so the whole preamble is searchable", bodyStart)
+	}
+	if got := FindMessageMatches(lines, authorLine, bodyStart, "branch"); len(got) != 1 {
+		t.Errorf("FindMessageMatches found %d hits for %q, want 1", len(got), "branch")
+	}
+}
+
+// TestPipedEntryWithoutAPreambleFallsBackToATitle covers plain `git diff`,
+// which pipes a bare diff with nothing in front of it.
+func TestPipedEntryWithoutAPreambleFallsBackToATitle(t *testing.T) {
+	lines, _, _, _ := headerLinesFor(&git.CommitDetail{Kind: git.EntryPiped})
+	if len(lines) != 2 || lines[0] != "Diff" {
+		t.Fatalf("header lines = %q, want a title and description", lines)
+	}
+}

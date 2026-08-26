@@ -13,15 +13,21 @@ import (
 	"github.com/maiwald/gitl/internal/concurrent"
 )
 
-// EntryKind distinguishes a real commit from the two synthetic entries gitl
-// can show above real history. The zero value is EntryCommit, so an
-// unadorned CommitDetail still means "a real commit".
+// EntryKind distinguishes a real commit from the synthetic entries gitl can
+// show without one behind them: the two working-tree entries above real
+// history, and a diff piped in from git while gitl is acting as its pager.
+// The zero value is EntryCommit, so an unadorned CommitDetail still means "a
+// real commit".
 type EntryKind int
 
 const (
 	EntryCommit EntryKind = iota
 	EntryStaged
 	EntryWorktree
+	// EntryPiped is a diff read from stdin whose header, if it had one,
+	// named no commit gitl could look up — so there is no metadata to show
+	// beyond whatever text preceded the diff (see CommitDetail.Preamble).
+	EntryPiped
 )
 
 // WorktreeEntry is one synthetic list entry (working tree or staged changes)

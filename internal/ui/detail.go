@@ -339,6 +339,15 @@ func buildSections(fileRanges []FileRange, statsStart, diffStart int) []detailSe
 func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart int, spans map[int][]baseSpan) {
 	spans = make(map[int][]baseSpan)
 
+	// A piped diff carrying a header gitl couldn't resolve to a commit shows
+	// that header verbatim rather than guessing at its shape: git's own
+	// format is reconfigurable (--pretty, log.date) and this is whatever the
+	// user's command produced. bodyStart = 0 makes all of it searchable,
+	// since it's the only description of the diff there is.
+	if d.Kind == git.EntryPiped && d.Preamble != "" {
+		return strings.Split(strings.TrimRight(d.Preamble, "\n"), "\n"), -1, 0, spans
+	}
+
 	// A pseudo entry (working tree/staged) has no commit metadata to show,
 	// just a title and a dim description, and nothing eligible for message
 	// search — hence authorLine = -1.

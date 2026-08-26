@@ -32,6 +32,11 @@ type CommitDetail struct {
 	Body  string
 	Files []File
 	Paths []string
+
+	// Preamble is the text that preceded the diff when it was piped in
+	// (EntryPiped), shown verbatim in place of the commit header gitl would
+	// otherwise render. Empty for every other kind.
+	Preamble string
 }
 
 // IsPseudo reports whether d describes a synthetic working-tree/staged entry
