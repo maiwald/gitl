@@ -31,13 +31,10 @@ const (
 )
 
 // WorktreeEntry is one synthetic list entry (working tree or staged changes)
-// together with the diff behind it. Paths is the pathspec the diff was limited
-// to, empty when it wasn't — see CommitDetail.Paths, which it feeds via
-// EntryDetail.
+// together with the diff behind it.
 type WorktreeEntry struct {
 	Kind  EntryKind
 	Files []File
-	Paths []string
 }
 
 // EntrySummary is the file and line counts behind one synthetic entry —
@@ -50,9 +47,9 @@ type EntrySummary struct {
 }
 
 // HasStagedChanges reports whether the index differs from HEAD, via `git
-// diff --cached --quiet`'s exit code, optionally only within paths.
-func (r *Repo) HasStagedChanges(ctx context.Context, paths ...string) (bool, error) {
-	args := append([]string{"diff", "--cached", "--quiet"}, pathspecArgs(paths)...)
+// diff --cached --quiet`'s exit code.
+func (r *Repo) HasStagedChanges(ctx context.Context) (bool, error) {
+	args := []string{"diff", "--cached", "--quiet"}
 	_, differs, err := runGitDiffExit(ctx, r.Path, args...)
 	return differs, err
 }
@@ -62,13 +59,13 @@ func (r *Repo) HasStagedChanges(ctx context.Context, paths ...string) (bool, err
 // index, or untracked files. Checked separately from worktreeDiff so a CLI
 // `--diff` pre-flight can answer without paying for a full untracked-file diff
 // synthesis to find out the answer is "no".
-func (r *Repo) HasWorktreeChanges(ctx context.Context, paths ...string) (bool, error) {
+func (r *Repo) HasWorktreeChanges(ctx context.Context) (bool, error) {
 	var trackedDiffers bool
 	var untracked []string
-	args := append([]string{"diff", "--quiet"}, pathspecArgs(paths)...)
+	args := []string{"diff", "--quiet"}
 	err := concurrent.RunConcurrently(
 		func() (err error) { _, trackedDiffers, err = runGitDiffExit(ctx, r.Path, args...); return },
-		func() (err error) { untracked, err = r.untrackedPaths(ctx, paths); return },
+		func() (err error) { untracked, err = r.untrackedPaths(ctx); return },
 	)
 	if err != nil {
 		return false, err
@@ -77,14 +74,14 @@ func (r *Repo) HasWorktreeChanges(ctx context.Context, paths ...string) (bool, e
 }
 
 // FetchWorktreeEntry returns the diff behind a single synthetic entry kind
-// (EntryStaged or EntryWorktree), limited to paths when given. Returns nil
-// files when there is nothing to show.
-func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind, paths ...string) ([]File, error) {
+// (EntryStaged or EntryWorktree). Returns nil files when there is nothing to
+// show.
+func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind) ([]File, error) {
 	switch kind {
 	case EntryStaged:
-		return r.stagedDiff(ctx, paths)
+		return r.stagedDiff(ctx)
 	case EntryWorktree:
-		return r.worktreeDiff(ctx, paths)
+		return r.worktreeDiff(ctx)
 	default:
 		return nil, fmt.Errorf("not a synthetic entry kind: %v", kind)
 	}
@@ -120,13 +117,13 @@ func (r *Repo) FetchWorktreeSummaries(ctx context.Context) ([]EntrySummary, erro
 // view renders it with the same machinery a real commit uses. The commit
 // metadata fields are left zero.
 func EntryDetail(e WorktreeEntry) *CommitDetail {
-	return &CommitDetail{Kind: e.Kind, Files: e.Files, Paths: e.Paths}
+	return &CommitDetail{Kind: e.Kind, Files: e.Files}
 }
 
 // stagedDiff diffs the index against HEAD. On an unborn HEAD git diffs
 // against the empty tree by itself, so no explicit fallback is needed.
-func (r *Repo) stagedDiff(ctx context.Context, paths []string) ([]File, error) {
-	return r.diffFiles(ctx, paths, "--cached")
+func (r *Repo) stagedDiff(ctx context.Context) ([]File, error) {
+	return r.diffFiles(ctx, "--cached")
 }
 
 // worktreeDiff diffs tracked files against the index, then appends one
@@ -134,11 +131,11 @@ func (r *Repo) stagedDiff(ctx context.Context, paths []string) ([]File, error) {
 // covers everything `git status` would flag as new, not just what plain `git
 // diff` shows. The tracked diff and the untracked-file scan are independent
 // git invocations, so they run concurrently.
-func (r *Repo) worktreeDiff(ctx context.Context, paths []string) ([]File, error) {
+func (r *Repo) worktreeDiff(ctx context.Context) ([]File, error) {
 	var files, untracked []File
 	err := concurrent.RunConcurrently(
-		func() (err error) { files, err = r.diffFiles(ctx, paths); return },
-		func() (err error) { untracked, err = r.untrackedFiles(ctx, paths); return },
+		func() (err error) { files, err = r.diffFiles(ctx); return },
+		func() (err error) { untracked, err = r.untrackedFiles(ctx); return },
 	)
 	if err != nil {
 		return nil, err
@@ -162,8 +159,8 @@ const untrackedDiffConcurrency = 16
 // untrackedFiles returns one synthesized File per untracked path, rendered as
 // an added-file diff against /dev/null — the same approach lazygit and tig use
 // to show untracked files alongside a real diff.
-func (r *Repo) untrackedFiles(ctx context.Context, pathspec []string) ([]File, error) {
-	paths, err := r.untrackedPaths(ctx, pathspec)
+func (r *Repo) untrackedFiles(ctx context.Context) ([]File, error) {
+	paths, err := r.untrackedPaths(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -188,8 +185,8 @@ func (r *Repo) untrackedFiles(ctx context.Context, pathspec []string) ([]File, e
 	return files, nil
 }
 
-func (r *Repo) untrackedPaths(ctx context.Context, pathspec []string) ([]string, error) {
-	args := append([]string{"ls-files", "--others", "--exclude-standard", "-z"}, pathspecArgs(pathspec)...)
+func (r *Repo) untrackedPaths(ctx context.Context) ([]string, error) {
+	args := []string{"ls-files", "--others", "--exclude-standard", "-z"}
 	out, err := runGit(ctx, r.Path, args...)
 	if err != nil {
 		return nil, err
@@ -296,7 +293,7 @@ func (r *Repo) numstatSummary(ctx context.Context, args ...string) (EntrySummary
 // subprocess cap doesn't apply — every untracked file is counted, even past
 // the point where the detail view stops synthesizing hunks for them.
 func (r *Repo) untrackedSummary(ctx context.Context) (EntrySummary, error) {
-	paths, err := r.untrackedPaths(ctx, nil)
+	paths, err := r.untrackedPaths(ctx)
 	if err != nil {
 		return EntrySummary{}, err
 	}

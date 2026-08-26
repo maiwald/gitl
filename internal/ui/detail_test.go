@@ -747,17 +747,6 @@ func TestDetailModelMergeCommitShowsNotice(t *testing.T) {
 	}
 }
 
-func TestDetailModelEmptyCommitShowsNoChangesNotice(t *testing.T) {
-	m := NewDetailModel(&git.CommitDetail{
-		Commit: git.Commit{Hash: "empty123", AuthorName: "A", AuthorDate: time.Now(), Subject: "empty"},
-	}, &jumplist{})
-	m.SetSize(80, 24)
-
-	if !strings.Contains(m.View(), "No changes") {
-		t.Errorf("View() = %q, want it to say there are no changes", m.View())
-	}
-}
-
 // fixturePseudoDetail builds a CommitDetail for a synthetic working-tree/
 // staged entry the way git.EntryDetail does: Kind set, Commit/Body left
 // zero, only Files populated.
@@ -784,59 +773,6 @@ func TestDetailModelPseudoEntryHeaderHasNoCommitMetadata(t *testing.T) {
 		if strings.Contains(view, unwanted) {
 			t.Errorf("View() = %q, must not contain %q for a pseudo entry", view, unwanted)
 		}
-	}
-}
-
-// TestDetailModelPseudoEntryNoDiffNoticeIsKindSpecific pins down that an
-// empty pseudo entry (nothing staged / nothing uncommitted) shows a message
-// specific to its kind, distinct from a real commit's "No changes" notice.
-func TestDetailModelPseudoEntryNoDiffNoticeIsKindSpecific(t *testing.T) {
-	staged := NewDetailModel(fixturePseudoDetail(git.EntryStaged, nil), &jumplist{})
-	staged.SetSize(80, 24)
-	if !strings.Contains(staged.View(), "No staged changes") {
-		t.Errorf("View() = %q, want \"No staged changes\"", staged.View())
-	}
-
-	worktree := NewDetailModel(fixturePseudoDetail(git.EntryWorktree, nil), &jumplist{})
-	worktree.SetSize(80, 24)
-	if !strings.Contains(worktree.View(), "No uncommitted changes") {
-		t.Errorf("View() = %q, want \"No uncommitted changes\"", worktree.View())
-	}
-}
-
-// TestDetailModelNoDiffNoticeNamesThePathspec pins down that a view opened
-// with a CLI pathspec says so when it comes out empty, so "nothing here"
-// can't be read as "nothing anywhere" — see StartTarget.Paths.
-func TestDetailModelNoDiffNoticeNamesThePathspec(t *testing.T) {
-	tests := []struct {
-		name   string
-		detail *git.CommitDetail
-		want   string
-	}{
-		{
-			"staged entry",
-			&git.CommitDetail{Kind: git.EntryStaged, Paths: []string{"a.txt"}},
-			"No staged changes in a.txt.",
-		},
-		{
-			"worktree entry",
-			&git.CommitDetail{Kind: git.EntryWorktree, Paths: []string{"a.txt", "b.txt"}},
-			"No uncommitted changes in a.txt, b.txt.",
-		},
-		{
-			"commit",
-			&git.CommitDetail{Paths: []string{"a.txt"}},
-			"No changes to a.txt in this commit.",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := NewDetailModel(tt.detail, &jumplist{})
-			m.SetSize(80, 24)
-			if !strings.Contains(m.View(), tt.want) {
-				t.Errorf("View() = %q, want it to contain %q", m.View(), tt.want)
-			}
-		})
 	}
 }
 
@@ -1012,5 +948,37 @@ func TestPipedEntryWithoutAPreambleFallsBackToATitle(t *testing.T) {
 	lines, _, _, _ := headerLinesFor(&git.CommitDetail{Kind: git.EntryPiped})
 	if len(lines) != 2 || lines[0] != "Diff" {
 		t.Fatalf("header lines = %q, want a title and description", lines)
+	}
+}
+
+// TestDetailModelEmptyDiffShowsNothing pins the deliberate silence: gitl no
+// longer parses what was asked for — git did, and it didn't pass the pathspec
+// along — so an empty diff can't be explained without risking a claim that
+// isn't true ("no changes" when there are changes outside the pathspec).
+func TestDetailModelEmptyDiffShowsNothing(t *testing.T) {
+	for _, d := range []*git.CommitDetail{
+		{Commit: git.Commit{Hash: "empty123", AuthorName: "A", AuthorDate: time.Now()}},
+		{Kind: git.EntryStaged},
+		{Kind: git.EntryWorktree},
+		{Kind: git.EntryPiped},
+	} {
+		m := NewDetailModel(d, &jumplist{})
+		m.SetSize(80, 24)
+		if strings.Contains(m.View(), "No ") {
+			t.Errorf("View() for kind %v = %q, want no notice about emptiness", d.Kind, m.View())
+		}
+	}
+}
+
+// TestDetailModelMergeCommitStillExplainsItself is the one notice that
+// survives: a merge's diff is missing because gitl doesn't build one, not
+// because there was nothing to show.
+func TestDetailModelMergeCommitStillExplainsItself(t *testing.T) {
+	m := NewDetailModel(&git.CommitDetail{
+		Commit: git.Commit{Hash: "merge123", AuthorName: "A", AuthorDate: time.Now(), Parents: []string{"a", "b"}},
+	}, &jumplist{})
+	m.SetSize(80, 24)
+	if !strings.Contains(m.View(), "Merge commit") {
+		t.Errorf("View() = %q, want the merge explanation", m.View())
 	}
 }

@@ -22,22 +22,11 @@ func diffArgs(extra ...string) []string {
 	return append([]string{"diff", "--no-color", "-U3", "-M"}, extra...)
 }
 
-// pathspecArgs returns the `-- <path>...` tail that limits a git invocation
-// to paths, or nil when there are none. The separator is always emitted for
-// a non-empty list so a path that happens to look like a revision (or like a
-// flag) can't be reinterpreted as one.
-func pathspecArgs(paths []string) []string {
-	if len(paths) == 0 {
-		return nil
-	}
-	return append([]string{"--"}, paths...)
-}
-
-// diffFiles runs `git diff --no-color -U3 <args...> [-- <paths...>]` and
-// parses the result. untrackedDiff (worktree.go) doesn't use it: `--no-index`
-// reports a real difference via exit code 1, which needs runGitDiffExit.
-func (r *Repo) diffFiles(ctx context.Context, paths []string, args ...string) ([]File, error) {
-	out, err := runGit(ctx, r.Path, diffArgs(append(args, pathspecArgs(paths)...)...)...)
+// diffFiles runs `git diff --no-color -U3 <args...>` and parses the result.
+// untrackedDiff (worktree.go) doesn't use it: `--no-index` reports a real
+// difference via exit code 1, which needs runGitDiffExit.
+func (r *Repo) diffFiles(ctx context.Context, args ...string) ([]File, error) {
+	out, err := runGit(ctx, r.Path, diffArgs(args...)...)
 	if err != nil {
 		return nil, err
 	}

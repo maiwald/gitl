@@ -22,16 +22,12 @@ const emptyTreeHash = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // Kind is EntryCommit for every CommitDetail FetchCommitDetail builds;
 // EntryDetail (worktree.go) builds the other two kinds directly, with Commit
 // and Body left zero.
-//
-// Paths records the pathspecs Files was restricted to, empty when it wasn't.
-// It's carried only so the UI can say *why* a diff came out empty (see
-// noDiffNotice) — nothing re-runs a fetch from it.
+
 type CommitDetail struct {
 	Kind EntryKind
 	Commit
 	Body  string
 	Files []File
-	Paths []string
 
 	// Preamble is the text that preceded the diff when it was piped in
 	// (EntryPiped), shown verbatim in place of the commit header gitl would
@@ -44,23 +40,19 @@ type CommitDetail struct {
 // meaningless.
 func (d CommitDetail) IsPseudo() bool { return d.Kind != EntryCommit }
 
-// FetchCommitDetail retrieves full metadata, message body, and diff for
-// hash. Given paths, the diff is limited to them, the way `git show <rev> --
-// <path>...` limits its own; the metadata half is unaffected, so a commit
-// that touches none of the paths still opens, just with an empty diff.
-func (r *Repo) FetchCommitDetail(ctx context.Context, hash string, paths ...string) (*CommitDetail, error) {
+// FetchCommitDetail retrieves full metadata, message body, and diff for hash.
+func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetail, error) {
 	detail, err := r.FetchCommitMeta(ctx, hash)
 	if err != nil {
 		return nil, err
 	}
-	detail.Paths = paths
 
 	if !detail.IsMerge() {
 		from := emptyTreeHash
 		if len(detail.Parents) == 1 {
 			from = detail.Parents[0]
 		}
-		files, err := r.diffFiles(ctx, paths, from, detail.Hash)
+		files, err := r.diffFiles(ctx, from, detail.Hash)
 		if err != nil {
 			return nil, err
 		}

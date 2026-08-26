@@ -280,13 +280,22 @@ func (m *DetailModel) patchLine(pos, cursor int) {
 	copy(m.content[m.lineStart[i]:], m.lines[i](i == cursor))
 }
 
-// renderDiffBlock describes this commit's diff (or the noDiffNotice
-// placeholder for a diff-less commit) at width, honoring the current search
-// state. Its returned coordinates count logical lines from the block's own
-// start — see reflow, which rebases them.
+// mergeNotice stands in for the diff of a merge commit, which gitl doesn't
+// build: with more than one parent there's no single canonical diff, and
+// picking one is deferred. It's the one thing an empty diff still says — an
+// empty diff that isn't a merge simply shows nothing, since gitl no longer
+// knows what was asked for (git parsed that) and couldn't explain it anyway.
+const mergeNotice = "Merge commit: diff not shown (viewing merge diffs isn't supported yet)."
+
+// renderDiffBlock describes this commit's diff at width, honoring the current
+// search state. Its returned coordinates count logical lines from the block's
+// own start — see reflow, which rebases them.
 func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRanges []FileRange, matchLines []int) {
 	if len(m.detail.Files) == 0 {
-		return []lineRenderer{clippedLine(binaryNoticeStyle, noDiffNotice(m.detail), width)}, nil, nil
+		if m.detail.IsMerge() {
+			return []lineRenderer{clippedLine(binaryNoticeStyle, mergeNotice, width)}, nil, nil
+		}
+		return nil, nil, nil
 	}
 	return RenderDiff(m.detail.Files, width, m.diffMatches, m.activeMatchIn(matchBlockDiff), m.searchDismissed)
 }
@@ -798,31 +807,6 @@ func (m *DetailModel) SetSearchDisplay(term string, dismissed bool) {
 // count for status-bar display.
 func (m DetailModel) MatchPosition() (pos, total int) {
 	return matchPosition(m.matchPos, m.totalMatches())
-}
-
-// noDiffNotice explains an empty diff, naming the CLI pathspec (see
-// StartTarget.Paths) when there is one, so "nothing here" can't be misread as
-// "nothing anywhere". It returns plain text: renderDiffBlock hands it to
-// clippedLine, which styles and truncates it to one row like every other
-// content line.
-func noDiffNotice(d *git.CommitDetail) string {
-	paths, scope := strings.Join(d.Paths, ", "), ""
-	if paths != "" {
-		scope = " in " + paths
-	}
-	switch d.Kind {
-	case git.EntryStaged:
-		return "No staged changes" + scope + "."
-	case git.EntryWorktree:
-		return "No uncommitted changes" + scope + "."
-	}
-	if d.IsMerge() {
-		return "Merge commit: diff not shown (viewing merge diffs isn't supported yet)."
-	}
-	if paths != "" {
-		return "No changes to " + paths + " in this commit."
-	}
-	return "No changes in this commit."
 }
 
 func (m DetailModel) View() string {

@@ -160,25 +160,6 @@ func openCWDRepo(ctx context.Context) (*git.Repo, error) {
 	return git.OpenRepo(ctx, ".")
 }
 
-// hasChanges is the pre-flight for --staged/--diff: an empty index or worktree
-// exits quietly, the way `git diff` prints nothing and succeeds, instead of
-// flashing an alt-screen TUI just to say there's nothing to show. check is a
-// method expression, e.g. (*git.Repo).HasStagedChanges, asked only about paths
-// when the command line gave any. Only a failure to answer at all is reported,
-// and exits nonzero.
-func hasChanges(check func(*git.Repo, context.Context, ...string) (bool, error), paths []string) bool {
-	ctx := context.Background()
-	repo, err := openCWDRepo(ctx)
-	if err != nil {
-		exitWithError(err)
-	}
-	has, err := check(repo, ctx, paths...)
-	if err != nil {
-		exitWithError(err)
-	}
-	return has
-}
-
 func printCommits(n int) error {
 	ctx := context.Background()
 	repo, err := openCWDRepo(ctx)
@@ -190,10 +171,9 @@ func printCommits(n int) error {
 		return err
 	}
 	if !hasCommits {
-		// Nothing to print, and nothing to say about it — same as the
-		// --staged/--diff pre-flight (see hasChanges). The guard is still
-		// needed: FetchLogBatch on an unborn HEAD fails rather than printing
-		// nothing.
+		// Nothing to print, and nothing to say about it — the same silence
+		// the pager path keeps for an empty patch. The guard is still needed:
+		// FetchLogBatch on an unborn HEAD fails rather than printing nothing.
 		return nil
 	}
 	commits, err := repo.FetchLogBatch(ctx, 0, n)

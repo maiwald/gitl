@@ -25,13 +25,9 @@ const (
 	viewDetail
 )
 
-// StartTarget describes what gitl was asked to open on startup: nothing (the
-// plain list), a revision, the staged-changes entry, or the working-tree
-// entry. Built by main.go from the command line.
-//
-// Paths is the optional pathspec limiting that startup diff, the way `git
-// diff -- <path>...` limits its own. It applies to the startup detail view
-// only, never to the commit list or to a commit opened from it.
+// StartTarget describes what gitl was asked to open on startup: the plain
+// commit list, or a patch git piped in while running gitl as its pager. Built
+// by main.go.
 type StartTarget struct {
 	// Piped is a patch read from stdin — git running gitl as its pager —
 	// rather than from one of gitl's own git invocations. Its diff is
@@ -316,19 +312,17 @@ func loadWorktreeSummariesCmd(repo *git.Repo) tea.Cmd {
 	})
 }
 
-// resolveRevPositionCmd resolves rev to a commit position within HEAD's
-// history for cursor placement. Failure to resolve or place it reports
-// revPositionMsg{found: false} rather than an errMsg: fetchDetailCmd already
-// surfaces an invalid revision, and this only affects where the cursor ends
-// up.
-func resolveRevPositionCmd(repo *git.Repo, rev string) tea.Cmd {
+// resolveRevPositionCmd places hash within HEAD's history so the list's
+// cursor can land on it. A commit that isn't reachable from HEAD reports
+// revPositionMsg{found: false} rather than an errMsg: the detail view opens
+// from the piped patch either way, and this only affects where the cursor
+// ends up behind it.
+//
+// The hash arrives already resolved — git resolved whatever the user typed
+// before printing the header gitl read it from.
+func resolveRevPositionCmd(repo *git.Repo, hash string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		hash, err := repo.ResolveRevision(ctx, rev)
-		if err != nil {
-			return revPositionMsg{found: false}
-		}
-		pos, ok, err := repo.CommitPosition(ctx, hash)
+		pos, ok, err := repo.CommitPosition(context.Background(), hash)
 		if err != nil || !ok {
 			return revPositionMsg{found: false}
 		}
@@ -378,24 +372,22 @@ func (m Model) newDetailModel(detail *git.CommitDetail) DetailModel {
 // fetchDetailCmd fetches one commit's metadata and diff. severity is fatal
 // from the `<rev>`-jump startup dispatch (the detail view is that path's
 // whole payload) and nonFatal from Enter in the list, which stays up if the
-// fetch fails. paths is only ever the CLI's own pathspec — see
-// StartTarget.Paths.
-func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity, paths ...string) tea.Cmd {
+// fetch fails.
+func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity) tea.Cmd {
 	return runCmd(severity, func(ctx context.Context) (*git.CommitDetail, error) {
-		return repo.FetchCommitDetail(ctx, hash, paths...)
+		return repo.FetchCommitDetail(ctx, hash)
 	}, func(d *git.CommitDetail) tea.Msg { return commitDetailLoadedMsg{detail: d} })
 }
 
 // fetchEntryDetailCmd fetches a single synthetic entry's diff and opens it via
 // commitDetailLoadedMsg like any other detail view. severity is fatal from the
 // `--staged`/`--diff` startup dispatch, which has no list to fall back to, and
-// nonFatal from Enter in the list, which stays up if the fetch fails. paths is
-// only ever the CLI's own pathspec — see StartTarget.Paths.
-func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind, severity errSeverity, paths ...string) tea.Cmd {
+// nonFatal from Enter in the list, which stays up if the fetch fails.
+func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind, severity errSeverity) tea.Cmd {
 	return runCmd(severity, func(ctx context.Context) ([]git.File, error) {
-		return repo.FetchWorktreeEntry(ctx, kind, paths...)
+		return repo.FetchWorktreeEntry(ctx, kind)
 	}, func(files []git.File) tea.Msg {
-		entry := git.WorktreeEntry{Kind: kind, Files: files, Paths: paths}
+		entry := git.WorktreeEntry{Kind: kind, Files: files}
 		return commitDetailLoadedMsg{detail: git.EntryDetail(entry)}
 	})
 }
@@ -787,10 +779,9 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if key.Matches(msg, DefaultKeyMap.Enter) {
 		// A synthetic row carries only the counts it displays, so opening
-		// one fetches its diff on demand exactly as a commit does — with no
-		// pathspec, which is scoped to the startup target alone. Either way
-		// the transition is jump-worthy: push the list position being left
-		// so ctrl-o can return to it, before the detail view exists.
+		// one fetches its diff on demand exactly as a commit does. Either
+		// way the transition is jump-worthy: push the list position being
+		// left so ctrl-o can return to it, before the detail view exists.
 		var cmd tea.Cmd
 		if summary, ok := m.list.SelectedSummary(); ok {
 			cmd = fetchEntryDetailCmd(m.repo, summary.Kind, nonFatal)
