@@ -2,10 +2,8 @@ package ui
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/maiwald/gitl/internal/git"
 )
@@ -35,7 +33,8 @@ type ListModel struct {
 	// CLAUDE.md's Conventions section. It is always within [topIndex(),
 	// lastIndex()], the rows that actually exist.
 	cursor int
-	vp     viewport.Model
+	vp     rowViewport
+	width  int
 
 	// leading holds the synthetic, non-commit rows rendered above real
 	// history (working tree, then staged), in display order. They take no
@@ -69,7 +68,7 @@ type ListModel struct {
 	// renderedRows caches one rendered row per position in the flattened
 	// row space (leading rows first, then commits — see rowIndex). Every
 	// writer of leading/commits/matches/matchPos/displayTerm/
-	// searchDismissed/vp.Width must end in a full render(); pure cursor
+	// searchDismissed/width must end in a full render(); pure cursor
 	// moves go through setCursor instead. Assigning cursor directly (only
 	// tests do) leaves two rows stale until the next full render.
 	renderedRows []string
@@ -80,7 +79,6 @@ type ListModel struct {
 func NewListModel(commits []git.Commit, jl *jumplist) ListModel {
 	return ListModel{
 		commits:       commits,
-		vp:            viewport.New(0, 0),
 		totalCount:    len(commits),
 		matchPos:      -1,
 		pendingCursor: -1,
@@ -90,7 +88,7 @@ func NewListModel(commits []git.Commit, jl *jumplist) ListModel {
 
 // SetSize resizes the underlying viewport and re-renders content to match.
 func (m *ListModel) SetSize(width, height int) {
-	m.vp.Width = width
+	m.width = width
 	m.vp.Height = height
 	m.render()
 }
@@ -285,6 +283,13 @@ func (m *ListModel) maybeLoadMore() (fetchRequest, bool) {
 // ensureVisible scrolls the viewport so the cursor row stays on screen. It
 // compares against the cursor's rendered row (rowIndex), not m.cursor, which
 // stays in commit-index space and can be negative.
+//
+// It writes YOffset directly rather than going through the clamping
+// SetYOffset: AppendCommits calls this after growing m.commits but before
+// handing the grown rows over, so the viewport still holds the pre-append set
+// and would clamp a landing position that is about to be perfectly valid back
+// off it. The row index this derives from always exists in the row space the
+// next setContent hands over, so max(..., 0) is the only bound needed.
 func (m *ListModel) ensureVisible() {
 	if m.vp.Height <= 0 {
 		return
@@ -462,21 +467,22 @@ func (m ListModel) isMatch(pos int) bool {
 func (m ListModel) renderRow(pos int, ctx rowContext) string {
 	if pos < 0 {
 		s := m.leading[m.rowIndex(pos)]
-		return renderWorktreeRow(s, m.vp.Width, pos == m.cursor, ctx.term != "")
+		return renderWorktreeRow(s, m.width, pos == m.cursor, ctx.term != "")
 	}
 	c := m.commits[pos]
 	// Matches come from git log queries over real commits only, so a
 	// synthetic row is never one and is dimmed whenever a search is
 	// active.
 	dimmed := ctx.term != "" && !m.isMatch(pos)
-	return renderCommitRow(c, m.vp.Width, pos == m.cursor, dimmed, ctx.term, pos == ctx.activeMatch)
+	return renderCommitRow(c, m.width, pos == m.cursor, dimmed, ctx.term, pos == ctx.activeMatch)
 }
 
-// setContent joins the cached rendered rows into the viewport's content. The
-// join is O(total content), forced by viewport.SetContent's API (it re-splits
-// internally); what the cache saves is the styling upstream of it.
+// setContent hands the cached rows to the viewport, which borrows the slice
+// rather than copying it. So a row patched in place (patchRow) is already
+// visible without this call; what needs it is render()'s fresh slice and
+// AppendCommits' append, either of which may move the backing array.
 func (m *ListModel) setContent() {
-	m.vp.SetContent(strings.Join(m.renderedRows, "\n"))
+	m.vp.SetRows(m.renderedRows)
 }
 
 // patchRow re-renders a single row in place. A no-op if pos maps outside the

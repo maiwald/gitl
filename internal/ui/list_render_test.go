@@ -65,6 +65,26 @@ func TestListModelIncrementalRenderMatchesFullRebuildAfterAppendCommits(t *testi
 	}
 }
 
+// TestListCursorMoveCostIsIndependentOfHistorySize is the list's half of the
+// property the row viewport exists for (see the detail view's equivalent in
+// detail_cursor_test.go): a G jump or a search jump can load the entire
+// remaining history, and every j/k after it must still cost two row renders —
+// not a re-read of everything loaded. Bytes rather than allocation count,
+// since the regression this pins moved megabytes in a constant 174 of them.
+func TestListCursorMoveCostIsIndependentOfHistorySize(t *testing.T) {
+	perMove := func(commits int) uint64 {
+		m := NewListModel(fixtureCommits(commits), &jumplist{})
+		m.SetSize(80, 40)
+		m.SetTotalCount(commits)
+		down := tea.KeyMsg{Type: tea.KeyDown}
+		return bytesPerRun(100, func() { m.Update(down) })
+	}
+	small, big := perMove(100), perMove(20000)
+	if big > 2*small {
+		t.Fatalf("a cursor move allocates %d bytes over 20000 commits against %d over 100; something on the keypress path scales with the loaded history", big, small)
+	}
+}
+
 // BenchmarkListCursorMove measures the cost moveCursor's incremental patch
 // pays per keystroke, over a repo-history-scale commit count — the
 // scenario the row-render cache exists for (a G jump or a search jump can
