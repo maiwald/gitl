@@ -60,15 +60,7 @@ func main() {
 		return
 	}
 
-	target := opts.target
-	if target.Staged && !hasChanges((*git.Repo).HasStagedChanges, target.Paths) {
-		return
-	}
-	if target.Diff && !hasChanges((*git.Repo).HasWorktreeChanges, target.Paths) {
-		return
-	}
-
-	p := tea.NewProgram(ui.NewModel(target), tea.WithAltScreen())
+	p := tea.NewProgram(ui.NewModel(ui.StartTarget{}), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		exitWithError(err)
 	}
@@ -130,18 +122,20 @@ func printUsage(fs *flag.FlagSet) {
 	fmt.Fprint(os.Stderr, `gitl - a terminal UI for browsing git history
 
 Usage:
-  gitl                       open the commit list for the current repository
-  gitl <rev> [<path>...]     open a commit's detail view directly (sha,
-                              branch, tag, HEAD~2, ...); q/Esc quits outright
-  gitl --staged [<path>...]  open the staged changes (index vs HEAD)
-                              directly; q/Esc quits outright
-  gitl --diff [<path>...]    open the working tree changes (index vs working
-                              tree) directly; q/Esc quits outright
-  gitl -n <count>            print the N most recent commits and exit
-  gitl --version             print the version and exit
+  gitl              open the commit list for the current repository
+  gitl -n <count>   print the N most recent commits and exit
+  gitl --version    print the version and exit
 
-Paths limit the diff that opens to those files, like git's own. Use -- to
-separate them from a revision explicitly (gitl <rev> -- <path>...).
+To view a commit or a diff, point git at gitl as its pager and use git's own
+commands — every revision, range and pathspec git accepts then works:
+
+  git config --global pager.diff gitl
+  git config --global pager.show gitl
+
+  git show HEAD~2            a commit, with its message, stats and diff
+  git show <rev> -- <path>   the same, limited to a path
+  git diff origin/main...    everything your branch changed
+  git diff --cached          the staged changes
 
 Flags:
 `)

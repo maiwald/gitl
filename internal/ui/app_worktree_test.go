@@ -59,32 +59,26 @@ func TestEnterOnSyntheticRowFetchesItsDiff(t *testing.T) {
 	}
 }
 
-// TestNewModelSetsQuitOnBackFromStagedTarget pins down that quitOnBack is
-// wired purely from StartTarget.Staged/Diff/Rev at construction time —
-// nothing else ever writes it, so the interactively-opened staged/worktree
-// row or commit (Enter from the list) is unaffected by construction rather
-// than by a runtime check.
-func TestNewModelSetsQuitOnBackFromStagedTarget(t *testing.T) {
-	if !NewModel(StartTarget{Staged: true}).quitOnBack {
-		t.Error("quitOnBack = false for StartTarget{Staged: true}, want true")
-	}
-	if !NewModel(StartTarget{Diff: true}).quitOnBack {
-		t.Error("quitOnBack = false for StartTarget{Diff: true}, want true")
-	}
-	if !NewModel(StartTarget{Rev: "HEAD~2"}).quitOnBack {
-		t.Error("quitOnBack = false for StartTarget{Rev: \"HEAD~2\"}, want true")
+// TestNewModelSetsQuitOnBackFromPipedTarget pins down that quitOnBack is
+// wired purely from StartTarget at construction time — nothing else ever
+// writes it, so the interactively-opened staged/worktree row or commit
+// (Enter from the list) is unaffected by construction rather than by a
+// runtime check.
+func TestNewModelSetsQuitOnBackFromPipedTarget(t *testing.T) {
+	if !NewModel(StartTarget{Piped: &git.PipedPatch{}}).quitOnBack {
+		t.Error("quitOnBack = false for a piped target, want true")
 	}
 	if NewModel(StartTarget{}).quitOnBack {
 		t.Error("quitOnBack = true for StartTarget{}, want false")
 	}
 }
 
-// TestStagedStartupHasNoListToJumpBackTo pins down that a `gitl --staged`
-// run — which never loads a list at all (see StartTarget.opensList) — leaves
-// the jumplist unseeded, so ctrl-o stays in the detail view instead of
-// stranding the user on a permanently empty list view.
-func TestStagedStartupHasNoListToJumpBackTo(t *testing.T) {
-	m := NewModel(StartTarget{Staged: true})
+// TestHeaderlessPipedStartupHasNoListToJumpBackTo pins down that a piped
+// `git diff` — whose preamble names no commit, so no list is ever loaded (see
+// StartTarget.opensList) — leaves the jumplist unseeded, so ctrl-o stays in
+// the detail view instead of stranding the user on a permanently empty list.
+func TestHeaderlessPipedStartupHasNoListToJumpBackTo(t *testing.T) {
+	m := NewModel(StartTarget{Piped: &git.PipedPatch{}})
 	m.width, m.height = 80, 24
 	newModel, _ := m.Update(commitDetailLoadedMsg{
 		detail: git.EntryDetail(git.WorktreeEntry{Kind: git.EntryStaged, Files: []git.File{{Path: "a.txt"}}}),
@@ -138,36 +132,19 @@ func TestQuitOnBackGate(t *testing.T) {
 	})
 }
 
-// TestRepoOpenedStagedPathSkipsNoCommitsError pins down that a commit-less
-// repo is not an error on the --staged startup path (there's no HEAD to
-// diff against yet, but FetchWorktreeEntry already treats that as the
-// empty tree), unlike the plain startup path (see
-// TestRepoOpenedPlainPathErrorsOnNoCommits).
-func TestRepoOpenedStagedPathSkipsNoCommitsError(t *testing.T) {
-	m := Model{start: StartTarget{Staged: true}, jl: &jumplist{}}
+// TestRepoOpenedPipedPathSkipsNoCommitsError pins down that a commit-less
+// repo is not an error on the piped startup path — git already produced the
+// diff, so there is something to show whatever HEAD does — unlike the plain
+// startup path (see TestRepoOpenedPlainPathErrorsOnNoCommits).
+func TestRepoOpenedPipedPathSkipsNoCommitsError(t *testing.T) {
+	m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
 	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
 	m = newModel.(Model)
 	if m.err != nil {
-		t.Errorf("err = %v, want nil (a commit-less repo is fine for --staged)", m.err)
+		t.Errorf("err = %v, want nil (a commit-less repo is fine for a piped patch)", m.err)
 	}
 	if cmd == nil {
-		t.Fatal("expected a command to fetch the staged entry")
-	}
-}
-
-// TestRepoOpenedDiffPathSkipsNoCommitsError is TestRepoOpenedStagedPathSkipsNoCommitsError's
-// counterpart for --diff: a commit-less repo is fine there too, since
-// worktreeDiff's tracked-file half diffs against the empty tree the same
-// way stagedDiff does, and untracked files don't need a HEAD at all.
-func TestRepoOpenedDiffPathSkipsNoCommitsError(t *testing.T) {
-	m := Model{start: StartTarget{Diff: true}, jl: &jumplist{}}
-	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
-	m = newModel.(Model)
-	if m.err != nil {
-		t.Errorf("err = %v, want nil (a commit-less repo is fine for --diff)", m.err)
-	}
-	if cmd == nil {
-		t.Fatal("expected a command to fetch the worktree entry")
+		t.Fatal("expected a command to fetch the piped commit's header")
 	}
 }
 

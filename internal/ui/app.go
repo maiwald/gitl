@@ -33,23 +33,17 @@ const (
 // diff -- <path>...` limits its own. It applies to the startup detail view
 // only, never to the commit list or to a commit opened from it.
 type StartTarget struct {
-	Rev    string
-	Staged bool
-	Diff   bool
-	Paths  []string
-
 	// Piped is a patch read from stdin — git running gitl as its pager —
 	// rather than from one of gitl's own git invocations. Its diff is
 	// already parsed; what may still be needed is the commit header behind
-	// it, when Piped.Hash names one.
+	// it, when Piped.Hash names one. Nil for a plain `gitl`, which opens the
+	// commit list.
 	Piped *git.PipedPatch
 }
 
 // opensDetail reports whether gitl was asked to open straight into a detail
 // view, skipping the list as the initial screen.
-func (t StartTarget) opensDetail() bool {
-	return t.Staged || t.Diff || t.Rev != "" || t.Piped != nil
-}
+func (t StartTarget) opensDetail() bool { return t.Piped != nil }
 
 // opensList reports whether the commit list gets loaded at all. Not the
 // negation of opensDetail: a `gitl <rev>` jump opens a detail view *and*
@@ -59,10 +53,7 @@ func (t StartTarget) opensDetail() bool {
 // is what gives ctrl-o somewhere to go; a bare `git diff` has no position in
 // history to return to.
 func (t StartTarget) opensList() bool {
-	if t.Piped != nil {
-		return t.Piped.Hash != ""
-	}
-	return !t.Staged && !t.Diff
+	return t.Piped == nil || t.Piped.Hash != ""
 }
 
 // Model is the root Bubble Tea model for the application.
@@ -496,26 +487,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				loadListCmd(msg.repo, nonFatal),
 				loadWorktreeSummariesCmd(msg.repo),
 				resolveRevPositionCmd(msg.repo, p.Hash),
-			)
-		}
-		if m.start.Staged {
-			// A commit-less repo is not an error here: FetchWorktreeEntry
-			// treats the missing HEAD as the empty tree, same as
-			// `git diff --cached` does.
-			return m, fetchEntryDetailCmd(msg.repo, git.EntryStaged, fatal, m.start.Paths...)
-		}
-		if m.start.Diff {
-			return m, fetchEntryDetailCmd(msg.repo, git.EntryWorktree, fatal, m.start.Paths...)
-		}
-		if m.start.Rev != "" {
-			// fetchDetailCmd passes the raw revision straight to `git log -1`,
-			// so the detail view paints as soon as that returns, concurrently
-			// with the list loading and positioning itself behind it.
-			return m, tea.Batch(
-				fetchDetailCmd(msg.repo, m.start.Rev, fatal, m.start.Paths...),
-				loadListCmd(msg.repo, nonFatal),
-				loadWorktreeSummariesCmd(msg.repo),
-				resolveRevPositionCmd(msg.repo, m.start.Rev),
 			)
 		}
 		if !msg.hasCommits {

@@ -6,17 +6,17 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
-// TestRepoOpenedRevPathDispatchesConcurrentFetches pins down that a
-// `gitl <rev>` startup dispatches its batch of commands (detail fetch, list
-// load, worktree entries, position resolution) without erroring, even on a
-// commit-less-looking hasCommits value — the rev path doesn't gate on it
-// the way the plain path does (see TestRepoOpenedPlainPathErrorsOnNoCommits).
-func TestRepoOpenedRevPathDispatchesConcurrentFetches(t *testing.T) {
-	m := Model{start: StartTarget{Rev: "abc123"}, jl: &jumplist{}}
+// TestRepoOpenedPipedPathDispatchesConcurrentFetches pins down that a piped
+// `git show <rev>` startup dispatches its batch of commands (header fetch,
+// list load, worktree entries, position resolution) without erroring — the
+// piped path doesn't gate on hasCommits the way the plain path does (see
+// TestRepoOpenedPlainPathErrorsOnNoCommits).
+func TestRepoOpenedPipedPathDispatchesConcurrentFetches(t *testing.T) {
+	m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc123"}}, jl: &jumplist{}}
 	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: true})
 	m = newModel.(Model)
 	if cmd == nil {
-		t.Fatal("expected a batched command for the rev-jump path")
+		t.Fatal("expected a batched command for the piped-show path")
 	}
 	if m.err != nil {
 		t.Fatalf("err = %v, want nil", m.err)
@@ -29,7 +29,7 @@ func TestRepoOpenedRevPathDispatchesConcurrentFetches(t *testing.T) {
 // position — see pendingJump's doc comment.
 func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 	t.Run("position before commits", func(t *testing.T) {
-		m := Model{start: StartTarget{Rev: "abc"}, jl: &jumplist{}}
+		m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
 		m.width, m.height = 80, 24
 		newModel, _ := m.Update(revPositionMsg{pos: 2, found: true})
 		m = newModel.(Model)
@@ -41,7 +41,7 @@ func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 	})
 
 	t.Run("commits before position", func(t *testing.T) {
-		m := Model{start: StartTarget{Rev: "abc"}, jl: &jumplist{}}
+		m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
 		m.width, m.height = 80, 24
 		newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
 		m = newModel.(Model)
@@ -54,11 +54,11 @@ func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 }
 
 // TestRevJumpUnreachableLeavesCursorAtTopWithoutError pins down the documented
-// fallback: a revision that can't be resolved or isn't reachable from HEAD
+// fallback: a commit that isn't reachable from HEAD
 // (revPositionMsg{found: false}) leaves the cursor wherever it already was,
-// with no error surfaced — the detail view still opens from fetchDetailCmd.
+// with no error surfaced — the detail view still opens from the piped patch.
 func TestRevJumpUnreachableLeavesCursorAtTopWithoutError(t *testing.T) {
-	m := Model{start: StartTarget{Rev: "abc"}, jl: &jumplist{}}
+	m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 	newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
 	m = newModel.(Model)
