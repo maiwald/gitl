@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 
@@ -21,6 +22,13 @@ import (
 const fallbackListWidth = 120
 
 func main() {
+	if pagerMode(os.Args[1:], isatty.IsTerminal(os.Stdin.Fd())) {
+		if err := runAsPager(); err != nil {
+			exitWithError(err)
+		}
+		return
+	}
+
 	// ContinueOnError rather than ExitOnError so a bad argument *combination*
 	// (which the FlagSet knows nothing about) exits through the same path as
 	// a bad flag. The FlagSet still prints its own parse failures, so those
@@ -64,6 +72,49 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		exitWithError(err)
 	}
+}
+
+// runAsPager renders a patch handed to gitl on stdin, the way git invokes a
+// pager (see pagerMode).
+//
+// Keyboard input can't come from stdin — that's the patch — so it comes from
+// the controlling terminal instead. Where there isn't one to read from, or
+// nowhere to draw, gitl copies its input through untouched and succeeds: a
+// pager that fails is a git command that fails, and `git diff | gitl | cat`
+// should behave like `cat`.
+func runAsPager() error {
+	if !isatty.IsTerminal(os.Stdout.Fd()) {
+		return passThrough()
+	}
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		return passThrough()
+	}
+	defer tty.Close()
+
+	patch, err := git.ReadPipedPatch(os.Stdin)
+	if err != nil {
+		return err
+	}
+	if len(patch.Files) == 0 && patch.Preamble == "" {
+		// git runs its pager even for a command that produced nothing, so
+		// `git diff` with a clean tree arrives here as an empty pipe. Exit
+		// rather than open a full screen showing it — the same "say nothing
+		// when there's nothing to show" the non-interactive paths follow.
+		return nil
+	}
+	p := tea.NewProgram(
+		ui.NewModel(ui.StartTarget{Piped: patch}),
+		tea.WithAltScreen(),
+		tea.WithInput(tty),
+	)
+	_, err = p.Run()
+	return err
+}
+
+func passThrough() error {
+	_, err := io.Copy(os.Stdout, os.Stdin)
+	return err
 }
 
 // exitWithError reports a failure that leaves gitl nothing to show and exits

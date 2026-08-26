@@ -55,6 +55,15 @@ func parseArgs(fs *flag.FlagSet, argv []string) (options, error) {
 	return options{count: *count, target: target}, nil
 }
 
+// pagerMode reports whether this invocation is git running gitl as its pager.
+// That is exactly git's signature: it execs the pager with no arguments at
+// all and the command's output on stdin, so no-args-and-stdin-is-not-a-tty
+// identifies it without gitl having to be told. A direct `gitl -n 5` in a
+// script keeps working, since it has arguments.
+func pagerMode(argv []string, stdinIsTTY bool) bool {
+	return len(argv) == 0 && !stdinIsTTY
+}
+
 // splitPathspecs splits argv at the first literal "--", git's own separator
 // between revisions and paths. Done before flag parsing because Go's flag
 // package consumes a leading "--" itself: `gitl -- foo.go` would otherwise

@@ -37,17 +37,33 @@ type StartTarget struct {
 	Staged bool
 	Diff   bool
 	Paths  []string
+
+	// Piped is a patch read from stdin — git running gitl as its pager —
+	// rather than from one of gitl's own git invocations. Its diff is
+	// already parsed; what may still be needed is the commit header behind
+	// it, when Piped.Hash names one.
+	Piped *git.PipedPatch
 }
 
 // opensDetail reports whether gitl was asked to open straight into a detail
 // view, skipping the list as the initial screen.
-func (t StartTarget) opensDetail() bool { return t.Staged || t.Diff || t.Rev != "" }
+func (t StartTarget) opensDetail() bool {
+	return t.Staged || t.Diff || t.Rev != "" || t.Piped != nil
+}
 
 // opensList reports whether the commit list gets loaded at all. Not the
 // negation of opensDetail: a `gitl <rev>` jump opens a detail view *and*
 // loads the list behind it (so ctrl-o can reach the commit's place in
 // history), while `--staged`/`--diff` have no list at any point.
-func (t StartTarget) opensList() bool { return !t.Staged && !t.Diff }
+// A piped patch loads the list only when its preamble named a commit, which
+// is what gives ctrl-o somewhere to go; a bare `git diff` has no position in
+// history to return to.
+func (t StartTarget) opensList() bool {
+	if t.Piped != nil {
+		return t.Piped.Hash != ""
+	}
+	return !t.Staged && !t.Diff
+}
 
 // Model is the root Bubble Tea model for the application.
 type Model struct {
@@ -164,7 +180,34 @@ func NewModel(target StartTarget) Model {
 }
 
 func (m Model) Init() tea.Cmd {
+	// A piped patch naming no commit needs nothing from a repo, and may not
+	// be in one at all (`cat foo.patch | gitl`), so it skips opening one.
+	if m.start.Piped != nil && m.start.Piped.Hash == "" {
+		return showPipedCmd(m.start.Piped)
+	}
 	return openRepoCmd()
+}
+
+// showPipedCmd hands an already-parsed piped patch to the detail view as it
+// stands, with no commit header behind it.
+func showPipedCmd(p *git.PipedPatch) tea.Cmd {
+	return func() tea.Msg { return commitDetailLoadedMsg{detail: p.Detail()} }
+}
+
+// fetchPipedCommitCmd fetches the header for the commit a piped patch's
+// preamble named, keeping the piped diff itself — which is what preserves any
+// pathspec the user gave git. A commit the repo can't produce (a shallow
+// clone, a patch from elsewhere) falls back to showing the preamble verbatim
+// rather than failing the run.
+func fetchPipedCommitCmd(repo *git.Repo, p *git.PipedPatch) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := repo.FetchCommitMeta(context.Background(), p.Hash)
+		if err != nil {
+			return commitDetailLoadedMsg{detail: p.Detail()}
+		}
+		detail.Files = p.Files
+		return commitDetailLoadedMsg{detail: detail}
+	}
 }
 
 // repoOpenedMsg reports the outcome of opening the repo and checking whether
@@ -443,6 +486,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case repoOpenedMsg:
 		m.repo = msg.repo
+		if p := m.start.Piped; p != nil {
+			// Only reached with a hash: the header-less case never opened a
+			// repo (see Init). The list loads behind the detail view exactly
+			// as a `gitl <rev>` jump does, so ctrl-o reaches the commit's
+			// place in history.
+			return m, tea.Batch(
+				fetchPipedCommitCmd(msg.repo, p),
+				loadListCmd(msg.repo, nonFatal),
+				loadWorktreeSummariesCmd(msg.repo),
+				resolveRevPositionCmd(msg.repo, p.Hash),
+			)
+		}
 		if m.start.Staged {
 			// A commit-less repo is not an error here: FetchWorktreeEntry
 			// treats the missing HEAD as the empty tree, same as

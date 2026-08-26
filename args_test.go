@@ -159,3 +159,28 @@ func TestSplitPathspecs(t *testing.T) {
 		})
 	}
 }
+
+// TestPagerMode pins the signature git produces when it runs gitl as a pager:
+// no arguments at all, with the command's output on stdin. Everything else is
+// a direct invocation, including one whose stdin happens to be redirected.
+func TestPagerMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		argv       []string
+		stdinIsTTY bool
+		want       bool
+	}{
+		{"git as pager", nil, false, true},
+		{"manual pipe", []string{}, false, true},
+		{"interactive, no args", nil, true, false},
+		{"flags with redirected stdin", []string{"-n", "5"}, false, false},
+		{"revision with redirected stdin", []string{"HEAD~1"}, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pagerMode(tc.argv, tc.stdinIsTTY); got != tc.want {
+				t.Errorf("pagerMode(%q, stdinIsTTY=%v) = %v, want %v", tc.argv, tc.stdinIsTTY, got, tc.want)
+			}
+		})
+	}
+}
