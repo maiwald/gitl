@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -865,5 +866,115 @@ func TestDetailModelPseudoEntryMessageSearchFindsNothingButDiffSearchWorks(t *te
 
 	if total := runDetailSearch(&m, "needle"); total != 1 {
 		t.Fatalf(`search("needle") = %d, want 1 (diff search still works)`, total)
+	}
+}
+
+// fixtureDetailForBlockSearch puts the same term in all three searchable
+// blocks — the commit message, a file's name (so it shows up in the stats
+// block and again in the diff's own file header), and a diff line — so the
+// combined n/N sequence can be checked end to end.
+func fixtureDetailForBlockSearch() *git.CommitDetail {
+	return &git.CommitDetail{
+		Commit: git.Commit{
+			Hash:       "abc123",
+			AuthorName: "Someone",
+			AuthorDate: time.Now(),
+			Subject:    "a subject",
+		},
+		Body: "this body mentions alpha once",
+		Files: []git.File{
+			{
+				Path:      "alpha.go",
+				Status:    git.StatusModified,
+				Additions: 1,
+				Hunks: []git.Hunk{{
+					Header: "@@ -1,12 +1,12 @@",
+					Lines: append(
+						[]git.DiffLine{{Op: git.OpAdd, Text: "call alpha() here"}},
+						fillerLines(10)...,
+					),
+				}},
+			},
+		},
+	}
+}
+
+// TestDetailModelSearchSweepsMessageThenStatsThenDiff pins the order of the
+// combined match sequence: the three blocks are searched in the order they
+// appear on screen, so n walks a commit top to bottom. The stats block's file
+// row is the second stop — between the message and the diff — and a file name
+// found there is a separate hit from the same name in the diff's file header,
+// because both are separately on screen.
+func TestDetailModelSearchSweepsMessageThenStatsThenDiff(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForBlockSearch(), &jumplist{})
+	m.SetSize(100, 10)
+
+	total := runDetailSearch(&m, "alpha")
+	if total != 4 {
+		t.Fatalf("search found %d matches, want 4 (message, stats row, diff file header, diff line)", total)
+	}
+
+	wantBlocks := []matchBlock{matchBlockMessage, matchBlockStats, matchBlockDiff, matchBlockDiff}
+	var lines []int
+	for i, want := range wantBlocks {
+		if i > 0 {
+			m.NextMatch()
+		}
+		if m.matchPos != i {
+			t.Fatalf("after %d NextMatch calls matchPos = %d, want %d", i, m.matchPos, i)
+		}
+		if block, _ := m.matchSegment(); block != want {
+			t.Errorf("match %d is in block %d, want %d", i, block, want)
+		}
+		lines = append(lines, m.cursorLine)
+	}
+
+	if !slices.IsSorted(lines) {
+		t.Errorf("n stepped through lines %v, want them ascending — the sequence must run top to bottom", lines)
+	}
+	if lines[0] == lines[1] || lines[1] == lines[2] {
+		t.Errorf("stepped through lines %v, want the message, stats and diff matches on distinct lines", lines)
+	}
+}
+
+// TestDetailModelStatsMatchIsHighlightedAndLandedOn checks the stats hit is a
+// full participant: n lands the cursor on its row, and that row renders with
+// the active-match style while the other blocks' hits stay inactive.
+func TestDetailModelStatsMatchIsHighlightedAndLandedOn(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForBlockSearch(), &jumplist{})
+	m.SetSize(100, 10)
+
+	runDetailSearch(&m, "alpha")
+	m.NextMatch() // message -> stats
+
+	if len(m.statMatchLines) != 1 {
+		t.Fatalf("statMatchLines = %v, want exactly one", m.statMatchLines)
+	}
+	if m.cursorLine != m.statMatchLines[0] {
+		t.Fatalf("cursorLine = %d after stepping onto the stats match, want %d", m.cursorLine, m.statMatchLines[0])
+	}
+	row := m.content[m.statMatchLines[0]]
+	if !strings.Contains(row, searchActiveMatchStyle.Render("alpha")) {
+		t.Errorf("stats row = %q, want the active match highlight", row)
+	}
+}
+
+// TestDetailModelStatsMatchesClearWithTheTerm guards the same rule the other
+// two blocks follow: a match set must never outlive the term it was computed
+// for.
+func TestDetailModelStatsMatchesClearWithTheTerm(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForBlockSearch(), &jumplist{})
+	m.SetSize(100, 10)
+
+	runDetailSearch(&m, "alpha")
+	if len(m.statMatches) == 0 {
+		t.Fatal("expected stats matches for the term the fixture is built around")
+	}
+	m.SetSearchDisplay("", false)
+	if m.statMatches != nil {
+		t.Errorf("statMatches = %+v after clearing the search, want nil", m.statMatches)
+	}
+	if m.totalMatches() != 0 {
+		t.Errorf("totalMatches = %d after clearing the search, want 0", m.totalMatches())
 	}
 }

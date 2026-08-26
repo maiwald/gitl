@@ -27,9 +27,17 @@ const statsSectionTitle = "Files changed"
 // renderRows). The rows are in this block's own order — heading, one per file,
 // a blank separator, then the totals row — which statsFileIndexAt (detail.go)
 // depends on.
-func statLinesFor(files []git.File, width int) []lineRenderer {
+//
+// matches (from FindStatMatches, in the same file order this walks) are
+// highlighted within their row's file label unless dismissed is true;
+// activeMatch indexes into them for the one n/N has selected (-1 for none,
+// ignored when dismissed). matchLines is parallel to matches — the logical
+// line each sits on, counted from this block's own start — and is filled in
+// regardless of dismissed, so a dismissed match still lands correctly once
+// n/N revives it.
+func statLinesFor(files []git.File, width int, matches []StatMatch, activeMatch int, dismissed bool) (lines []lineRenderer, matchLines []int) {
 	if len(files) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	nameWidth := 0
@@ -56,21 +64,67 @@ func statLinesFor(files []git.File, width int) []lineRenderer {
 	summaryLabel := fmt.Sprintf("%d %s changed", len(files), pluralize(len(files), "file", "files"))
 	nameWidth = max(nameWidth, len(summaryLabel))
 
-	lines := make([]lineRenderer, 0, len(files)+3)
+	matchLines = make([]int, len(matches))
+	mi := 0
+
+	lines = make([]lineRenderer, 0, len(files)+3)
 	lines = append(lines, clippedLine(fileHeaderStyle, statsSectionTitle, width))
 	for i, f := range files {
-		lines = append(lines, statRow(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], width))
+		var rowMatches []lineMatch
+		for mi < len(matches) && matches[mi].FileIndex == i {
+			if !dismissed {
+				rowMatches = append(rowMatches, lineMatch{
+					start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
+				})
+			}
+			matchLines[mi] = len(lines)
+			mi++
+		}
+		lines = append(lines, statRow(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], rowMatches, width))
 	}
 	lines = append(lines, blankRow(width))
-	lines = append(lines, statRow(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, width))
-	return lines
+	// The totals row's label names no file, so it never carries a match — see
+	// FindStatMatches.
+	lines = append(lines, statRow(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, nil, width))
+	return lines, matchLines
+}
+
+// StatMatch identifies one case-insensitive occurrence of a search term within
+// a stats row's file label. StartCol/EndCol are byte offsets into
+// filePathLabel(files[FileIndex]) — the same string the diff's own file header
+// matches against, so a name shown in both blocks is found once per place it
+// appears.
+type StatMatch struct {
+	FileIndex        int
+	StartCol, EndCol int
+}
+
+// FindStatMatches returns every occurrence of term across the stats block's
+// per-file rows, in the file order statLinesFor emits them — an invariant the
+// two rely on to stay in sync, the same way FindDiffMatches and RenderDiff do.
+//
+// Only the file rows are searched. The heading and the totals row name no
+// file, so a term matching "Files changed" or "3 files changed" would put a
+// hit on a row that says nothing about where the term occurs. Returns nil for
+// an empty term.
+func FindStatMatches(files []git.File, term string) []StatMatch {
+	if term == "" {
+		return nil
+	}
+	var matches []StatMatch
+	for fi, f := range files {
+		for _, occ := range findOccurrences(filePathLabel(f), term) {
+			matches = append(matches, StatMatch{FileIndex: fi, StartCol: occ[0], EndCol: occ[1]})
+		}
+	}
+	return matches
 }
 
 // statRow is the lineRenderer for one row of the stats table (see
 // renderStatLine, which does the rendering once the cursor is known).
-func statRow(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int) lineRenderer {
+func statRow(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, matches []lineMatch, width int) lineRenderer {
 	return func(cursor bool) []string {
-		return []string{renderStatLine(label, binary, nameWidth, addWidth, delWidth, addCount, delCount, width, cursor)}
+		return []string{renderStatLine(label, binary, nameWidth, addWidth, delWidth, addCount, delCount, matches, width, cursor)}
 	}
 }
 
@@ -94,15 +148,24 @@ func formatCountParts(additions, deletions int) (add, del string) {
 // case (a mode-only change, or a zero totals row) collapse to a single
 // "Bin"/"0" marker spanning both columns. The default case's content mixes
 // independently-Rendered spans, so it's clipped via renderClippedStyled.
-func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, width int, cursor bool) string {
+//
+// matches are byte offsets into label, highlighted inline wherever the label
+// lands in the row.
+func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, matches []lineMatch, width int, cursor bool) string {
 	name := fmt.Sprintf(" %-*s  ", nameWidth, label)
 	combinedWidth := addWidth + 1 + delWidth
 
+	// name puts a single space in front of the label the offsets were found
+	// against, so every match sits one byte further along the row.
+	if len(matches) > 0 {
+		matches = shiftMatches(matches, shiftBy(1))
+	}
+
 	switch {
 	case binary:
-		return renderClipped(cursorMerged(lipgloss.NewStyle(), cursor), name+padLeft("Bin", combinedWidth), width)
+		return statMarkerRow(name+padLeft("Bin", combinedWidth), matches, width, cursor)
 	case addCount == "" && delCount == "":
-		return renderClipped(cursorMerged(lipgloss.NewStyle(), cursor), name+padLeft("0", combinedWidth), width)
+		return statMarkerRow(name+padLeft("0", combinedWidth), matches, width, cursor)
 	default:
 		addStyle, delStyle, plain := diffAddStyle, diffDeleteStyle, lipgloss.NewStyle()
 		if cursor {
@@ -119,9 +182,31 @@ func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int
 		}
 		addPad := strings.Repeat(" ", addWidth-len(addCount))
 		delPad := strings.Repeat(" ", delWidth-len(delCount))
-		content := plain.Render(name+addPad) + addStyle.Render(addCount) + plain.Render(" "+delPad) + delStyle.Render(delCount)
+		content := statText(name+addPad, matches, cursor) + addStyle.Render(addCount) + plain.Render(" "+delPad) + delStyle.Render(delCount)
 		return renderClippedStyled(content, width, cursor)
 	}
+}
+
+// statMarkerRow renders the rows that collapse both count columns into a
+// single "Bin"/"0" marker, where the whole row is one uniform style. With no
+// matches it keeps renderClipped's single Render; a highlighted match puts
+// embedded ANSI resets mid-row, which Width/MaxWidth would miscount, so those
+// clip through padRow instead (see renderClippedStyled).
+func statMarkerRow(text string, matches []lineMatch, width int, cursor bool) string {
+	if len(matches) == 0 {
+		return renderClipped(cursorMerged(lipgloss.NewStyle(), cursor), text, width)
+	}
+	return renderClippedStyled(statText(text, matches, cursor), width, cursor)
+}
+
+// statText renders a stretch of a stats row that carries no color of its own,
+// with any search matches within it highlighted. Without matches that's the
+// single Render the row always cost.
+func statText(text string, matches []lineMatch, cursor bool) string {
+	if len(matches) == 0 {
+		return cursorMerged(lipgloss.NewStyle(), cursor).Render(text)
+	}
+	return renderLineWithBaseSpans(text, nil, matches, lipgloss.NewStyle(), cursor)
 }
 
 // formatCountsStyled renders "+N -M" as one styled string, coloring each half

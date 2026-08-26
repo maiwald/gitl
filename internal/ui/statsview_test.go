@@ -2,6 +2,7 @@ package ui
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,12 +14,24 @@ import (
 // row containing cursorLine (in the block's own line space) carrying the
 // cursor background — the flattened shape these tests assert on.
 func statRows(files []git.File, width, cursorLine int) []string {
-	lines := statLinesFor(files, width)
-	if len(lines) == 0 {
-		return nil
-	}
-	rows, _ := renderRows(lines, cursorLine)
+	rows, _ := searchedStatRows(files, width, cursorLine, nil, -1, false)
 	return rows
+}
+
+// searchedStatRows is statRows with a search in play, also returning the
+// flattened row each match landed on (statLinesFor reports them in the block's
+// own line space, which here is the whole content).
+func searchedStatRows(files []git.File, width, cursorLine int, matches []StatMatch, activeMatch int, dismissed bool) (rows []string, matchRows []int) {
+	lines, matchLines := statLinesFor(files, width, matches, activeMatch, dismissed)
+	if len(lines) == 0 {
+		return nil, nil
+	}
+	rows, lineStart := renderRows(lines, cursorLine)
+	matchRows = make([]int, len(matchLines))
+	for i, ln := range matchLines {
+		matchRows[i] = lineStart[ln]
+	}
+	return rows, matchRows
 }
 
 func TestStatLinesForEmptyFilesReturnsNil(t *testing.T) {
@@ -290,5 +303,136 @@ func TestStatLineCursorRowHasNoUnhighlightedGap(t *testing.T) {
 		if got := lipgloss.Width(row); got != 60 {
 			t.Errorf("row %d width = %d, want 60", cursorLine, got)
 		}
+	}
+}
+
+func TestFindStatMatches(t *testing.T) {
+	files := []git.File{
+		{Path: "internal/ui/detail.go", Additions: 1},
+		{Path: "README.md", Additions: 2},
+		{Path: "internal/git/detail.go", Additions: 3},
+	}
+	got := FindStatMatches(files, "detail")
+	want := []StatMatch{
+		{FileIndex: 0, StartCol: 12, EndCol: 18},
+		{FileIndex: 2, StartCol: 13, EndCol: 19},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("match %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFindStatMatchesIsCaseInsensitiveAndSkipsNonFileRows(t *testing.T) {
+	files := []git.File{{Path: "Makefile", Additions: 1}}
+	if got := FindStatMatches(files, "MAKE"); len(got) != 1 || got[0].StartCol != 0 {
+		t.Errorf("got %+v, want one match at column 0", got)
+	}
+	// "Files changed" is the block's heading and "1 file changed" its totals
+	// row; neither names a file, so neither is a hit.
+	if got := FindStatMatches(files, "changed"); got != nil {
+		t.Errorf("got %+v, want nil — the heading and totals row aren't searched", got)
+	}
+}
+
+func TestFindStatMatchesEmptyTerm(t *testing.T) {
+	if got := FindStatMatches([]git.File{{Path: "a.txt"}}, ""); got != nil {
+		t.Errorf("got %+v, want nil for an empty term", got)
+	}
+}
+
+// TestFindStatMatchesRenameSearchesTheWholeLabel pins that the stats row is
+// searched as it is displayed: a rename shows "old -> new", and both halves
+// are on screen, so both are findable.
+func TestFindStatMatchesRenameSearchesTheWholeLabel(t *testing.T) {
+	files := []git.File{{Path: "new.go", OldPath: "old.go", Status: git.StatusRenamed}}
+	if got := FindStatMatches(files, "old.go"); len(got) != 1 || got[0].StartCol != 0 {
+		t.Errorf("got %+v, want the old path found at column 0", got)
+	}
+	if got := FindStatMatches(files, "new.go"); len(got) != 1 || got[0].StartCol != 10 {
+		t.Errorf("got %+v, want the new path found past the arrow", got)
+	}
+}
+
+// TestStatLinesForHighlightsMatches checks the two match styles land on the
+// right rows: the n/N-selected one stands out from the rest.
+func TestStatLinesForHighlightsMatches(t *testing.T) {
+	files := []git.File{
+		{Path: "alpha.go", Additions: 1},
+		{Path: "beta.go", Additions: 2},
+		{Path: "alpha_test.go", Additions: 3},
+	}
+	matches := FindStatMatches(files, "alpha")
+	rows, matchRows := searchedStatRows(files, 60, -1, matches, 1, false)
+
+	if want := []int{1, 3}; !slices.Equal(matchRows, want) {
+		t.Fatalf("matches landed on rows %v, want %v", matchRows, want)
+	}
+	if !strings.Contains(rows[1], searchMatchStyle.Render("alpha")) {
+		t.Errorf("row 1 = %q, want an inactive match highlight on %q", rows[1], "alpha")
+	}
+	if !strings.Contains(rows[3], searchActiveMatchStyle.Render("alpha")) {
+		t.Errorf("row 3 = %q, want the active match highlight on %q", rows[3], "alpha")
+	}
+	if strings.Contains(rows[2], searchMatchStyle.Render("alpha")) {
+		t.Errorf("row 2 = %q, want no highlight on a non-matching file", rows[2])
+	}
+}
+
+// TestStatLinesForDismissedSearchStillReportsMatchLines mirrors RenderDiff:
+// dismissing hides the highlight but keeps the positions, so n/N can revive
+// the search and still land correctly.
+func TestStatLinesForDismissedSearchStillReportsMatchLines(t *testing.T) {
+	files := []git.File{{Path: "alpha.go", Additions: 1}, {Path: "beta.go", Additions: 2}}
+	matches := FindStatMatches(files, "beta")
+	rows, matchRows := searchedStatRows(files, 60, -1, matches, 0, true)
+
+	if want := []int{2}; !slices.Equal(matchRows, want) {
+		t.Fatalf("matches landed on rows %v, want %v", matchRows, want)
+	}
+	if strings.Contains(rows[2], searchMatchStyle.Render("beta")) || strings.Contains(rows[2], searchActiveMatchStyle.Render("beta")) {
+		t.Errorf("row 2 = %q, want no highlight while the search is dismissed", rows[2])
+	}
+}
+
+// TestStatLinesForHighlightsBinaryAndZeroRows covers the two rows that
+// collapse both count columns into a single marker: they take a different
+// rendering path from the ordinary +N/-M row, and have to clip through padRow
+// once a match puts an ANSI reset mid-row.
+func TestStatLinesForHighlightsBinaryAndZeroRows(t *testing.T) {
+	files := []git.File{
+		{Path: "alpha.png", Binary: true},
+		{Path: "alpha.mode", Additions: 0, Deletions: 0},
+	}
+	matches := FindStatMatches(files, "alpha")
+	rows, _ := searchedStatRows(files, 60, -1, matches, -1, false)
+
+	for _, row := range []int{1, 2} {
+		if !strings.Contains(rows[row], searchMatchStyle.Render("alpha")) {
+			t.Errorf("row %d = %q, want the match highlighted", row, rows[row])
+		}
+		if got := lipgloss.Width(rows[row]); got != 60 {
+			t.Errorf("row %d width = %d, want 60 — a highlighted row must still clip to width", row, got)
+		}
+	}
+}
+
+// TestStatLineMatchOnCursorRowStaysHighlighted pins the interaction between
+// the two backgrounds: the cursor row's fill must not swallow a match, and the
+// row must still carry the cursor background across its whole width.
+func TestStatLineMatchOnCursorRowStaysHighlighted(t *testing.T) {
+	files := []git.File{{Path: "alpha.go", Additions: 1, Deletions: 2}}
+	matches := FindStatMatches(files, "alpha")
+	rows, _ := searchedStatRows(files, 60, 1, matches, 0, false)
+
+	if !strings.Contains(rows[1], searchActiveMatchStyle.Render("alpha")) {
+		t.Errorf("row = %q, want the active match to keep its own highlight under the cursor", rows[1])
+	}
+	if got := lipgloss.Width(rows[1]); got != 60 {
+		t.Errorf("row width = %d, want 60", got)
 	}
 }

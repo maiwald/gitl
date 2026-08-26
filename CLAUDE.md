@@ -67,7 +67,8 @@ internal/ui/               Bubble Tea models, no direct git shelling out
                            (diff content search), intralineSpans/intralineDiff
                            (per-line word-diff highlighting within a hunk)
   statsview.go             statLinesFor: git-show---stat-style summary (per-file +N/-M,
-                           totals line), spliced between message and diff in detail.go
+                           totals line), spliced between message and diff in detail.go,
+                           plus FindStatMatches (search over its file rows)
 ```
 
 `internal/git` and `internal/ui` are cleanly separated: the UI layer only
@@ -383,6 +384,19 @@ before every commit — don't commit red.
   before the first batch of them does. A view with matches but none active
   reports `[0/N]`; `stepMatchPos` makes n take the first from there and N
   the last.
+- The detail view searches three blocks — the header/message, the stats
+  block, and the diff — and concatenates their matches, in that on-screen
+  order, into the single sequence `matchPos` indexes
+  (`matchBlock`/`matchSegment` in `detail.go`), so n/N sweeps a commit top to
+  bottom. A file name is therefore found once per place it is *displayed*:
+  once in its stats row and again in its diff file header. Only rows that
+  name something the user searched for participate — the stats block's
+  "Files changed" heading and its "N files changed" totals row are not
+  searched, the same way `FindDiffMatches` skips hunk headers. Adding a
+  fourth block means extending `matchBlock`, `totalMatches`, `matchSegment`,
+  `jumpToMatch` and `reflow`'s match-line rebasing together; a block that
+  reports match lines but isn't rebased in `reflow` will silently point into
+  another block.
 - A match set must never outlive the term it was computed for. Each view
   keeps its own `displayTerm` next to its matches and drops (`ListModel`,
   whose matches take a git query) or recomputes (`DetailModel`) them the

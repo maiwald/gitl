@@ -45,15 +45,19 @@ type DetailModel struct {
 	displayTerm     string
 	searchDismissed bool
 
-	// messageMatches and diffMatches together form one ordered sequence that
-	// matchPos indexes into — message matches first, then diff matches in
-	// file/hunk/line order, each file's own name match ahead of its line
-	// matches — so n/N sweeps a commit top to bottom the way you'd read it.
+	// messageMatches, statMatches and diffMatches together form one ordered
+	// sequence that matchPos indexes into, in the blocks' own on-screen order
+	// (see matchBlock): message matches first, then one per stats row naming a
+	// matching file, then diff matches in file/hunk/line order with each
+	// file's own name match ahead of its line matches — so n/N sweeps a commit
+	// top to bottom the way you'd read it.
 	messageMatches []MessageMatch
+	statMatches    []StatMatch
 	diffMatches    []DiffMatch
 	matchPos       int // index into the combined sequence; -1 when there are none
 
 	messageMatchLines []int // parallel to messageMatches: wrapped-line index within the header block
+	statMatchLines    []int // parallel to statMatches: wrapped-line index within the flattened content (offset applied)
 	diffMatchLines    []int // parallel to diffMatches: wrapped-line index within the flattened content (offset applied)
 
 	// cursorLine is a tig-style line cursor: an index into the same
@@ -160,7 +164,7 @@ func (m *DetailModel) reflow() {
 	lines = append(lines, blankRow(diffWidth))
 
 	statsStart := len(lines)
-	statLines := statLinesFor(m.detail.Files, diffWidth)
+	statLines, statMatchLines := m.renderStatsBlock(diffWidth)
 	if len(statLines) > 0 {
 		lines = append(lines, statLines...)
 		lines = append(lines, blankRow(diffWidth))
@@ -187,6 +191,10 @@ func (m *DetailModel) reflow() {
 	m.messageMatchLines = make([]int, len(messageMatchLines))
 	for i, ln := range messageMatchLines {
 		m.messageMatchLines[i] = m.rowOf(ln)
+	}
+	m.statMatchLines = make([]int, len(statMatchLines))
+	for i, ln := range statMatchLines {
+		m.statMatchLines[i] = m.rowOf(statsStart + ln)
 	}
 	m.diffMatchLines = make([]int, len(diffMatchLines))
 	for i, ln := range diffMatchLines {
@@ -280,7 +288,14 @@ func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRang
 	if len(m.detail.Files) == 0 {
 		return []lineRenderer{clippedLine(binaryNoticeStyle, noDiffNotice(m.detail), width)}, nil, nil
 	}
-	return RenderDiff(m.detail.Files, width, m.diffMatches, m.activeMatchIn(false), m.searchDismissed)
+	return RenderDiff(m.detail.Files, width, m.diffMatches, m.activeMatchIn(matchBlockDiff), m.searchDismissed)
+}
+
+// renderStatsBlock describes the stats block at width, honoring the current
+// search state. Its matchLines are logical line indices counted from the
+// block's own start — see reflow, which rebases them.
+func (m *DetailModel) renderStatsBlock(width int) (lines []lineRenderer, matchLines []int) {
+	return statLinesFor(m.detail.Files, width, m.statMatches, m.activeMatchIn(matchBlockStats), m.searchDismissed)
 }
 
 // renderHeaderBlock describes the commit metadata/message block at width,
@@ -289,7 +304,7 @@ func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRang
 // lines (one logical line each, however many rows they wrap to).
 func (m *DetailModel) renderHeaderBlock(width int) (lines []lineRenderer, matchLines []int) {
 	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
-	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, m.activeMatchIn(true), m.searchDismissed)
+	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, m.activeMatchIn(matchBlockMessage), m.searchDismissed)
 }
 
 // buildSections assembles one reflow pass's sticky-header/[ ]-navigation
@@ -632,16 +647,18 @@ func (m *DetailModel) syncHighlightFromScroll() {
 }
 
 // computeMatches finds every occurrence of term across this commit's header
-// and message (see headerLinesFor) and its diff content, message matches
-// first, without moving the cursor or marking any match current. Jumping to a
-// match is jumpToFirstMatch's separate job, so a view that opens with a
-// search already active highlights without landing the cursor mid-diff.
+// and message (see headerLinesFor), its stats block and its diff content, in
+// that on-screen order, without moving the cursor or marking any match
+// current. Jumping to a match is jumpToFirstMatch's separate job, so a view
+// that opens with a search already active highlights without landing the
+// cursor mid-diff.
 func (m *DetailModel) computeMatches(term string) {
 	if term == "" || m.detail == nil {
-		m.messageMatches, m.diffMatches = nil, nil
+		m.messageMatches, m.statMatches, m.diffMatches = nil, nil, nil
 	} else {
 		lines, authorLine, bodyStart, _ := headerLinesFor(m.detail)
 		m.messageMatches = FindMessageMatches(lines, authorLine, bodyStart, term)
+		m.statMatches = FindStatMatches(m.detail.Files, term)
 		m.diffMatches = FindDiffMatches(m.detail.Files, term)
 	}
 	m.matchPos = -1
@@ -668,36 +685,53 @@ func (m *DetailModel) setMatchPos(pos int) {
 	m.reflow()
 }
 
-func (m DetailModel) totalMatches() int { return len(m.messageMatches) + len(m.diffMatches) }
-
-// matchSegment reports which half of the combined message+diff match sequence
-// matchPos falls in, and its position within that segment. Only meaningful
-// for matchPos >= 0; callers must guard the "no active match" case themselves
-// before indexing with idx.
-func (m DetailModel) matchSegment() (inMessage bool, idx int) {
-	if m.matchPos < len(m.messageMatches) {
-		return true, m.matchPos
-	}
-	return false, m.matchPos - len(m.messageMatches)
+func (m DetailModel) totalMatches() int {
+	return len(m.messageMatches) + len(m.statMatches) + len(m.diffMatches)
 }
 
-// activeMatchIn resolves which match one of the two rendered blocks should
-// style as the active (n/N-selected) one: an index into that block's own
-// match slice, or -1 when the active match is in the other block, there is
-// none yet, or the search is dismissed.
-func (m DetailModel) activeMatchIn(message bool) int {
+// matchBlock names one of the three separately-searched blocks a detail view
+// renders. The constants are in the blocks' on-screen order, which is also the
+// order they are concatenated into the combined matchPos sequence.
+type matchBlock int
+
+const (
+	matchBlockMessage matchBlock = iota
+	matchBlockStats
+	matchBlockDiff
+)
+
+// matchSegment reports which block of the combined match sequence matchPos
+// falls in, and its position within that block's own matches. Only meaningful
+// for matchPos >= 0; callers must guard the "no active match" case themselves
+// before indexing with idx.
+func (m DetailModel) matchSegment() (block matchBlock, idx int) {
+	if m.matchPos < len(m.messageMatches) {
+		return matchBlockMessage, m.matchPos
+	}
+	idx = m.matchPos - len(m.messageMatches)
+	if idx < len(m.statMatches) {
+		return matchBlockStats, idx
+	}
+	return matchBlockDiff, idx - len(m.statMatches)
+}
+
+// activeMatchIn resolves which match one of the rendered blocks should style
+// as the active (n/N-selected) one: an index into that block's own match
+// slice, or -1 when the active match is in another block, there is none yet,
+// or the search is dismissed.
+func (m DetailModel) activeMatchIn(block matchBlock) int {
 	if m.searchDismissed || m.matchPos < 0 {
 		return -1
 	}
-	if inMessage, idx := m.matchSegment(); inMessage == message {
+	if active, idx := m.matchSegment(); active == block {
 		return idx
 	}
 	return -1
 }
 
 // NextMatch and PrevMatch cycle to the following/preceding match across the
-// combined message+diff sequence, wrapping at both ends, and report the new
-// 1-based position and total count.
+// combined message+stats+diff sequence, wrapping at both ends, and report the
+// new 1-based position and total count.
 func (m *DetailModel) NextMatch() (pos, total int) { return m.stepMatch(1) }
 func (m *DetailModel) PrevMatch() (pos, total int) { return m.stepMatch(-1) }
 
@@ -711,10 +745,10 @@ func (m *DetailModel) stepMatch(delta int) (pos, total int) {
 	return m.matchPos + 1, total
 }
 
-// jumpToMatch scrolls the diff panel to the current match, whether it's a
-// message match or a diff match. It renders nothing itself: setMatchPos's
-// reflow already styled the newly active match and produced the match lines
-// read here, so the landing is an ordinary cursor move.
+// jumpToMatch scrolls the diff panel to the current match, whichever block it
+// lives in. It renders nothing itself: setMatchPos's reflow already styled the
+// newly active match and produced the match lines read here, so the landing is
+// an ordinary cursor move.
 //
 // Every step pushes a jump, not just the initial search — see
 // applyCurrentMatch in list.go.
@@ -722,15 +756,20 @@ func (m *DetailModel) jumpToMatch() {
 	if m.matchPos < 0 {
 		return
 	}
-	var line int
-	if inMessage, idx := m.matchSegment(); inMessage {
-		line = m.messageMatchLines[idx]
-	} else if idx < len(m.diffMatchLines) {
-		line = m.diffMatchLines[idx]
-	} else {
+	block, idx := m.matchSegment()
+	var lines []int
+	switch block {
+	case matchBlockMessage:
+		lines = m.messageMatchLines
+	case matchBlockStats:
+		lines = m.statMatchLines
+	default:
+		lines = m.diffMatchLines
+	}
+	if idx >= len(lines) {
 		return
 	}
-	m.landOnLine(line)
+	m.landOnLine(lines[idx])
 }
 
 // SetSearchDisplay installs the term to highlight and whether highlighting is
