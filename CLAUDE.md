@@ -50,6 +50,8 @@ internal/ui/               Bubble Tea models, no direct git shelling out
                            --diff / <rev>, each optionally pathspec-limited)
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions
+  viewport.go              rowViewport: the scrolling window both views display
+                           their rendered rows through
   render.go                primitives every view renders through (clipping/padding
                            a row to width, compositing styled spans into a line,
                            cursor + search-match styling), the lineRenderer/
@@ -179,6 +181,23 @@ before every commit — don't commit red.
   new field on `Commit`, a new dim/highlight condition, appended commits,
   an updated `matches` set) must go through `render()`'s full rebuild —
   otherwise the cache silently keeps showing stale content.
+- Both views display their rows through `rowViewport` (`viewport.go`), not
+  `bubbles/viewport`, and that is the whole point of the row caches above.
+  bubbles' viewport takes its content as one string: every `SetContent`
+  re-split it and then measured every line with `ansi.StringWidth` to size a
+  horizontal scroll this app never uses — putting the entire commit, or the
+  entire loaded history, back onto the cost of a single cursor move (~90% of
+  a keypress, megabytes of garbage per keystroke). Bubble Tea runs a full
+  `Update` *and* `View` per message with no key coalescing, so anything
+  per-keypress that scales with content shows up as autorepeat piling into
+  the tty buffer and draining after the key is released. `SetRows` therefore
+  **borrows** the caller's slice rather than copying it — which is also why a
+  row patched in place needs no handoff, while a `render()`/`reflow()` that
+  builds a fresh slice does. `View()` emits rows verbatim, padding only the
+  row *count* out to `Height` (the status bar sits directly below it): every
+  row is already exactly one display line at full width (`padRow`), and the
+  ones that aren't are blank by construction, where trailing spaces and an
+  empty line are the same picture once the terminal erases to end of line.
 - An async fetch's own in-flight guard (`ListModel.loadingMore`,
   `Model.searchingTerm`) is cleared by that fetch's own message type
   (`moreCommitsFailedMsg`, `searchFailedMsg` in `app.go`), never by the
@@ -234,8 +253,15 @@ before every commit — don't commit red.
   `TestDetailModelCursorPatchMatchesFullReflow` pins the whole arrangement by
   comparing patched content against a full reflow after every kind of jump.
   `BenchmarkDetailCursorMove`/`BenchmarkDetailReflow` are the reason it
-  exists (~2.8 ms against ~32 ms on an 8000-line diff); if they ever
-  converge, something has started reflowing on every keypress.
+  exists (~11 µs against ~30 ms on an 8000-line diff); if they ever
+  converge, something has started reflowing on every keypress. They only
+  compare a cursor move against a reflow of the *same* commit, though, so
+  they cannot see work that merely *re-reads* the content —
+  `TestDetailCursorMoveCostIsIndependentOfCommitSize` and its list
+  counterpart are the tripwire for that, comparing bytes allocated per
+  keypress across two fixture sizes (bytes, not allocation count: the
+  regression they were written for moved a megabyte per keystroke in a
+  constant 77 allocations).
 - `wrapRanges` and `padRow` (`render.go`) each skip a lipgloss `Render` on
   the common path — a line that already fits isn't wrapped, and a plain
   (non-cursor) fill neither truncates nor styles its padding. Those are
