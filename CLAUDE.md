@@ -21,11 +21,11 @@ Module path: `github.com/maiwald/gitl`. Requires Go 1.25+ and `git` on
 
 ```
 main.go                    entry point: builds and runs the root tea.Program,
-                           plus the -n printer and the --staged/--diff
-                           pre-flight
-args.go                    command-line parsing: flags, the revision/pathspec
-                           split (including git's "--" separator) and every
-                           combination rule, as a unit-testable options value
+                           plus the -n printer and the pager entry point
+                           (stdin in, /dev/tty for keys, pass-through when
+                           there's nowhere to draw)
+args.go                    command-line parsing: the two print-and-exit flags
+                           and pagerMode, as a unit-testable options value
 internal/concurrent/       RunConcurrently: generic "run these fns in parallel,
                            return the first error in call order" helper, with no
                            git- or TUI-specific logic, shared by both packages below
@@ -33,11 +33,14 @@ internal/git/              data access layer, no TUI dependencies
   repo.go                  Repo, OpenRepo, HasCommits
   exec.go                  runGit: shells out, wraps stderr into errors
   log.go                   Commit type, FetchLogBatch, CommitCount (paged log)
-  show.go                  CommitDetail (+ EntryKind), FetchCommitDetail (metadata + diff)
+  show.go                  CommitDetail (+ EntryKind), FetchCommitDetail (metadata +
+                           diff), FetchCommitMeta (the metadata half alone)
+  pipe.go                  PipedPatch, ReadPipedPatch: a patch read from stdin
+                           when git runs gitl as its pager
   diff.go                  File/Hunk/DiffLine, ParseUnifiedDiff (go-gitdiff wrapper)
   search.go                SearchCommitHashes (author+message, OR), AllCommitHashes,
                            HashesMatching (in-memory hash-substring filter, list search only)
-  rev.go                   ResolveRevision, CommitPosition (CLI revision jump support)
+  rev.go                   CommitPosition (placing a piped commit in the list)
   worktree.go              EntryKind/WorktreeEntry, EntrySummary/FetchWorktreeSummaries
                            (numstat counts for the list's leading rows),
                            FetchWorktreeEntry (the diff behind one, on open: staged +
@@ -46,8 +49,8 @@ internal/git/              data access layer, no TUI dependencies
 internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
                            commands, canonical search state + prompt overlay +
-                           status bar, StartTarget dispatch (plain / --staged /
-                           --diff / <rev>, each optionally pathspec-limited)
+                           status bar, StartTarget dispatch (the plain list, or
+                           a patch piped in from git)
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions
   viewport.go              rowViewport: the scrolling window both views display
@@ -169,7 +172,7 @@ before every commit — don't commit red.
   within `[topIndex(), lastIndex()]`, the rows that actually exist:
   `lastIndex()` floors `len(commits)-1` at `topIndex()` so a list with
   nothing loaded yet (every run's first frames, and the whole of a
-  `--staged`/`--diff` run) can't put the cursor on a row that isn't there.
+  headerless piped run) can't put the cursor on a row that isn't there.
 - A synthetic leading row (working tree/staged) is represented as a
   `git.CommitDetail` with `Kind != EntryCommit` and the embedded `Commit`
   left zero-valued (`IsPseudo()`). `detail.go`'s diff/stats/sections/search
@@ -303,25 +306,32 @@ before every commit — don't commit red.
   and downward motion is floored at `blockEnd`.
   The highlight covers a wrapped line's whole block, so stepping row by row
   through it would make presses look like dead keys.
-- A CLI pathspec (`gitl --diff <path>...`, `gitl <rev> [--] <path>...`)
-  reaches git as its own `-- <path>...` tail (`pathspecArgs` in
-  `internal/git/diff.go`) and is scoped to the **startup target only**
-  (`StartTarget.Paths`): `fetchDetailCmd`'s `paths` is passed exclusively by
-  the startup dispatch, never by Enter on a list row — including Enter on a
-  synthetic row, whose `FetchWorktreeEntry` is called with no paths — and
-  `FetchWorktreeSummaries` (the list's leading rows) is unfiltered. The commit
-  list can't be path-filtered at all, so filtering anything reached *through*
-  it would answer a question the list never asked. The pathspec is carried on
-  `CommitDetail.Paths`/`WorktreeEntry.Paths` for one purpose only — letting
-  `noDiffNotice` (`detail.go`) say *which* paths came up empty; nothing
-  re-runs a fetch from it.
+- gitl parses no revision, range or pathspec of its own. Everything beyond
+  the commit list arrives through git, which runs gitl as its pager
+  (`pagerMode` in `args.go`, `runAsPager` in `main.go`) and has already
+  applied its own grammar. That is what makes `git diff origin/main...`,
+  `git show <rev> -- <path>` and every other shape work without gitl
+  learning any of them — and why a new one should never be added as a flag.
+  Two consequences worth knowing: gitl can't say *why* a diff came out
+  empty, since it never saw the pathspec (hence no "no changes" notice), and
+  rename detection follows the user's `diff.renames` on that path rather
+  than the `-M` gitl pins on its own invocations.
+- A piped patch is split by `ParsePatch`: the diff, and everything in front
+  of it. Only `^commit <sha>` is read out of that preamble — the one token
+  `--pretty`, `log.date` and locale can't reshape — and the header gitl draws
+  is fetched again in its own format (`FetchCommitMeta`). The diff still
+  comes from the pipe, which is what preserves the user's pathspec. A
+  preamble naming no commit is shown verbatim (`EntryPiped`), so
+  `git status` or a reconfigured format degrades to plain text instead of
+  being mangled.
 - The non-interactive CLI paths say nothing when there's nothing to show:
-  `--staged`/`--diff` with an empty index/worktree (`hasChanges`) and `-n` in
-  a repo with no commits (`printCommits`) both just return, exit 0, and print
-  no explanation — mirroring `git diff`, which prints nothing and succeeds.
-  Only failures are printed. The TUI is the exception, and deliberately so:
-  `noDiffNotice` and `app.go`'s "no commits yet" error are what a screen that
-  would otherwise be blank shows instead.
+  an empty pipe (git runs its pager even for a command that produced
+  nothing) and `-n` in a repo with no commits (`printCommits`) both just
+  return, exit 0, and print no explanation — mirroring `git diff`, which
+  prints nothing and succeeds. Only failures are printed. So does an empty
+  diff inside the TUI now; `app.go`'s "no commits yet" error and
+  `mergeNotice` are the only things a screen that would otherwise be blank
+  still says.
 - Command-line parsing lives in `args.go`, not `main.go`, and takes its
   `*flag.FlagSet` as a parameter so tests can parse a literal argv quietly
   (`args_test.go`) while main installs usage/error reporting on it. The
@@ -353,8 +363,8 @@ before every commit — don't commit red.
   with a single entry at the list's position 0 in `NewModel`, so ctrl-o can
   always reach the very top even before any real jump has happened — but
   only when the run actually has a list (`StartTarget.opensList`), since
-  `--staged`/`--diff` never load one and ctrl-o would otherwise strand the
-  user on a permanently empty list view.
+  a headerless piped patch never loads one and ctrl-o would otherwise strand
+  the user on a permanently empty list view.
   `ctrl+i` (not the literal string `"ctrl+i"`) is bound to bubbletea's
   `"tab"` key string — the two are the same byte (0x09) at the terminal
   protocol level, and bubbletea's own decoder reports it as tab (see
@@ -447,16 +457,17 @@ before every commit — don't commit red.
   reporting `searching…` while the queries it deferred run — the cost of not
   running them for every search made inside a commit. The hash order they
   need is fetched once per run and cached (`Model.allHashes`).
-- A CLI pathspec limits the startup diff only: there's no path-filtered
-  commit list, and no way to change or drop the pathspec from inside the
-  running UI. With no `--`, the first non-flag argument is always read as a
-  revision even when a file by that name exists (git guesses between the two;
-  gitl doesn't, since a path-only invocation has no list mode to fall back
-  to) — `--`, `--staged`, or `--diff` is how a bare path is expressed.
-- `gitl <rev>` for a revision not reachable from HEAD still opens its
-  detail view (via `FetchCommitDetail`, which accepts any git-resolvable
-  revision), but `CommitPosition` has no list position to offer, so the
-  list is simply left at the top rather than erroring.
+- A piped `git show <rev>` for a commit not reachable from HEAD still opens
+  its detail view — git already produced the diff — but `CommitPosition` has
+  no list position to offer, so the list behind it is left at the top rather
+  than erroring.
+- gitl is wired as `pager.diff`/`pager.show`, not `core.pager`. As
+  `core.pager` it would receive `git status`, `git branch -v` and `git help`,
+  which the verbatim-preamble path renders as an undifferentiated wall of
+  plain text rather than breaking — but there is nothing gitl adds to them.
+- `git show --stat -p` shows git's own stat block in the preamble *and*
+  gitl's stats block below it. `git show --stat` alone emits no patch at all,
+  so gitl has no files to build its own block from and shows git's text.
 - `DetailModel.cursorLine` and jumplist entries are raw indices into the
   flattened, already-word-wrapped line space, which shifts on a terminal
   resize (rewrapping changes how many flattened lines the same content

@@ -67,43 +67,46 @@ Run it inside any git repository:
 gitl
 ```
 
-It also accepts a startup target, jumping straight to a detail view instead
-of the list:
+### As git's pager
+
+Everything beyond the commit list — a commit, a diff against any revision, a
+path — is reached through git itself, with gitl as its pager:
 
 ```sh
-gitl <rev>        # open a specific commit's detail view directly (any
-                   # git-resolvable revision — a sha, branch, tag, HEAD~2,
-                   # ...); q/Esc quits outright, like --staged/--diff below.
-
-gitl --staged      # open the staged-changes (index vs HEAD) detail view
-                   # directly, no list involved — a drop-in replacement for
-                   # `git diff --staged | less`: q/Esc quits outright.
-
-gitl --diff        # open the working-tree-changes (index vs working tree)
-                   # detail view directly, no list involved — a drop-in
-                   # replacement for `git diff | less`: q/Esc quits outright.
+git config --global pager.diff gitl
+git config --global pager.show gitl
 ```
 
-Each of those takes paths, limiting the diff that opens to them just like
-`git diff`/`git show` do:
+Then git's own commands render in gitl:
 
 ```sh
-gitl --diff internal/ui          # only this directory's unstaged changes
-gitl --staged main.go args.go    # only these files' staged changes
-gitl HEAD~3 internal/git         # only this directory's part of that commit
-gitl HEAD~3 -- main.go           # -- separates paths from the revision
-                                  # explicitly, needed for a path that could
-                                  # be read as a revision (or as a flag)
+git show HEAD~2                  # a commit: message, stats and diff
+git show <rev> -- internal/ui    # the same, limited to a path
+git diff origin/main...          # everything your branch changed
+git diff --cached                # the staged changes
+git diff HEAD~5 -- '*.go'        # any shape git accepts
 ```
 
-Without `--`, the first argument is always the revision, even if a file by
-that name exists — so a path-only invocation needs the separator, or one of
-`--staged`/`--diff`. The paths apply to the diff that opens and nothing
-else: the commit list behind it isn't filtered, so a commit opened from
-there (or reached with `ctrl-o`) shows its full diff.
+gitl parses none of that grammar itself, so every revision, range and
+pathspec git understands works, including ones it has never heard of. For a
+commit, `q`/`Esc` quits outright and `ctrl-o` steps back into the commit list
+at that commit's place in history.
 
-`--staged` and `--diff` are mutually exclusive with each other and with a
-revision argument.
+Wire it to `pager.diff`/`pager.show` rather than `core.pager`: gitl renders a
+patch, and has nothing to add to `git status` or `git branch -v`.
+
+Piping works the same way, if you'd rather not change your config:
+
+```sh
+git show HEAD~2 | gitl
+```
+
+There are two other, non-interactive modes:
+
+```sh
+gitl -n 20        # print the 20 most recent commits and exit
+gitl --version    # print the version and exit
+```
 
 Run `gitl --help` (or `-h`) at any time for the full flag reference.
 
@@ -139,11 +142,17 @@ Run `gitl --help` (or `-h`) at any time for the full flag reference.
 - Only the first 200 untracked files each get their own diffed entry;
   beyond that, remaining untracked files still show up (correctly counted
   and marked as added) but without their own content diffed.
-- `gitl <rev>` for a revision that isn't reachable from HEAD (e.g. a commit
+- `git show <rev>` for a commit that isn't reachable from HEAD (e.g. one
   that only exists on another branch) still opens its detail view, but the
-  list can't sensibly position a cursor on it, so it's left at the top.
-- Paths limit the startup diff only — there's no path-filtered commit list,
-  and no way to change or drop the pathspec from inside the running UI.
+  list behind it can't position a cursor on it, so it's left at the top.
+- The commit list itself is never path-filtered, and there's no way to
+  change what's on screen from inside the running UI — a different diff
+  means a different git command.
+- Rename detection through the pager follows your `diff.renames` setting,
+  rather than the `-M` gitl passes on its own invocations.
+- `git show --stat -p` shows git's stat block *and* gitl's; `git show --stat`
+  alone emits no patch, so gitl shows git's text and builds no block of its
+  own.
 
 ## Development
 
