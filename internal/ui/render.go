@@ -452,6 +452,22 @@ type lineMatch struct {
 // otherwise apply, except inside a match, whose own background is already the
 // line's strongest signal and would only be muted by it.
 func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, cursor bool) string {
+	// An empty line has no segment to render at all: the walk below produces
+	// a single boundary point and no piece. Said here so the fast path can
+	// stay a plain Render, which for a styled empty string would emit a bare
+	// escape pair instead of nothing.
+	if text == "" {
+		return ""
+	}
+	// With nothing to composite, every boundary segment below resolves to the
+	// same style and the whole walk collapses to this one Render — the common
+	// case on the hot path: an ordinary diff line with no intraline emphasis
+	// and no search hit. Pinned by
+	// TestRenderLineWithBaseSpansFastPathMatchesGeneralPath.
+	if len(spans) == 0 && len(matches) == 0 {
+		return cursorMerged(base, cursor).Render(text)
+	}
+
 	bounds := map[int]bool{0: true, len(text): true}
 	for _, s := range spans {
 		bounds[s.start] = true

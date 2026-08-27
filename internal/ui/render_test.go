@@ -62,3 +62,26 @@ func TestWrapRangesFittingLineMatchesLipgloss(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderLineWithBaseSpansFastPathMatchesGeneralPath pins the shortcut
+// renderLineWithBaseSpans takes for a line with no base spans and no search
+// matches. The reference is the general boundary walk driven by a single span
+// covering the whole line in the base style: every position then resolves to
+// the same style the fast path applies, so the two must agree character for
+// character, cursor row or not.
+func TestRenderLineWithBaseSpansFastPathMatchesGeneralPath(t *testing.T) {
+	bases := []lipgloss.Style{lipgloss.NewStyle(), diffAddStyle, diffContextStyle, fileHeaderStyle}
+	texts := []string{"", "plain context line", "\tindented", "unicode ünïcödé ✓ 日本語", "   "}
+	for _, base := range bases {
+		for _, text := range texts {
+			for _, cursor := range []bool{false, true} {
+				whole := []baseSpan{{start: 0, end: len(text), style: base}}
+				want := renderLineWithBaseSpans(text, whole, nil, base, cursor)
+				got := renderLineWithBaseSpans(text, nil, nil, base, cursor)
+				if got != want {
+					t.Errorf("renderLineWithBaseSpans(%q, nil, nil, base, %v) = %q, want %q (the general walk's output)", text, cursor, got, want)
+				}
+			}
+		}
+	}
+}
