@@ -196,7 +196,7 @@ func TestWorktreeSummariesMirroredRegardlessOfArrivalOrder(t *testing.T) {
 // than the whole screen being replaced the way a `--staged` startup failure
 // replaces it.
 func TestEntryDetailFetchFromListFailsNonFatally(t *testing.T) {
-	cmd := fetchEntryDetailCmd(&git.Repo{Path: t.TempDir()}, git.EntryStaged, nonFatal)
+	cmd := fetchEntryDetailCmd(&git.Repo{Path: t.TempDir()}, git.EntryStaged)
 	msg, ok := cmd().(errMsg)
 	if !ok {
 		t.Fatalf("cmd() = %T, want errMsg outside a git repository", cmd())

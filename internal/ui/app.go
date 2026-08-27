@@ -369,22 +369,20 @@ func (m Model) newDetailModel(detail *git.CommitDetail) DetailModel {
 	return d
 }
 
-// fetchDetailCmd fetches one commit's metadata and diff. severity is fatal
-// from the `<rev>`-jump startup dispatch (the detail view is that path's
-// whole payload) and nonFatal from Enter in the list, which stays up if the
-// fetch fails.
-func fetchDetailCmd(repo *git.Repo, hash string, severity errSeverity) tea.Cmd {
-	return runCmd(severity, func(ctx context.Context) (*git.CommitDetail, error) {
+// fetchDetailCmd fetches one commit's metadata and diff, for Enter in the
+// list. Its failure is nonFatal: the list stays up and reports it in the
+// status bar.
+func fetchDetailCmd(repo *git.Repo, hash string) tea.Cmd {
+	return runCmd(nonFatal, func(ctx context.Context) (*git.CommitDetail, error) {
 		return repo.FetchCommitDetail(ctx, hash)
 	}, func(d *git.CommitDetail) tea.Msg { return commitDetailLoadedMsg{detail: d} })
 }
 
 // fetchEntryDetailCmd fetches a single synthetic entry's diff and opens it via
-// commitDetailLoadedMsg like any other detail view. severity is fatal from the
-// `--staged`/`--diff` startup dispatch, which has no list to fall back to, and
-// nonFatal from Enter in the list, which stays up if the fetch fails.
-func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind, severity errSeverity) tea.Cmd {
-	return runCmd(severity, func(ctx context.Context) ([]git.File, error) {
+// commitDetailLoadedMsg like any other detail view. Reached only from Enter in
+// the list, so its failure is nonFatal for the same reason fetchDetailCmd's is.
+func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind) tea.Cmd {
+	return runCmd(nonFatal, func(ctx context.Context) ([]git.File, error) {
 		return repo.FetchWorktreeEntry(ctx, kind)
 	}, func(files []git.File) tea.Msg {
 		entry := git.WorktreeEntry{Kind: kind, Files: files}
@@ -784,9 +782,9 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// left so ctrl-o can return to it, before the detail view exists.
 		var cmd tea.Cmd
 		if summary, ok := m.list.SelectedSummary(); ok {
-			cmd = fetchEntryDetailCmd(m.repo, summary.Kind, nonFatal)
+			cmd = fetchEntryDetailCmd(m.repo, summary.Kind)
 		} else if commit, ok := m.list.Selected(); ok {
-			cmd = fetchDetailCmd(m.repo, commit.Hash, nonFatal)
+			cmd = fetchDetailCmd(m.repo, commit.Hash)
 		}
 		if cmd == nil {
 			return m, nil
