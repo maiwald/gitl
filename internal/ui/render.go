@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // This file holds the primitives every view renders through — clipping and
@@ -157,6 +158,11 @@ func rowFillStyle(cursor bool) lipgloss.Style {
 // independently-Rendered, reset-terminated spans — through lipgloss's
 // paragraph reflow, miscounting cell positions across those resets and risking
 // a hard-wrap mid-field. Hence the padding by hand.
+//
+// Measured with ansi.StringWidth rather than lipgloss.Width, which is that
+// same call taken over the string split on "\n": every row reaching here is
+// one display line, which is the invariant renderClipped's Inline(true)
+// exists to hold, so the split only ever produces the one piece.
 func padRow(row string, width int, cursor bool) string {
 	style := rowFillStyle(cursor)
 	// A plain fill contributes nothing but the truncation itself, so a row
@@ -165,10 +171,10 @@ func padRow(row string, width int, cursor bool) string {
 	// The cursor's fill does carry a style, so its row is always rendered.
 	// (Hot path: a reflow pads every line of the commit.)
 	plain := !cursor
-	w := lipgloss.Width(row)
+	w := ansi.StringWidth(row)
 	if !plain || w > width {
 		row = style.MaxWidth(width).Render(row)
-		w = lipgloss.Width(row)
+		w = ansi.StringWidth(row)
 	}
 	if pad := width - w; pad > 0 {
 		spaces := strings.Repeat(" ", pad)
@@ -254,7 +260,7 @@ func wrapRanges(text string, width int) [][2]int {
 	// half of laying a line out, which a reflow pays once per line of the
 	// entire commit. Trimming the trailing spaces is what the general path
 	// below would do to that single row anyway.
-	if !strings.Contains(text, "\n") && lipgloss.Width(text) <= width {
+	if !strings.Contains(text, "\n") && ansi.StringWidth(text) <= width {
 		return [][2]int{{0, len(strings.TrimRight(text, " "))}}
 	}
 	rows := strings.Split(lipgloss.NewStyle().Width(width).Render(text), "\n")
