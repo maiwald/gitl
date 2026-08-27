@@ -46,33 +46,6 @@ type EntrySummary struct {
 	Deletions int
 }
 
-// HasStagedChanges reports whether the index differs from HEAD, via `git
-// diff --cached --quiet`'s exit code.
-func (r *Repo) HasStagedChanges(ctx context.Context) (bool, error) {
-	args := []string{"diff", "--cached", "--quiet"}
-	_, differs, err := runGitDiffExit(ctx, r.Path, args...)
-	return differs, err
-}
-
-// HasWorktreeChanges reports whether worktreeDiff would have anything to show
-// within paths (everything, given none): tracked files differing from the
-// index, or untracked files. Checked separately from worktreeDiff so a CLI
-// `--diff` pre-flight can answer without paying for a full untracked-file diff
-// synthesis to find out the answer is "no".
-func (r *Repo) HasWorktreeChanges(ctx context.Context) (bool, error) {
-	var trackedDiffers bool
-	var untracked []string
-	args := []string{"diff", "--quiet"}
-	err := concurrent.RunConcurrently(
-		func() (err error) { _, trackedDiffers, err = runGitDiffExit(ctx, r.Path, args...); return },
-		func() (err error) { untracked, err = r.untrackedPaths(ctx); return },
-	)
-	if err != nil {
-		return false, err
-	}
-	return trackedDiffers || len(untracked) > 0, nil
-}
-
 // FetchWorktreeEntry returns the diff behind a single synthetic entry kind
 // (EntryStaged or EntryWorktree). Returns nil files when there is nothing to
 // show.
