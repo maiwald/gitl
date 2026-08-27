@@ -425,7 +425,7 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 		}
 		lineSpans := spans[li]
 		rendered = append(rendered, func(cursor bool) []string {
-			return wrapStyledRows(line, lineSpans, lineMatches, lipgloss.NewStyle(), width, cursor)
+			return wrapStyledRows(line, lineSpans, lineMatches, plainLine, width, cursor)
 		})
 	}
 	return rendered, matchLines

@@ -3,7 +3,6 @@ package ui
 import (
 	"unicode"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/maiwald/gitl/internal/git"
 )
 
@@ -152,7 +151,7 @@ func renderFileHeader(f git.File, width int, cursor bool, matches []lineMatch) s
 	if len(matches) == 0 && !cursor {
 		return renderClipped(fileHeaderStyle, label, width)
 	}
-	content := renderLineWithBaseSpans(label, nil, shiftMatches(matches, shiftBy(len(prefix))), fileHeaderStyle, cursor)
+	content := renderLineWithBaseSpans(label, nil, shiftMatches(matches, shiftBy(len(prefix))), fileHeaderLine, cursor)
 	return renderClippedStyled(content, width, cursor)
 }
 
@@ -195,14 +194,14 @@ func renderDiffLine(l git.DiffLine, width int, spans []baseSpan, matches []lineM
 	return wrapStyledRows(text, shiftSpans(spans, at), shiftMatches(matches, at), style, width, cursor)
 }
 
-func diffLineStyle(op git.LineOp) (lipgloss.Style, string) {
+func diffLineStyle(op git.LineOp) (lineStyle, string) {
 	switch op {
 	case git.OpAdd:
-		return diffAddStyle, "+"
+		return diffAddLine, "+"
 	case git.OpDelete:
-		return diffDeleteStyle, "-"
+		return diffDeleteLine, "-"
 	default:
-		return diffContextStyle, " "
+		return diffContextLine, " "
 	}
 }
 

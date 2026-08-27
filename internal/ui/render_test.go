@@ -70,16 +70,45 @@ func TestWrapRangesFittingLineMatchesLipgloss(t *testing.T) {
 // the same style the fast path applies, so the two must agree character for
 // character, cursor row or not.
 func TestRenderLineWithBaseSpansFastPathMatchesGeneralPath(t *testing.T) {
-	bases := []lipgloss.Style{lipgloss.NewStyle(), diffAddStyle, diffContextStyle, fileHeaderStyle}
 	texts := []string{"", "plain context line", "\tindented", "unicode ünïcödé ✓ 日本語", "   "}
-	for _, base := range bases {
+	for _, base := range allLineStyles {
 		for _, text := range texts {
 			for _, cursor := range []bool{false, true} {
-				whole := []baseSpan{{start: 0, end: len(text), style: base}}
+				whole := []baseSpan{{start: 0, end: len(text), style: base.style}}
 				want := renderLineWithBaseSpans(text, whole, nil, base, cursor)
 				got := renderLineWithBaseSpans(text, nil, nil, base, cursor)
 				if got != want {
 					t.Errorf("renderLineWithBaseSpans(%q, nil, nil, base, %v) = %q, want %q (the general walk's output)", text, cursor, got, want)
+				}
+			}
+		}
+	}
+}
+
+// allLineStyles is every lineStyle the app renders a whole line in — the set
+// TestLineStyleSGRMatchesLipgloss and the fast-path test above must cover.
+var allLineStyles = []lineStyle{plainLine, diffAddLine, diffDeleteLine, diffContextLine, fileHeaderLine}
+
+// TestLineStyleSGRMatchesLipgloss pins the substitution lineStyle.sgr makes
+// for lipgloss.Style.Render: for a style setting none of width/padding/border/
+// margin/transform, Render only wraps its argument in a fixed escape pair, so
+// concatenating that pair around the text must be byte-for-byte what Render
+// produces. A lipgloss upgrade that changed the sequence — or a style here
+// growing a property that makes Render do more than wrap — fails here instead
+// of silently changing every diff line in the app.
+//
+// The texts are tab-free deliberately: wrapping is all sgr claims to do, and
+// Render additionally expands tabs. renderLineWithBaseSpans' fast path does
+// that expansion itself, which is what
+// TestRenderLineWithBaseSpansFastPathMatchesGeneralPath covers.
+func TestLineStyleSGRMatchesLipgloss(t *testing.T) {
+	texts := []string{"x", "plain context line", "unicode ünïcödé ✓ 日本語", "   ", "line with \x1b not-an-escape"}
+	for i, ls := range allLineStyles {
+		for _, text := range texts {
+			for _, cursor := range []bool{false, true} {
+				want := cursorMerged(ls.style, cursor).Render(text)
+				if got := ls.sgr(cursor).render(text); got != want {
+					t.Errorf("lineStyle %d: sgr(%v).render(%q) = %q, want %q (what Render produces)", i, cursor, text, got, want)
 				}
 			}
 		}

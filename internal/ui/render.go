@@ -282,7 +282,7 @@ func wrapRanges(text string, width int) [][2]int {
 // Wrapping first and styling second is what keeps a cursor row's wrapped
 // height identical to the same line's without it — see wrapRanges — and means
 // no caller has to strip lipgloss's plain padding back off before re-padding.
-func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, width int, cursor bool) []string {
+func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lineStyle, width int, cursor bool) []string {
 	// Expanding with an offset mapping costs an int per byte of the line, so
 	// it's only done when there is something to relocate onto the expanded
 	// text — see expandTabs.
@@ -411,6 +411,33 @@ func blankLine(width int, isCursor bool) string {
 	return padRow("", width, true)
 }
 
+// sgr is the ANSI prefix and suffix lipgloss puts around text rendered in one
+// style. Rendering a whole line in a single uniform style is then a
+// concatenation rather than a fresh trip through Render, which re-reads every
+// style property and runs the padding/alignment/border/margin pipeline to
+// rediscover a sequence that never changes — most of the cost of a reflow,
+// paid once per line of the commit.
+//
+// It is only equivalent for a style setting none of width/padding/border/
+// margin/transform, and for text with no tab or newline: exactly what a
+// lineStyle carries and what renderLineWithBaseSpans is handed, since
+// wrapStyledRows has already expanded tabs and wrapped. Each lineStyle is
+// pinned against lipgloss's own output — see TestLineStyleSGRMatchesLipgloss.
+type sgr struct{ prefix, suffix string }
+
+// newSGR derives the pair from lipgloss itself, by rendering a sentinel and
+// splitting around it, rather than assembling escape codes here — so a
+// lipgloss upgrade that changes the sequence changes this with it instead of
+// silently diverging from every other Render in the app.
+func newSGR(s lipgloss.Style) sgr {
+	const sentinel = "\x00"
+	out := s.Render(sentinel)
+	i := strings.Index(out, sentinel)
+	return sgr{prefix: out[:i], suffix: out[i+len(sentinel):]}
+}
+
+func (g sgr) render(text string) string { return g.prefix + text + g.suffix }
+
 // cursorMerged merges the cursor row's background into base when isCursor is
 // true, else returns base unchanged. Only safe for a row rendered in a single
 // uniform style; content that composites independently-rendered spans threads
@@ -451,7 +478,7 @@ type lineMatch struct {
 // cursor merges the cursor row's background into whatever style would
 // otherwise apply, except inside a match, whose own background is already the
 // line's strongest signal and would only be muted by it.
-func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, cursor bool) string {
+func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch, base lineStyle, cursor bool) string {
 	// An empty line has no segment to render at all: the walk below produces
 	// a single boundary point and no piece. Said here so the fast path can
 	// stay a plain Render, which for a styled empty string would emit a bare
@@ -465,7 +492,11 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch,
 	// and no search hit. Pinned by
 	// TestRenderLineWithBaseSpansFastPathMatchesGeneralPath.
 	if len(spans) == 0 && len(matches) == 0 {
-		return cursorMerged(base, cursor).Render(text)
+		// Render also expands tabs (see maybeConvertTabs, whose default
+		// lipglossTabWidth mirrors); sgr only wraps, so do that part here. On
+		// the hot path it's a scan that finds nothing, wrapStyledRows having
+		// expanded already.
+		return base.sgr(cursor).render(expandTabs(text))
 	}
 
 	bounds := map[int]bool{0: true, len(text): true}
@@ -497,10 +528,7 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch,
 				return s.style
 			}
 		}
-		if cursor {
-			return base.Background(cursorRowBg)
-		}
-		return base
+		return cursorMerged(base.style, cursor)
 	}
 
 	var b strings.Builder

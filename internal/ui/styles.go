@@ -1,6 +1,10 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"sync"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // cursorRowBg is the background applied to the row under the cursor. It is
 // merged into each field's own style rather than replacing it, so a selected
@@ -117,3 +121,47 @@ func matchStyle(active bool) lipgloss.Style {
 	}
 	return searchMatchStyle
 }
+
+// lineStyle is a style a whole line can be rendered in, bundled with the ANSI
+// sequences lipgloss produces for it (see sgr) — plain, and with the cursor
+// row's background merged in. renderLineWithBaseSpans renders a line carrying
+// no span and no match through those instead of calling Render per line.
+//
+// The sequences are derived on first use rather than at package init, because
+// lipgloss fixes its color profile the first time anything renders: deriving
+// eagerly would beat an explicit SetColorProfile to it (the tests set one, see
+// commititem_test.go's init) and bake in a profile nothing else is using.
+// Deferring makes this exactly as late as the Render it replaces.
+type lineStyle struct {
+	style lipgloss.Style
+	seqs  func() [2]sgr
+}
+
+func newLineStyle(s lipgloss.Style) lineStyle {
+	return lineStyle{
+		style: s,
+		seqs: sync.OnceValue(func() [2]sgr {
+			return [2]sgr{newSGR(s), newSGR(s.Background(cursorRowBg))}
+		}),
+	}
+}
+
+// sgr is the precomputed sequence for a plain row or the cursor's.
+func (l lineStyle) sgr(cursor bool) sgr {
+	seqs := l.seqs()
+	if cursor {
+		return seqs[1]
+	}
+	return seqs[0]
+}
+
+// The line styles a whole line is ever rendered in. plainLine is the colorless
+// fallback for header/message and stats rows, which carry their color in spans
+// rather than in the line's base style.
+var (
+	plainLine       = newLineStyle(lipgloss.NewStyle())
+	diffAddLine     = newLineStyle(diffAddStyle)
+	diffDeleteLine  = newLineStyle(diffDeleteStyle)
+	diffContextLine = newLineStyle(diffContextStyle)
+	fileHeaderLine  = newLineStyle(fileHeaderStyle)
+)

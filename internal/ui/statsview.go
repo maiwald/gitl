@@ -206,7 +206,7 @@ func statText(text string, matches []lineMatch, cursor bool) string {
 	if len(matches) == 0 {
 		return cursorMerged(lipgloss.NewStyle(), cursor).Render(text)
 	}
-	return renderLineWithBaseSpans(text, nil, matches, lipgloss.NewStyle(), cursor)
+	return renderLineWithBaseSpans(text, nil, matches, plainLine, cursor)
 }
 
 // formatCountsStyled renders "+N -M" as one styled string, coloring each half

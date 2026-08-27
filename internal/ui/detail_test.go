@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/maiwald/gitl/internal/git"
 )
 
@@ -339,7 +338,7 @@ func TestRenderLineWithBaseSpansMatchWinsOnOverlap(t *testing.T) {
 	matchEnd := matchStart + len("Lovelace")
 	matches := []lineMatch{{start: matchStart, end: matchEnd, active: true}}
 
-	got := renderLineWithBaseSpans(text, spans, matches, lipgloss.NewStyle(), false)
+	got := renderLineWithBaseSpans(text, spans, matches, plainLine, false)
 
 	wantMatch := searchActiveMatchStyle.Render("Lovelace")
 	if !strings.Contains(got, wantMatch) {
