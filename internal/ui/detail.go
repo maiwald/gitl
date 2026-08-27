@@ -157,12 +157,16 @@ func (m *DetailModel) reflow() {
 	// block's own start, which is what the offsets below record; renderRows
 	// then lays the lines out and rowOf rebases those indices onto rows.
 	var lines []lineRenderer
-	headerLines, messageMatchLines := m.renderHeaderBlock(m.width)
+	// The header block starts at line 0, so its match lines need no block
+	// offset below — renderHeaderLines emits one logical line per line
+	// headerLinesFor produced, however many rows each wraps to.
+	headerText, _, _, headerSpans := headerLinesFor(m.detail)
+	headerLines, messageMatchLines := renderHeaderLines(headerText, headerSpans, m.width, m.messageMatches, m.activeMatchIn(matchBlockMessage), m.searchDismissed)
 	lines = append(lines, headerLines...)
 	lines = append(lines, blankRow(m.width))
 
 	statsStart := len(lines)
-	statLines, statMatchLines := m.renderStatsBlock(m.width)
+	statLines, statMatchLines := statLinesFor(m.detail.Files, m.width, m.statMatches, m.activeMatchIn(matchBlockStats), m.searchDismissed)
 	if len(statLines) > 0 {
 		lines = append(lines, statLines...)
 		lines = append(lines, blankRow(m.width))
@@ -296,22 +300,6 @@ func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRang
 		return nil, nil, nil
 	}
 	return RenderDiff(m.detail.Files, width, m.diffMatches, m.activeMatchIn(matchBlockDiff), m.searchDismissed)
-}
-
-// renderStatsBlock describes the stats block at width, honoring the current
-// search state. Its matchLines are logical line indices counted from the
-// block's own start — see reflow, which rebases them.
-func (m *DetailModel) renderStatsBlock(width int) (lines []lineRenderer, matchLines []int) {
-	return statLinesFor(m.detail.Files, width, m.statMatches, m.activeMatchIn(matchBlockStats), m.searchDismissed)
-}
-
-// renderHeaderBlock describes the commit metadata/message block at width,
-// honoring the current search state. Its matchLines are logical line
-// indices, which for this block are also indices into headerLinesFor's own
-// lines (one logical line each, however many rows they wrap to).
-func (m *DetailModel) renderHeaderBlock(width int) (lines []lineRenderer, matchLines []int) {
-	headerLines, _, _, headerSpans := headerLinesFor(m.detail)
-	return renderHeaderLines(headerLines, headerSpans, width, m.messageMatches, m.activeMatchIn(matchBlockMessage), m.searchDismissed)
 }
 
 // buildSections assembles one reflow pass's sticky-header/[ ]-navigation
