@@ -187,25 +187,48 @@ func padRow(row string, width int, cursor bool) string {
 // would actually lay out.
 const lipglossTabWidth = 4
 
-// expandTabs replaces tabs with lipglossTabWidth spaces, also returning a
+// tabSpaces is the run of spaces a single tab expands to.
+const tabSpaces = "    "
+
+// expandTabs replaces tabs with lipglossTabWidth spaces.
+//
+// It's the half of expandTabsMapped that most lines need: relocating offsets
+// onto the expanded text costs an int per byte of the line, and a reflow would
+// otherwise pay that on every tab-indented line of the commit — which, for
+// source code, is nearly all of them, while carrying neither an intraline span
+// nor a search match to relocate.
+func expandTabs(text string) string {
+	return strings.ReplaceAll(text, "\t", tabSpaces)
+}
+
+// expandTabsMapped expands tabs like expandTabs and additionally returns a
 // mapping from each byte offset in text to its offset in the result (nil for
 // the identity mapping, when there was nothing to expand), so span and match
 // offsets computed against the original text can follow it.
-func expandTabs(text string) (string, offsetMap) {
-	if !strings.Contains(text, "\t") {
+func expandTabsMapped(text string) (string, offsetMap) {
+	tabs := strings.Count(text, "\t")
+	if tabs == 0 {
 		return text, nil
 	}
 	var b strings.Builder
+	b.Grow(len(text) + tabs*(lipglossTabWidth-1))
 	offsets := make([]int, len(text)+1)
+	prev := 0
 	for i := 0; i < len(text); i++ {
-		offsets[i] = b.Len()
-		if text[i] == '\t' {
-			b.WriteString(strings.Repeat(" ", lipglossTabWidth))
+		if text[i] != '\t' {
 			continue
 		}
-		b.WriteByte(text[i])
+		b.WriteString(text[prev:i])
+		for j := prev; j <= i; j++ {
+			offsets[j] = b.Len() - (i - j)
+		}
+		b.WriteString(tabSpaces)
+		prev = i + 1
 	}
-	offsets[len(text)] = b.Len()
+	b.WriteString(text[prev:])
+	for j := prev; j <= len(text); j++ {
+		offsets[j] = b.Len() - (len(text) - j)
+	}
 	return b.String(), func(i int) int { return offsets[i] }
 }
 
@@ -260,9 +283,17 @@ func wrapRanges(text string, width int) [][2]int {
 // height identical to the same line's without it — see wrapRanges — and means
 // no caller has to strip lipgloss's plain padding back off before re-padding.
 func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lipgloss.Style, width int, cursor bool) []string {
-	text, expanded := expandTabs(text)
-	spans = shiftSpans(spans, expanded)
-	matches = shiftMatches(matches, expanded)
+	// Expanding with an offset mapping costs an int per byte of the line, so
+	// it's only done when there is something to relocate onto the expanded
+	// text — see expandTabs.
+	if len(spans) == 0 && len(matches) == 0 {
+		text = expandTabs(text)
+	} else {
+		var expanded offsetMap
+		text, expanded = expandTabsMapped(text)
+		spans = shiftSpans(spans, expanded)
+		matches = shiftMatches(matches, expanded)
+	}
 
 	ranges := wrapRanges(text, width)
 	rows := make([]string, 0, len(ranges))
@@ -279,7 +310,7 @@ func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lip
 
 // offsetMap relocates a byte offset in one version of a line's plain text onto
 // another: past a rendering prefix the offsets were computed without
-// (shiftBy), or through tab expansion (expandTabs). A nil offsetMap is the
+// (shiftBy), or through tab expansion (expandTabsMapped). A nil offsetMap is the
 // identity, which shiftSpans/shiftMatches take as "nothing to do".
 type offsetMap func(int) int
 
