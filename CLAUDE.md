@@ -52,7 +52,8 @@ internal/ui/               Bubble Tea models, no direct git shelling out
                            status bar, StartTarget dispatch (the plain list, or
                            a patch piped in from git)
   keys.go                  shared vim KeyMap
-  styles.go                lipgloss style definitions
+  styles.go                lipgloss style definitions, plus lineStyle: a style
+                           bundled with the ANSI sequence lipgloss emits for it
   viewport.go              rowViewport: the scrolling window both views display
                            their rendered rows through
   render.go                primitives every view renders through (clipping/padding
@@ -214,8 +215,8 @@ before every commit — don't commit red.
   refuses while another fetch is in flight and nothing else would ask
   again.
 - `DetailModel.cursorLine` is a tig-style line cursor (index into the same
-  flattened line space `leftVP`'s scroll offset lives in), decoupled from
-  `leftVP.YOffset` the same way `ListModel.cursor` is decoupled from
+  flattened line space `DetailModel.vp`'s scroll offset lives in), decoupled
+  from `vp.YOffset` the same way `ListModel.cursor` is decoupled from
   `vp.YOffset` — movement moves the cursor, then the viewport follows it
   (`setCursor`'s `ensureCursorVisible`), never the reverse. Its highlight
   is part of the rendered content, not something spliced onto the viewport
@@ -257,7 +258,7 @@ before every commit — don't commit red.
   `TestDetailModelCursorPatchMatchesFullReflow` pins the whole arrangement by
   comparing patched content against a full reflow after every kind of jump.
   `BenchmarkDetailCursorMove`/`BenchmarkDetailReflow` are the reason it
-  exists (~11 µs against ~30 ms on an 8000-line diff); if they ever
+  exists (~6 µs against ~13 ms on an 8000-line diff); if they ever
   converge, something has started reflowing on every keypress. They only
   compare a cursor move against a reflow of the *same* commit, though, so
   they cannot see work that merely *re-reads* the content —
@@ -266,14 +267,33 @@ before every commit — don't commit red.
   keypress across two fixture sizes (bytes, not allocation count: the
   regression they were written for moved a megabyte per keystroke in a
   constant 77 allocations).
-- `wrapRanges` and `padRow` (`render.go`) each skip a lipgloss `Render` on
-  the common path — a line that already fits isn't wrapped, and a plain
-  (non-cursor) fill neither truncates nor styles its padding. Those are
-  claims about lipgloss's behavior rather than ours, and they're on the
-  hottest path in the app (a reflow pays both once per line of the whole
-  commit), so `render_test.go` compares each fast path against what lipgloss
-  itself produces: an upgrade that changes either fails there instead of
-  silently changing every rendered row.
+- Four places sidestep lipgloss on the reflow path, which pays every one of
+  them once per line of the whole commit. `wrapRanges` doesn't wrap a line
+  that already fits; `padRow` neither truncates nor styles a plain
+  (non-cursor) fill; `renderLineWithBaseSpans` skips its boundary walk for a
+  line carrying no span and no match; and `lineStyle` (`styles.go`) renders
+  such a line by concatenating the ANSI prefix/suffix lipgloss produces for
+  its style (`sgr`, `render.go`) instead of calling `Render`, which re-reads
+  every style property and runs the padding/alignment/border/margin pipeline
+  to rediscover a sequence that never changes — most of a reflow's cost
+  before it was removed.
+  Every one of those is a claim about lipgloss's behavior rather than ours,
+  so `render_test.go` compares each against what lipgloss itself produces: an
+  upgrade that changes any of them fails there instead of silently changing
+  every rendered row. Two consequences to keep in mind when touching this.
+  `lineStyle`'s sequences are derived on **first use**, not at package init —
+  lipgloss fixes its color profile the first time anything renders, and an
+  explicit `SetColorProfile` (the tests set one) has to be able to get there
+  first. And `Style.Render` also *expands tabs*, which `sgr` does not, so
+  `renderLineWithBaseSpans`' fast path does that itself; a new fast path that
+  forgets to is the failure
+  `TestRenderLineWithBaseSpansFastPathMatchesGeneralPath` exists to catch.
+- `expandTabs` expands tabs and nothing else; `expandTabsMapped` also returns
+  the `offsetMap` relocating a byte offset onto the expanded text, at the cost
+  of an int per byte of the line. `wrapStyledRows` takes the second only when
+  it has a span or a match to relocate — which the great majority of diff
+  lines, tab-indented and carrying neither, do not. Building it
+  unconditionally was 40% of the bytes a reflow allocated.
 - Word-wrapping happens on **plain text**, before any styling
   (`wrapRanges`/`wrapStyledRows` in `render.go`, used by `renderDiffLine`
   and `renderHeaderLines`): the wrap is computed as byte ranges into the

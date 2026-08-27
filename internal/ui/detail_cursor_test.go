@@ -495,8 +495,8 @@ func bytesPerRun(runs int, f func()) uint64 {
 // BenchmarkDetailCursorMove and BenchmarkDetailReflow are the measurement
 // behind repaintCursor: a cursor move must cost a couple of line renders and
 // an O(1) viewport handoff, not a re-render of the whole commit. On an
-// 8000-line diff the two differ by three orders of magnitude (~11 µs against
-// ~30 ms), and if they ever converge, something has started reflowing on every
+// 8000-line diff the two differ by three orders of magnitude (~6 µs against
+// ~13 ms), and if they ever converge, something has started reflowing on every
 // keypress.
 func BenchmarkDetailCursorMove(b *testing.B) {
 	m := NewDetailModel(fixtureBigDetail(40, 200), &jumplist{})
