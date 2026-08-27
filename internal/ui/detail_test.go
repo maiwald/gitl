@@ -74,8 +74,8 @@ func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 8)
 
-	if !strings.Contains(m.leftVP.View(), "message-scroll-marker") {
-		t.Fatalf("leftVP content = %q, want it to contain the commit message", m.leftVP.View())
+	if !strings.Contains(m.vp.View(), "message-scroll-marker") {
+		t.Fatalf("vp content = %q, want it to contain the commit message", m.vp.View())
 	}
 	if m.fileRanges[0].StartLine == 0 {
 		t.Fatalf("fileRanges[0].StartLine = 0, want > 0 (message should precede the diff content)")
@@ -106,12 +106,12 @@ func TestDetailModelShowsStatsBlockBeforeDiff(t *testing.T) {
 	m := NewDetailModel(d, &jumplist{})
 	m.SetSize(80, 30) // tall enough that the stats block isn't scrolled out of view
 
-	view := m.leftVP.View()
+	view := m.vp.View()
 	if !strings.Contains(view, "2 files changed") {
-		t.Fatalf("leftVP content = %q, want it to contain the stats totals line", view)
+		t.Fatalf("vp content = %q, want it to contain the stats totals line", view)
 	}
 	if !strings.Contains(view, "file0.txt") {
-		t.Fatalf("leftVP content = %q, want it to contain the per-file stats line", view)
+		t.Fatalf("vp content = %q, want it to contain the per-file stats line", view)
 	}
 
 	if m.fileRanges[0].StartLine == 0 {
@@ -178,8 +178,8 @@ func TestDetailModelSearchFindsAndJumpsToMatch(t *testing.T) {
 	if total != 2 {
 		t.Fatalf("detail search found %d matches, want 2", total)
 	}
-	if m.leftVP.YOffset != m.diffMatchLines[0] {
-		t.Fatalf("YOffset = %d after the search, want %d (first match's line)", m.leftVP.YOffset, m.diffMatchLines[0])
+	if m.vp.YOffset != m.diffMatchLines[0] {
+		t.Fatalf("YOffset = %d after the search, want %d (first match's line)", m.vp.YOffset, m.diffMatchLines[0])
 	}
 	if want := fileSectionIndex(m.sections, 0); m.currentSection != want {
 		t.Fatalf("currentSection = %d after jumping to the first match, want %d (a.txt)", m.currentSection, want)
@@ -201,8 +201,8 @@ func TestDetailModelSearchFindsMessageMatchButIgnoresMetadata(t *testing.T) {
 	}
 	// The sole match is also the current (n/N) match, so it renders with
 	// searchActiveMatchStyle rather than the plain searchMatchStyle.
-	if !strings.Contains(m.leftVP.View(), searchActiveMatchStyle.Render("MARKER")) {
-		t.Fatalf("leftVP content = %q, want the message match visibly highlighted", m.leftVP.View())
+	if !strings.Contains(m.vp.View(), searchActiveMatchStyle.Render("MARKER")) {
+		t.Fatalf("vp content = %q, want the message match visibly highlighted", m.vp.View())
 	}
 
 	total = runDetailSearch(&m, m.detail.Hash)
@@ -372,7 +372,7 @@ func TestDetailModelHeaderColorsAndIndentationRenderInView(t *testing.T) {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 
-	view := m.leftVP.View()
+	view := m.vp.View()
 	if !strings.Contains(view, shaStyle.Render(d.Hash)) {
 		t.Errorf("view does not contain the hash styled with shaStyle")
 	}
@@ -422,19 +422,19 @@ func TestDetailModelSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T) {
 	if len(m.messageMatches) != 1 || len(m.diffMatches) != 1 {
 		t.Fatalf("messageMatches=%d diffMatches=%d, want 1 and 1", len(m.messageMatches), len(m.diffMatches))
 	}
-	if m.leftVP.YOffset != m.messageMatchLines[0] {
-		t.Fatalf("YOffset after the search = %d, want %d (the message match, visited first)", m.leftVP.YOffset, m.messageMatchLines[0])
+	if m.vp.YOffset != m.messageMatchLines[0] {
+		t.Fatalf("YOffset after the search = %d, want %d (the message match, visited first)", m.vp.YOffset, m.messageMatchLines[0])
 	}
-	if m.fileRanges[0].StartLine <= m.leftVP.YOffset {
-		t.Fatalf("expected the message match's line (%d) to precede the first file's content (starts at %d)", m.leftVP.YOffset, m.fileRanges[0].StartLine)
+	if m.fileRanges[0].StartLine <= m.vp.YOffset {
+		t.Fatalf("expected the message match's line (%d) to precede the first file's content (starts at %d)", m.vp.YOffset, m.fileRanges[0].StartLine)
 	}
 
 	m.NextMatch()
 	if pos, total := m.MatchPosition(); pos != 2 || total != 2 {
 		t.Fatalf("MatchPosition after NextMatch = (%d, %d), want (2, 2)", pos, total)
 	}
-	if m.leftVP.YOffset != m.diffMatchLines[0] {
-		t.Fatalf("YOffset after NextMatch = %d, want %d (the diff match)", m.leftVP.YOffset, m.diffMatchLines[0])
+	if m.vp.YOffset != m.diffMatchLines[0] {
+		t.Fatalf("YOffset after NextMatch = %d, want %d (the diff match)", m.vp.YOffset, m.diffMatchLines[0])
 	}
 }
 
@@ -447,8 +447,8 @@ func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 	if pos, total := m.MatchPosition(); pos != 2 || total != 2 {
 		t.Fatalf("MatchPosition after NextMatch = (%d, %d), want (2, 2)", pos, total)
 	}
-	if m.leftVP.YOffset != m.diffMatchLines[1] {
-		t.Fatalf("YOffset = %d after NextMatch, want %d (second match's line)", m.leftVP.YOffset, m.diffMatchLines[1])
+	if m.vp.YOffset != m.diffMatchLines[1] {
+		t.Fatalf("YOffset = %d after NextMatch, want %d (second match's line)", m.vp.YOffset, m.diffMatchLines[1])
 	}
 	if want := fileSectionIndex(m.sections, 1); m.currentSection != want {
 		t.Fatalf("currentSection = %d after jumping to the second match, want %d (b.txt)", m.currentSection, want)
@@ -512,7 +512,7 @@ func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 
 	// file 0 occupies fileRanges[0]; scroll past its end into file 1.
 	targetOffset := m.fileRanges[0].EndLine
-	for m.leftVP.YOffset < targetOffset {
+	for m.vp.YOffset < targetOffset {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 
@@ -561,13 +561,13 @@ func TestDetailModelStickyHeaderDoesNotDuplicateHeaderWhileScrolling(t *testing.
 	m.SetSize(80, 8)
 
 	target := m.fileRanges[1].StartLine
-	for m.leftVP.YOffset < target {
+	for m.vp.YOffset < target {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 
-	contentTopLine := strings.SplitN(m.leftVP.View(), "\n", 2)[0]
+	contentTopLine := strings.SplitN(m.vp.View(), "\n", 2)[0]
 	if !strings.Contains(contentTopLine, "file1.txt") {
-		t.Fatalf("leftVP.View() top line = %q, want it to already show file1.txt's header", contentTopLine)
+		t.Fatalf("vp.View() top line = %q, want it to already show file1.txt's header", contentTopLine)
 	}
 	stickyLine := strings.SplitN(m.View(), "\n", 2)[0]
 	if strings.Contains(stickyLine, "file1.txt") {
@@ -594,8 +594,8 @@ func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
 	last := len(m.sections) - 1
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
-	if m.currentSection != 1 || m.leftVP.YOffset != m.sections[1].startLine+1 {
-		t.Fatalf("after ']': currentSection=%d YOffset=%d, want section 1 at %d", m.currentSection, m.leftVP.YOffset, m.sections[1].startLine+1)
+	if m.currentSection != 1 || m.vp.YOffset != m.sections[1].startLine+1 {
+		t.Fatalf("after ']': currentSection=%d YOffset=%d, want section 1 at %d", m.currentSection, m.vp.YOffset, m.sections[1].startLine+1)
 	}
 
 	for i := 0; i < last; i++ { // more than enough presses to clamp at the last section
@@ -606,8 +606,8 @@ func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
 	}
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
-	if m.currentSection != last-1 || m.leftVP.YOffset != m.sections[last-1].startLine+1 {
-		t.Fatalf("after '[': currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.leftVP.YOffset, last-1, m.sections[last-1].startLine+1)
+	if m.currentSection != last-1 || m.vp.YOffset != m.sections[last-1].startLine+1 {
+		t.Fatalf("after '[': currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.vp.YOffset, last-1, m.sections[last-1].startLine+1)
 	}
 
 	for i := 0; i < last; i++ { // more than enough presses to clamp at the first section
@@ -639,8 +639,8 @@ func TestDetailModelEnterOnStatsRowJumpsToFile(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	target := fileSectionIndex(m.sections, 1)
-	if m.currentSection != target || m.leftVP.YOffset != m.sections[target].startLine+1 {
-		t.Fatalf("after Enter on file 1's stats row: currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.leftVP.YOffset, target, m.sections[target].startLine+1)
+	if m.currentSection != target || m.vp.YOffset != m.sections[target].startLine+1 {
+		t.Fatalf("after Enter on file 1's stats row: currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.vp.YOffset, target, m.sections[target].startLine+1)
 	}
 }
 
@@ -658,10 +658,10 @@ func TestDetailModelEnterElsewhereIsNoop(t *testing.T) {
 		t.Fatalf("statsFileIndexAt(%d) = ok, want false on the stats heading row", m.cursorLine)
 	}
 	before := m.currentSection
-	beforeOffset := m.leftVP.YOffset
+	beforeOffset := m.vp.YOffset
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.currentSection != before || m.leftVP.YOffset != beforeOffset {
-		t.Fatalf("Enter on the stats heading row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection, m.leftVP.YOffset, before, beforeOffset)
+	if m.currentSection != before || m.vp.YOffset != beforeOffset {
+		t.Fatalf("Enter on the stats heading row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection, m.vp.YOffset, before, beforeOffset)
 	}
 
 	m.jumpCursor(m.fileRanges[0].StartLine) // a file's own header row inside the diff (not a stats row)
@@ -669,10 +669,10 @@ func TestDetailModelEnterElsewhereIsNoop(t *testing.T) {
 		t.Fatalf("statsFileIndexAt(%d) = ok, want false on a file's own header row inside the diff", m.cursorLine)
 	}
 	before = m.currentSection
-	beforeOffset = m.leftVP.YOffset
+	beforeOffset = m.vp.YOffset
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.currentSection != before || m.leftVP.YOffset != beforeOffset {
-		t.Fatalf("Enter on a file's own header row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection, m.leftVP.YOffset, before, beforeOffset)
+	if m.currentSection != before || m.vp.YOffset != beforeOffset {
+		t.Fatalf("Enter on a file's own header row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection, m.vp.YOffset, before, beforeOffset)
 	}
 }
 
@@ -693,8 +693,8 @@ func TestDetailModelNextFileReachesShortTrailingFile(t *testing.T) {
 	for i := 0; i < target; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
 	}
-	if m.currentSection != target || m.leftVP.YOffset != m.sections[target].startLine+1 {
-		t.Fatalf("after %d ']' presses: currentSection=%d YOffset=%d, want section %d at %d", target, m.currentSection, m.leftVP.YOffset, target, m.sections[target].startLine+1)
+	if m.currentSection != target || m.vp.YOffset != m.sections[target].startLine+1 {
+		t.Fatalf("after %d ']' presses: currentSection=%d YOffset=%d, want section %d at %d", target, m.currentSection, m.vp.YOffset, target, m.sections[target].startLine+1)
 	}
 }
 
@@ -726,8 +726,8 @@ func TestDetailModelNoStickyHeaderWithoutFiles(t *testing.T) {
 	}, &jumplist{})
 	m.SetSize(80, 24)
 
-	if m.leftVP.Height != 24 {
-		t.Fatalf("leftVP.Height = %d, want 24 (no row reserved without files)", m.leftVP.Height)
+	if m.vp.Height != 24 {
+		t.Fatalf("vp.Height = %d, want 24 (no row reserved without files)", m.vp.Height)
 	}
 }
 

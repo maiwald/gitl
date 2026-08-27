@@ -33,7 +33,7 @@ func TestDetailModelCursorDefaultsToTopLine(t *testing.T) {
 		t.Fatalf("cursorLine = %d, want 0", m.cursorLine)
 	}
 	want := shaStyle.Background(cursorRowBg).Render(d.Hash)
-	if !strings.Contains(m.leftVP.View(), want) {
+	if !strings.Contains(m.vp.View(), want) {
 		t.Fatalf("view does not contain the hash styled with the cursor background merged in")
 	}
 }
@@ -50,10 +50,10 @@ func TestDetailModelCursorMovesWithJK(t *testing.T) {
 	if m.cursorLine != 1 {
 		t.Fatalf("cursorLine after Down = %d, want 1", m.cursorLine)
 	}
-	if strings.Contains(m.leftVP.View(), shaStyle.Background(cursorRowBg).Render(d.Hash)) {
+	if strings.Contains(m.vp.View(), shaStyle.Background(cursorRowBg).Render(d.Hash)) {
 		t.Fatal("hash line still shows the cursor background after moving off it")
 	}
-	if !strings.Contains(m.leftVP.View(), authorStyle.Background(cursorRowBg).Render(d.AuthorName)) {
+	if !strings.Contains(m.vp.View(), authorStyle.Background(cursorRowBg).Render(d.AuthorName)) {
 		t.Fatal("author line does not show the cursor background after moving onto it")
 	}
 
@@ -100,8 +100,8 @@ func TestDetailModelCursorScrollFollowsOnSmallViewport(t *testing.T) {
 	if m.cursorLine != 10 {
 		t.Fatalf("cursorLine = %d, want 10", m.cursorLine)
 	}
-	if m.leftVP.YOffset > m.cursorLine || m.cursorLine >= m.leftVP.YOffset+m.leftVP.Height {
-		t.Fatalf("cursor %d not visible with YOffset=%d height=%d", m.cursorLine, m.leftVP.YOffset, m.leftVP.Height)
+	if m.vp.YOffset > m.cursorLine || m.cursorLine >= m.vp.YOffset+m.vp.Height {
+		t.Fatalf("cursor %d not visible with YOffset=%d height=%d", m.cursorLine, m.vp.YOffset, m.vp.Height)
 	}
 }
 
@@ -111,7 +111,7 @@ func TestDetailModelCursorScrollFollowsOnSmallViewport(t *testing.T) {
 func TestDetailModelHalfPageMovesCursor(t *testing.T) {
 	d := fixtureDetailWithFiles(2, 20)
 	m := NewDetailModel(d, &jumplist{})
-	// leftVP.Height is m.height minus 1 (the sticky file-header row), so
+	// vp.Height is m.height minus 1 (the sticky file-header row), so
 	// half page here is (10-1)/2 = 4, not simply half of 10.
 	m.SetSize(80, 10)
 
@@ -142,8 +142,8 @@ func TestDetailModelCursorHighlightsDiffLine(t *testing.T) {
 	for m.cursorLine < target {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
-	if !strings.Contains(m.leftVP.View(), fileHeaderStyle.Background(cursorRowBg).Render("M file0.txt")) {
-		t.Fatalf("view does not contain the file header styled with the cursor background merged in: %q", m.leftVP.View())
+	if !strings.Contains(m.vp.View(), fileHeaderStyle.Background(cursorRowBg).Render("M file0.txt")) {
+		t.Fatalf("view does not contain the file header styled with the cursor background merged in: %q", m.vp.View())
 	}
 }
 
@@ -203,7 +203,7 @@ func TestDetailModelCursorHighlightFillsFullRowWidth(t *testing.T) {
 	m.SetSize(80, 24)
 	m.Update(tea.KeyMsg{Type: tea.KeyDown}) // onto the short "Author: ..." line
 
-	row := strings.Split(m.leftVP.View(), "\n")[m.cursorLine]
+	row := strings.Split(m.vp.View(), "\n")[m.cursorLine]
 	if got := strings.Count(row, cursorFillOpen()); got < 2 {
 		t.Fatalf("row = %q, cursor background open code appears %d times, want >= 2 (text span + trailing fill)", row, got)
 	}
@@ -225,7 +225,7 @@ func TestDetailModelCursorHighlightsBlankLine(t *testing.T) {
 	for m.cursorLine != 5 {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
-	row := strings.Split(m.leftVP.View(), "\n")[m.cursorLine]
+	row := strings.Split(m.vp.View(), "\n")[m.cursorLine]
 	if !strings.Contains(row, cursorFillOpen()) {
 		t.Fatalf("blank line row = %q, want it to show the cursor background despite having no text", row)
 	}
@@ -247,7 +247,7 @@ func TestDetailModelCursorHighlightsStatsRow(t *testing.T) {
 		t.Fatalf("View() = %q, want the sticky header to show the stats section title after jumping to it", m.View())
 	}
 
-	row := strings.SplitN(m.leftVP.View(), "\n", 2)[0]
+	row := strings.SplitN(m.vp.View(), "\n", 2)[0]
 	if !strings.Contains(row, cursorFillOpen()) {
 		t.Fatalf("stats header row = %q, want it to show the cursor background", row)
 	}
@@ -363,9 +363,9 @@ func TestDetailModelWrappedCursorBlockIsFullyVisible(t *testing.T) {
 	for prev := -1; m.cursorLine != prev; {
 		prev = m.cursorLine
 		last := m.blockEnd(m.cursorLine) - 1
-		if last >= m.leftVP.YOffset+m.leftVP.Height {
+		if last >= m.vp.YOffset+m.vp.Height {
 			t.Fatalf("cursor block [%d,%d] runs past the visible range [%d,%d)",
-				m.cursorLine, last, m.leftVP.YOffset, m.leftVP.YOffset+m.leftVP.Height)
+				m.cursorLine, last, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
 		}
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}

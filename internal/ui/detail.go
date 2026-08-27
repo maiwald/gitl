@@ -33,7 +33,7 @@ type DetailModel struct {
 	sections       []detailSection
 	currentSection int
 
-	leftVP rowViewport
+	vp rowViewport
 
 	width, height int
 
@@ -61,8 +61,8 @@ type DetailModel struct {
 	diffMatchLines    []int // parallel to diffMatches: wrapped-line index within the flattened content (offset applied)
 
 	// cursorLine is a tig-style line cursor: an index into the same
-	// flattened content line space leftVP's scroll offset lives in (see
-	// contentLen). Distinct from leftVP.YOffset — movement keys move the
+	// flattened content line space vp's scroll offset lives in (see
+	// contentLen). Distinct from vp.YOffset — movement keys move the
 	// cursor and the viewport follows it (setCursor's ensureCursorVisible),
 	// not the reverse. Every reflow re-clamps it to [0, contentLen-1], so a
 	// resize that rewraps the content can't leave it out of bounds; its
@@ -151,27 +151,25 @@ func (m *DetailModel) reflow() {
 		return
 	}
 
-	diffWidth := m.width
-
 	// Every block contributes logical lines only, knowing neither where its
 	// lines land nor which of them the cursor is on. So the indices a block
 	// returns (a file's range, a match's line) count logical lines from the
 	// block's own start, which is what the offsets below record; renderRows
 	// then lays the lines out and rowOf rebases those indices onto rows.
 	var lines []lineRenderer
-	headerLines, messageMatchLines := m.renderHeaderBlock(diffWidth)
+	headerLines, messageMatchLines := m.renderHeaderBlock(m.width)
 	lines = append(lines, headerLines...)
-	lines = append(lines, blankRow(diffWidth))
+	lines = append(lines, blankRow(m.width))
 
 	statsStart := len(lines)
-	statLines, statMatchLines := m.renderStatsBlock(diffWidth)
+	statLines, statMatchLines := m.renderStatsBlock(m.width)
 	if len(statLines) > 0 {
 		lines = append(lines, statLines...)
-		lines = append(lines, blankRow(diffWidth))
+		lines = append(lines, blankRow(m.width))
 	}
 
 	diffStart := len(lines)
-	diffLines, fileRanges, diffMatchLines := m.renderDiffBlock(diffWidth)
+	diffLines, fileRanges, diffMatchLines := m.renderDiffBlock(m.width)
 	lines = append(lines, diffLines...)
 
 	m.lines = lines
@@ -201,11 +199,11 @@ func (m *DetailModel) reflow() {
 		m.diffMatchLines[i] = m.rowOf(diffStart + ln)
 	}
 
-	m.leftVP.Height = m.height
+	m.vp.Height = m.height
 	if len(m.fileRanges) > 0 {
-		m.leftVP.Height--
+		m.vp.Height--
 	}
-	m.leftVP.Height = max(m.leftVP.Height, 0)
+	m.vp.Height = max(m.vp.Height, 0)
 	// rowViewport.SetYOffset clamps to the content's own max scroll position,
 	// which would leave a short trailing file's landing line (see
 	// sectionContentStart) unreachable as the top-of-viewport line. Pad with
@@ -214,7 +212,7 @@ func (m *DetailModel) reflow() {
 	// and the clamp below bound themselves to the real content.
 	if len(m.fileRanges) > 0 {
 		lastStart := m.fileRanges[len(m.fileRanges)-1].StartLine
-		if need := lastStart + 1 + m.leftVP.Height - len(m.content); need > 0 {
+		if need := lastStart + 1 + m.vp.Height - len(m.content); need > 0 {
 			m.content = append(m.content, make([]string, need)...)
 		}
 	}
@@ -249,7 +247,7 @@ func (m DetailModel) rowOf(logical int) int {
 // It's also where a scroll offset left past the end of shrunken content gets
 // pinned back to the bottom.
 func (m *DetailModel) setContent() {
-	m.leftVP.SetRows(m.content)
+	m.vp.SetRows(m.content)
 }
 
 // repaintCursor re-renders the logical line the cursor left (from) and the
@@ -481,9 +479,9 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 	case key.Matches(msg, DefaultKeyMap.Down):
 		m.moveCursor(1)
 	case key.Matches(msg, DefaultKeyMap.HalfPageUp):
-		m.moveCursor(-halfPage(m.leftVP.Height))
+		m.moveCursor(-halfPage(m.vp.Height))
 	case key.Matches(msg, DefaultKeyMap.HalfPageDown):
-		m.moveCursor(halfPage(m.leftVP.Height))
+		m.moveCursor(halfPage(m.vp.Height))
 	case key.Matches(msg, DefaultKeyMap.Top):
 		m.jumpCursor(0)
 	case key.Matches(msg, DefaultKeyMap.Bottom):
@@ -566,17 +564,17 @@ func (m *DetailModel) setCursor(pos int) {
 // except when the block is taller than the viewport, where showing its start
 // is the best that can be done.
 func (m *DetailModel) ensureCursorVisible() {
-	if m.leftVP.Height <= 0 {
+	if m.vp.Height <= 0 {
 		return
 	}
 	last := m.blockEnd(m.cursorLine) - 1
-	if last-m.cursorLine >= m.leftVP.Height {
+	if last-m.cursorLine >= m.vp.Height {
 		last = m.cursorLine
 	}
-	if m.cursorLine < m.leftVP.YOffset {
-		m.leftVP.SetYOffset(m.cursorLine)
-	} else if last >= m.leftVP.YOffset+m.leftVP.Height {
-		m.leftVP.SetYOffset(last - m.leftVP.Height + 1)
+	if m.cursorLine < m.vp.YOffset {
+		m.vp.SetYOffset(m.cursorLine)
+	} else if last >= m.vp.YOffset+m.vp.Height {
+		m.vp.SetYOffset(last - m.vp.Height + 1)
 	}
 }
 
@@ -639,7 +637,7 @@ func (m *DetailModel) landOnLine(line int) {
 	from := m.cursorLine
 	m.cursorLine = m.blockStart(line)
 	m.repaintCursor(from)
-	m.leftVP.SetYOffset(line)
+	m.vp.SetYOffset(line)
 	m.syncHighlightFromScroll()
 }
 
@@ -661,7 +659,7 @@ func (m *DetailModel) syncHighlightFromScroll() {
 	if len(m.sections) == 0 {
 		return
 	}
-	m.currentSection = sectionAt(m.sections, m.leftVP.YOffset)
+	m.currentSection = sectionAt(m.sections, m.vp.YOffset)
 }
 
 // computeMatches finds every occurrence of term across this commit's header
@@ -815,9 +813,9 @@ func (m DetailModel) View() string {
 		return ""
 	}
 	if len(m.fileRanges) == 0 {
-		return m.leftVP.View()
+		return m.vp.View()
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.renderStickyHeader(), m.leftVP.View())
+	return lipgloss.JoinVertical(lipgloss.Left, m.renderStickyHeader(), m.vp.View())
 }
 
 // renderStickyHeader renders the sticky row's title: "Commit" for the
@@ -829,7 +827,7 @@ func (m DetailModel) View() string {
 // early would show that title twice. sectionContentStart accounts for this,
 // so a [ / ] jump still shows the new title immediately.
 func (m DetailModel) renderStickyHeader() string {
-	s := m.sections[sectionAt(m.sections, m.leftVP.YOffset-1)]
+	s := m.sections[sectionAt(m.sections, m.vp.YOffset-1)]
 	switch s.kind {
 	case sectionKindStats:
 		return renderClipped(fileHeaderStyle, statsSectionTitle, m.width)
