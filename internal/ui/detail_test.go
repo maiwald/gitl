@@ -429,9 +429,9 @@ func TestDetailModelSearchOrdersMessageMatchesBeforeDiffMatches(t *testing.T) {
 		t.Fatalf("expected the message match's line (%d) to precede the first file's content (starts at %d)", m.leftVP.YOffset, m.fileRanges[0].StartLine)
 	}
 
-	pos, total := m.NextMatch()
-	if pos != 2 || total != 2 {
-		t.Fatalf("NextMatch = (%d, %d), want (2, 2)", pos, total)
+	m.NextMatch()
+	if pos, total := m.MatchPosition(); pos != 2 || total != 2 {
+		t.Fatalf("MatchPosition after NextMatch = (%d, %d), want (2, 2)", pos, total)
 	}
 	if m.leftVP.YOffset != m.diffMatchLines[0] {
 		t.Fatalf("YOffset after NextMatch = %d, want %d (the diff match)", m.leftVP.YOffset, m.diffMatchLines[0])
@@ -443,9 +443,9 @@ func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 	m.SetSize(80, 4)
 	runDetailSearch(&m, "needle")
 
-	pos, total := m.NextMatch()
-	if pos != 2 || total != 2 {
-		t.Fatalf("NextMatch = (%d, %d), want (2, 2)", pos, total)
+	m.NextMatch()
+	if pos, total := m.MatchPosition(); pos != 2 || total != 2 {
+		t.Fatalf("MatchPosition after NextMatch = (%d, %d), want (2, 2)", pos, total)
 	}
 	if m.leftVP.YOffset != m.diffMatchLines[1] {
 		t.Fatalf("YOffset = %d after NextMatch, want %d (second match's line)", m.leftVP.YOffset, m.diffMatchLines[1])
@@ -454,17 +454,17 @@ func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 		t.Fatalf("currentSection = %d after jumping to the second match, want %d (b.txt)", m.currentSection, want)
 	}
 
-	pos, total = m.NextMatch()
-	if pos != 1 || total != 2 {
-		t.Fatalf("NextMatch past the last match = (%d, %d), want wrap to (1, 2)", pos, total)
+	m.NextMatch()
+	if pos, total := m.MatchPosition(); pos != 1 || total != 2 {
+		t.Fatalf("MatchPosition after NextMatch past the last match = (%d, %d), want wrap to (1, 2)", pos, total)
 	}
 	if want := fileSectionIndex(m.sections, 0); m.currentSection != want {
 		t.Fatalf("currentSection = %d after wrapping to the first match, want %d (a.txt)", m.currentSection, want)
 	}
 
-	pos, _ = m.PrevMatch()
-	if pos != 2 {
-		t.Fatalf("PrevMatch before the first match = %d, want wrap to 2", pos)
+	m.PrevMatch()
+	if pos, _ := m.MatchPosition(); pos != 2 {
+		t.Fatalf("MatchPosition after PrevMatch before the first match = %d, want wrap to 2", pos)
 	}
 }
 
@@ -480,7 +480,8 @@ func TestDetailModelEmptyTermRemovesHighlightState(t *testing.T) {
 	if pos, total := m.MatchPosition(); pos != 0 || total != 0 {
 		t.Fatalf("MatchPosition after clearing the term = (%d, %d), want (0, 0)", pos, total)
 	}
-	if _, total := m.NextMatch(); total != 0 {
+	m.NextMatch()
+	if _, total := m.MatchPosition(); total != 0 {
 		t.Fatalf("NextMatch after clearing the term should be a no-op, total = %d", total)
 	}
 }

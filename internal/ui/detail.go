@@ -748,19 +748,20 @@ func (m DetailModel) activeMatchIn(block matchBlock) int {
 }
 
 // NextMatch and PrevMatch cycle to the following/preceding match across the
-// combined message+stats+diff sequence, wrapping at both ends, and report the
-// new 1-based position and total count.
-func (m *DetailModel) NextMatch() (pos, total int) { return m.stepMatch(1) }
-func (m *DetailModel) PrevMatch() (pos, total int) { return m.stepMatch(-1) }
+// combined message+stats+diff sequence, wrapping at both ends. Where that
+// left the position is read back through MatchPosition, which is what the
+// status bar displays; unlike the list's, this stepping needs no fetch and so
+// has nothing to report to its caller.
+func (m *DetailModel) NextMatch() { m.stepMatch(1) }
+func (m *DetailModel) PrevMatch() { m.stepMatch(-1) }
 
-func (m *DetailModel) stepMatch(delta int) (pos, total int) {
-	total = m.totalMatches()
+func (m *DetailModel) stepMatch(delta int) {
+	total := m.totalMatches()
 	if total == 0 {
-		return 0, 0
+		return
 	}
 	m.setMatchPos(stepMatchPos(m.matchPos, delta, total))
 	m.jumpToMatch()
-	return m.matchPos + 1, total
 }
 
 // jumpToMatch scrolls the diff panel to the current match, whichever block it
