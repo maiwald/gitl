@@ -22,7 +22,6 @@ const emptyTreeHash = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // Kind is EntryCommit for every CommitDetail FetchCommitDetail builds;
 // EntryDetail (worktree.go) builds the other two kinds directly, with Commit
 // and Body left zero.
-
 type CommitDetail struct {
 	Kind EntryKind
 	Commit

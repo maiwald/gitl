@@ -42,12 +42,10 @@ type StartTarget struct {
 func (t StartTarget) opensDetail() bool { return t.Piped != nil }
 
 // opensList reports whether the commit list gets loaded at all. Not the
-// negation of opensDetail: a `gitl <rev>` jump opens a detail view *and*
-// loads the list behind it (so ctrl-o can reach the commit's place in
-// history), while `--staged`/`--diff` have no list at any point.
-// A piped patch loads the list only when its preamble named a commit, which
-// is what gives ctrl-o somewhere to go; a bare `git diff` has no position in
-// history to return to.
+// negation of opensDetail: a piped patch whose preamble named a commit opens
+// a detail view *and* loads the list behind it, which is what gives ctrl-o
+// somewhere to go. A bare `git diff` has no position in history to return to,
+// so it gets no list at any point.
 func (t StartTarget) opensList() bool {
 	return t.Piped == nil || t.Piped.Hash != ""
 }
@@ -75,10 +73,10 @@ type Model struct {
 	lastError error
 	summaries []git.EntrySummary // canonical copy, mirrored into list.leading as it and the list each become available
 
-	// pendingListPos is a CLI-requested list position (`gitl <rev>`) not yet
-	// applied, because the list or the resolved position is still missing —
-	// two independent halves that can land in either order, joined by
-	// pumpPendingListPos.
+	// pendingListPos is the list position a piped patch's commit resolved to,
+	// not yet applied because the list or the resolved position is still
+	// missing — two independent halves that can land in either order, joined
+	// by pumpPendingListPos.
 	pendingListPos *int
 
 	searchPromptOpen bool
@@ -227,11 +225,10 @@ type worktreeSummariesLoadedMsg struct {
 	summaries []git.EntrySummary
 }
 
-// listPositionMsg carries the resolved list position of a CLI-requested
-// revision (`gitl <rev>`), for positioning the list's cursor behind the
-// detail view. found is false when the revision couldn't be resolved, or
-// isn't reachable from HEAD — either way there's no sensible list position
-// and the cursor is left where it is.
+// listPositionMsg carries the list position the commit named by a piped
+// patch's preamble resolved to, for positioning the list's cursor behind the
+// detail view. found is false when that commit isn't reachable from HEAD —
+// there's then no sensible list position and the cursor is left where it is.
 type listPositionMsg struct {
 	pos   int
 	found bool
@@ -283,8 +280,8 @@ func openRepoCmd() tea.Cmd {
 
 // loadListCmd fetches the first batch of commits and the total reachable
 // count, two independent reads run concurrently. severity is fatal on the
-// plain startup path (no list, nothing to show) and nonFatal on the
-// `<rev>`-jump path, whose detail view can succeed without the list.
+// plain startup path, where the list is the whole screen, and nonFatal
+// behind a piped patch, whose detail view can succeed without it.
 func loadListCmd(repo *git.Repo, severity errSeverity) tea.Cmd {
 	return runCmd(severity, func(ctx context.Context) (commitsLoadedMsg, error) {
 		var commits []git.Commit
@@ -469,9 +466,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repo = msg.repo
 		if p := m.start.Piped; p != nil {
 			// Only reached with a hash: the header-less case never opened a
-			// repo (see Init). The list loads behind the detail view exactly
-			// as a `gitl <rev>` jump does, so ctrl-o reaches the commit's
-			// place in history.
+			// repo (see Init). The list loads behind the detail view so
+			// ctrl-o reaches the commit's place in history.
 			return m, tea.Batch(
 				fetchPipedCommitCmd(msg.repo, p),
 				loadListCmd(msg.repo, nonFatal),
@@ -517,7 +513,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.found {
 			// Not reachable from HEAD, or not resolvable at all: leave the
 			// cursor at the top rather than error. The detail view opens from
-			// fetchDetailCmd regardless.
+			// fetchPipedCommitCmd regardless.
 			return m, nil
 		}
 		pos := msg.pos
@@ -639,9 +635,9 @@ func (m Model) loadUpToCmd(target int) tea.Cmd {
 	return nil
 }
 
-// pumpPendingListPos applies a CLI-requested list position (`gitl <rev>`) once
-// both of its independent halves are available: the list itself and the
-// resolved position. Called from whichever of the two lands last.
+// pumpPendingListPos applies a piped patch's resolved list position once both
+// of its independent halves are available: the list itself and the resolved
+// position. Called from whichever of the two lands last.
 func (m Model) pumpPendingListPos() (Model, tea.Cmd) {
 	if m.pendingListPos == nil || len(m.list.commits) == 0 {
 		return m, nil

@@ -13,7 +13,7 @@ import (
 // `git rev-list --count hash..HEAD`, which measures reachability distance
 // rather than git log's traversal order: the two diverge once merges are
 // involved, and it would silently place the cursor on the wrong commit instead
-// of failing loudly. The scan runs once per CLI `gitl <rev>` jump.
+// of failing loudly. The scan runs once per piped patch that named a commit.
 func (r *Repo) CommitPosition(ctx context.Context, hash string) (pos int, ok bool, err error) {
 	hashes, err := r.AllCommitHashes(ctx)
 	if err != nil {

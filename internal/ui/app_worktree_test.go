@@ -96,7 +96,7 @@ func TestHeaderlessPipedStartupHasNoListToJumpBackTo(t *testing.T) {
 }
 
 // TestQuitOnBackGate pins down handleDetailViewKey's Back branch: with
-// quitOnBack set (a `gitl --staged` startup jump), Back quits the program
+// quitOnBack set (a piped patch with no list behind it), Back quits the program
 // outright; otherwise it returns to the list, exactly as it does for a real
 // commit's detail view (see TestEnterRequestsDetailAndEscReturnsToSameListState
 // in app_detail_test.go).
@@ -190,11 +190,10 @@ func TestWorktreeSummariesMirroredRegardlessOfArrivalOrder(t *testing.T) {
 	})
 }
 
-// TestEntryDetailFetchFromListFailsNonFatally pins down the severity Enter
-// passes: a synthetic row's fetch can now fail where it previously couldn't,
-// and the list it was opened from has to stay up to receive the error, rather
-// than the whole screen being replaced the way a `--staged` startup failure
-// replaces it.
+// TestEntryDetailFetchFromListFailsNonFatally pins down that Enter on a
+// synthetic row reports a failed fetch nonFatally: the list it was opened
+// from stays up to receive the error, rather than the whole screen being
+// replaced the way a startup failure replaces it.
 func TestEntryDetailFetchFromListFailsNonFatally(t *testing.T) {
 	cmd := fetchEntryDetailCmd(&git.Repo{Path: t.TempDir()}, git.EntryStaged)
 	msg, ok := cmd().(errMsg)
