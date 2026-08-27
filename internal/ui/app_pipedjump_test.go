@@ -23,15 +23,15 @@ func TestRepoOpenedPipedPathDispatchesConcurrentFetches(t *testing.T) {
 	}
 }
 
-// TestRevJumpAppliesRegardlessOfArrivalOrder pins down that revPositionMsg
+// TestPipedJumpAppliesRegardlessOfArrivalOrder pins down that listPositionMsg
 // and commitsLoadedMsg are independent concurrent fetches that can land in
 // either order, and both orders end with the cursor on the resolved
-// position — see pendingJump's doc comment.
-func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
+// position — see pendingListPos's doc comment.
+func TestPipedJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 	t.Run("position before commits", func(t *testing.T) {
 		m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
 		m.width, m.height = 80, 24
-		newModel, _ := m.Update(revPositionMsg{pos: 2, found: true})
+		newModel, _ := m.Update(listPositionMsg{pos: 2, found: true})
 		m = newModel.(Model)
 		newModel, _ = m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
 		m = newModel.(Model)
@@ -45,7 +45,7 @@ func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 		m.width, m.height = 80, 24
 		newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
 		m = newModel.(Model)
-		newModel, _ = m.Update(revPositionMsg{pos: 2, found: true})
+		newModel, _ = m.Update(listPositionMsg{pos: 2, found: true})
 		m = newModel.(Model)
 		if m.list.cursor != 2 {
 			t.Fatalf("cursor = %d, want 2", m.list.cursor)
@@ -53,16 +53,16 @@ func TestRevJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
 	})
 }
 
-// TestRevJumpUnreachableLeavesCursorAtTopWithoutError pins down the documented
+// TestPipedJumpUnreachableLeavesCursorAtTopWithoutError pins down the documented
 // fallback: a commit that isn't reachable from HEAD
-// (revPositionMsg{found: false}) leaves the cursor wherever it already was,
+// (listPositionMsg{found: false}) leaves the cursor wherever it already was,
 // with no error surfaced — the detail view still opens from the piped patch.
-func TestRevJumpUnreachableLeavesCursorAtTopWithoutError(t *testing.T) {
+func TestPipedJumpUnreachableLeavesCursorAtTopWithoutError(t *testing.T) {
 	m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
 	m.width, m.height = 80, 24
 	newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
 	m = newModel.(Model)
-	newModel, _ = m.Update(revPositionMsg{found: false})
+	newModel, _ = m.Update(listPositionMsg{found: false})
 	m = newModel.(Model)
 
 	if m.err != nil {

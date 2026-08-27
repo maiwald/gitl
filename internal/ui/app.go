@@ -75,11 +75,11 @@ type Model struct {
 	lastError error
 	summaries []git.EntrySummary // canonical copy, mirrored into list.leading as it and the list each become available
 
-	// pendingJump is a CLI-requested list position (`gitl <rev>`) not yet
+	// pendingListPos is a CLI-requested list position (`gitl <rev>`) not yet
 	// applied, because the list or the resolved position is still missing —
 	// two independent halves that can land in either order, joined by
-	// pumpPendingJump.
-	pendingJump *int
+	// pumpPendingListPos.
+	pendingListPos *int
 
 	searchPromptOpen bool
 	searchInput      textinput.Model
@@ -227,12 +227,12 @@ type worktreeSummariesLoadedMsg struct {
 	summaries []git.EntrySummary
 }
 
-// revPositionMsg carries the resolved list position of a CLI-requested
+// listPositionMsg carries the resolved list position of a CLI-requested
 // revision (`gitl <rev>`), for positioning the list's cursor behind the
 // detail view. found is false when the revision couldn't be resolved, or
 // isn't reachable from HEAD — either way there's no sensible list position
 // and the cursor is left where it is.
-type revPositionMsg struct {
+type listPositionMsg struct {
 	pos   int
 	found bool
 }
@@ -256,7 +256,7 @@ type errMsg struct {
 
 // runCmd wraps fetch as a tea.Cmd: on success toMsg(v) becomes the resulting
 // message, on failure errMsg{err, severity} does. fetchMoreCmd and
-// resolveRevPositionCmd report failures their own way instead.
+// resolveListPositionCmd report failures their own way instead.
 func runCmd[T any](severity errSeverity, fetch func(context.Context) (T, error), toMsg func(T) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		v, err := fetch(context.Background())
@@ -312,21 +312,21 @@ func loadWorktreeSummariesCmd(repo *git.Repo) tea.Cmd {
 	})
 }
 
-// resolveRevPositionCmd places hash within HEAD's history so the list's
+// resolveListPositionCmd places hash within HEAD's history so the list's
 // cursor can land on it. A commit that isn't reachable from HEAD reports
-// revPositionMsg{found: false} rather than an errMsg: the detail view opens
+// listPositionMsg{found: false} rather than an errMsg: the detail view opens
 // from the piped patch either way, and this only affects where the cursor
 // ends up behind it.
 //
 // The hash arrives already resolved — git resolved whatever the user typed
 // before printing the header gitl read it from.
-func resolveRevPositionCmd(repo *git.Repo, hash string) tea.Cmd {
+func resolveListPositionCmd(repo *git.Repo, hash string) tea.Cmd {
 	return func() tea.Msg {
 		pos, ok, err := repo.CommitPosition(context.Background(), hash)
 		if err != nil || !ok {
-			return revPositionMsg{found: false}
+			return listPositionMsg{found: false}
 		}
-		return revPositionMsg{pos: pos, found: true}
+		return listPositionMsg{pos: pos, found: true}
 	}
 }
 
@@ -476,7 +476,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchPipedCommitCmd(msg.repo, p),
 				loadListCmd(msg.repo, nonFatal),
 				loadWorktreeSummariesCmd(msg.repo),
-				resolveRevPositionCmd(msg.repo, p.Hash),
+				resolveListPositionCmd(msg.repo, p.Hash),
 			)
 		}
 		if !msg.hasCommits {
@@ -493,7 +493,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// soon as the repo opens, a whole fetch before this message.
 		m.list.SetSearchDisplay(m.searchTerm, m.searchDismissed)
 		m, matchCmd := m.applyListMatches(m.listMatches)
-		m, jumpCmd := m.pumpPendingJump()
+		m, jumpCmd := m.pumpPendingListPos()
 		return m, tea.Batch(matchCmd, jumpCmd)
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
@@ -513,7 +513,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.summaries = msg.summaries
 		m.list.SetLeadingSummaries(m.summaries)
 		return m, nil
-	case revPositionMsg:
+	case listPositionMsg:
 		if !msg.found {
 			// Not reachable from HEAD, or not resolvable at all: leave the
 			// cursor at the top rather than error. The detail view opens from
@@ -521,8 +521,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pos := msg.pos
-		m.pendingJump = &pos
-		return m.pumpPendingJump()
+		m.pendingListPos = &pos
+		return m.pumpPendingListPos()
 	case commitDetailLoadedMsg:
 		return m.openDetail(msg.detail), nil
 	case searchLoadedMsg:
@@ -639,15 +639,15 @@ func (m Model) loadUpToCmd(target int) tea.Cmd {
 	return nil
 }
 
-// pumpPendingJump applies a CLI-requested list position (`gitl <rev>`) once
+// pumpPendingListPos applies a CLI-requested list position (`gitl <rev>`) once
 // both of its independent halves are available: the list itself and the
 // resolved position. Called from whichever of the two lands last.
-func (m Model) pumpPendingJump() (Model, tea.Cmd) {
-	if m.pendingJump == nil || len(m.list.commits) == 0 {
+func (m Model) pumpPendingListPos() (Model, tea.Cmd) {
+	if m.pendingListPos == nil || len(m.list.commits) == 0 {
 		return m, nil
 	}
-	pos := *m.pendingJump
-	m.pendingJump = nil
+	pos := *m.pendingListPos
+	m.pendingListPos = nil
 
 	if needsLoad := m.list.JumpTo(pos); needsLoad {
 		return m, m.loadUpToCmd(pos)
