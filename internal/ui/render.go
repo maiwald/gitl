@@ -271,34 +271,20 @@ func expandTabs(text string) string {
 }
 
 // expandTabsMapped expands tabs like expandTabs and additionally returns a
-// mapping from each byte offset in text to its offset in the result (nil for
-// the identity mapping, when there was nothing to expand), so span and match
+// mapping from a byte offset in text to its offset in the result (nil for the
+// identity mapping, when there was nothing to expand), so span and match
 // offsets computed against the original text can follow it.
 func expandTabsMapped(text string) (string, offsetMap) {
-	tabs := strings.Count(text, "\t")
-	if tabs == 0 {
+	if !strings.Contains(text, "\t") {
 		return text, nil
 	}
-	var b strings.Builder
-	b.Grow(len(text) + tabs*(lipglossTabWidth-1))
-	offsets := make([]int, len(text)+1)
-	prev := 0
-	for i := 0; i < len(text); i++ {
-		if text[i] != '\t' {
-			continue
-		}
-		b.WriteString(text[prev:i])
-		for j := prev; j <= i; j++ {
-			offsets[j] = b.Len() - (i - j)
-		}
-		b.WriteString(tabSpaces)
-		prev = i + 1
+	// Counting the tabs in front of an offset, rather than tabulating where
+	// every byte of the line moved to: a line has a handful of offsets to
+	// relocate (a span's two ends, a match's two), and the table cost an int
+	// per byte of the line to answer them.
+	return expandTabs(text), func(i int) int {
+		return i + (lipglossTabWidth-1)*strings.Count(text[:i], "\t")
 	}
-	b.WriteString(text[prev:])
-	for j := prev; j <= len(text); j++ {
-		offsets[j] = b.Len() - (len(text) - j)
-	}
-	return b.String(), func(i int) int { return offsets[i] }
 }
 
 // wrapRanges word-wraps plain (ANSI-free) text to width the way lipgloss

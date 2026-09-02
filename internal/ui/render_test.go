@@ -224,3 +224,39 @@ func TestDisplayWidthMatchesAnsiStringWidth(t *testing.T) {
 		}
 	}
 }
+
+// TestExpandTabsMappedRelocatesEveryOffset pins the mapping expandTabsMapped
+// returns against an independent definition of the same thing: the offset a
+// byte lands at is the length of everything before it, expanded. The map is
+// what keeps a span or a search match on the characters it was computed
+// against once tabs have been widened, so an error here silently highlights
+// the wrong part of a line.
+func TestExpandTabsMappedRelocatesEveryOffset(t *testing.T) {
+	texts := []string{
+		"\tindented",
+		"\t\tdouble",
+		"lead\ttab\tmiddle",
+		"trailing\t",
+		"\t",
+		"ünïcödé\tafter a multibyte rune",
+	}
+	for _, text := range texts {
+		expanded, at := expandTabsMapped(text)
+		if want := expandTabs(text); expanded != want {
+			t.Errorf("expandTabsMapped(%q) expanded to %q, want %q", text, expanded, want)
+		}
+		if at == nil {
+			t.Errorf("expandTabsMapped(%q) returned no mapping for a line with tabs", text)
+			continue
+		}
+		for i := 0; i <= len(text); i++ {
+			if got, want := at(i), len(expandTabs(text[:i])); got != want {
+				t.Errorf("expandTabsMapped(%q) offset %d -> %d, want %d", text, i, got, want)
+			}
+		}
+	}
+
+	if _, at := expandTabsMapped("no tabs here"); at != nil {
+		t.Error("a tab-free line got a mapping, want nil (the identity)")
+	}
+}
