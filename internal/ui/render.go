@@ -68,25 +68,41 @@ func blankRow(width int) lineRenderer {
 }
 
 // renderRows renders every logical line in document order and then, once it
-// knows where each one landed, re-renders whichever line contains cursorLine
-// with the cursor row's background. Returns the flattened rows and, parallel
-// to lines, the row each logical line starts at.
+// knows where each one landed, re-renders every line the row range [from, to]
+// touches with the cursor row's background. Returns the flattened rows and,
+// parallel to lines, the row each logical line starts at.
 //
-// A cursorLine outside the content selects nothing, so callers don't have to
-// bound it themselves.
-func renderRows(lines []lineRenderer, cursorLine int) (rows []string, lineStart []int) {
+// The range is a range because the highlight is not always one line: it's the
+// cursor's own line normally (from == to), and the whole of a linewise
+// selection while one is active. Either way it's stated in rows and resolved
+// to whole logical lines here, so a wrapped line highlights as one block.
+//
+// A range outside the content selects nothing, so callers don't have to bound
+// it themselves.
+func renderRows(lines []lineRenderer, from, to int) (rows []string, lineStart []int) {
 	lineStart = make([]int, len(lines))
 	for i, l := range lines {
 		lineStart[i] = len(rows)
 		rows = append(rows, l.render(false)...)
 	}
-	if cursorLine >= 0 && cursorLine < len(rows) {
-		i := logicalAt(lineStart, cursorLine)
+	first, last := logicalRangeAt(lineStart, len(rows), from, to)
+	for i := first; i <= last; i++ {
 		// Same row count either way, so the cursor rendering overwrites the
 		// plain one in place and nothing below it shifts.
 		copy(rows[lineStart[i]:], lines[i].render(true))
 	}
 	return rows, lineStart
+}
+
+// logicalRangeAt resolves an inclusive range of rows to the inclusive range of
+// logical lines covering it, clipped to the rowCount rows that exist. Reports
+// an empty range (first > last) when nothing of it is in the content, so
+// callers can loop over the result unconditionally.
+func logicalRangeAt(lineStart []int, rowCount, from, to int) (first, last int) {
+	if len(lineStart) == 0 || from > to || to < 0 || from >= rowCount {
+		return 0, -1
+	}
+	return logicalAt(lineStart, max(from, 0)), logicalAt(lineStart, min(to, rowCount-1))
 }
 
 // logicalAt reports which logical line the flattened row pos belongs to, given

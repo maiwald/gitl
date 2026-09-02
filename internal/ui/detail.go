@@ -177,7 +177,8 @@ func (m *DetailModel) reflow() {
 	lines = append(lines, diffLines...)
 
 	m.lines = lines
-	m.content, m.lineStart = renderRows(lines, m.cursorLine)
+	hlFrom, hlTo := m.highlight()
+	m.content, m.lineStart = renderRows(lines, hlFrom, hlTo)
 	m.contentLen = len(m.content)
 
 	m.fileRanges = make([]FileRange, len(fileRanges))
@@ -227,7 +228,7 @@ func (m *DetailModel) reflow() {
 	// longer exists.
 	if clamped := clamp(m.cursorLine, 0, m.contentLen-1); clamped != m.cursorLine {
 		m.cursorLine = clamped
-		m.patchLine(m.cursorLine, logicalAt(m.lineStart, m.cursorLine))
+		m.patchLine(m.cursorLine, true)
 	}
 
 	m.setContent()
@@ -254,32 +255,55 @@ func (m *DetailModel) setContent() {
 	m.vp.SetRows(m.content)
 }
 
-// repaintCursor re-renders the logical line the cursor left (from) and the
-// one it now sits on, splicing both into the cached content, so moving the
-// cursor through a large diff doesn't re-render every line of it. Falls back
-// to a full reflow when the cache isn't what the current lines would have
-// produced.
-func (m *DetailModel) repaintCursor(from int) {
+// highlight is the inclusive range of rows drawn with the cursor row's
+// background: the line the cursor is on.
+func (m DetailModel) highlight() (from, to int) {
+	return m.cursorLine, m.cursorLine
+}
+
+// repaintHighlight re-renders only the logical lines whose highlight actually
+// changed between the range that was drawn (old) and the one now current,
+// splicing them into the cached content, so moving the cursor through a large
+// diff doesn't re-render every line of it. Falls back to a full reflow when
+// the cache isn't what the current lines would have produced.
+func (m *DetailModel) repaintHighlight(oldFrom, oldTo int) {
 	if len(m.lineStart) == 0 || len(m.content) < m.contentLen {
 		m.reflow()
 		return
 	}
-	cursor := logicalAt(m.lineStart, m.cursorLine)
-	m.patchLine(from, cursor)
-	m.patchLine(m.cursorLine, cursor)
+	newFrom, newTo := m.highlight()
+	was0, was1 := logicalRangeAt(m.lineStart, m.contentLen, oldFrom, oldTo)
+	now0, now1 := logicalRangeAt(m.lineStart, m.contentLen, newFrom, newTo)
+
+	// Only the difference between the two ranges is repainted, never both in
+	// full: extending a selection by a line has to cost one line render, not
+	// one per line already selected.
+	for i := max(min(was0, now0), 0); i <= max(was1, now1); i++ {
+		if wasOn, nowOn := i >= was0 && i <= was1, i >= now0 && i <= now1; wasOn != nowOn {
+			m.patchLogical(i, nowOn)
+		}
+	}
 	m.setContent()
 }
 
-// patchLine re-renders the logical line containing row pos, with the cursor
-// row's background when that line is cursor. A no-op for a row outside the
-// real content, so callers can pass a stale cursor position without
-// special-casing it.
-func (m *DetailModel) patchLine(pos, cursor int) {
+// patchLine re-renders the logical line containing row pos, with or without
+// the cursor row's background. A no-op for a row outside the real content, so
+// callers can pass a stale cursor position without special-casing it.
+func (m *DetailModel) patchLine(pos int, highlighted bool) {
 	i := logicalAt(m.lineStart, pos)
 	if i < 0 || pos >= m.contentLen {
 		return
 	}
-	copy(m.content[m.lineStart[i]:], m.lines[i].render(i == cursor))
+	m.patchLogical(i, highlighted)
+}
+
+// patchLogical re-renders logical line i in place, with or without the cursor
+// row's background.
+func (m *DetailModel) patchLogical(i int, highlighted bool) {
+	if i < 0 || i >= len(m.lines) {
+		return
+	}
+	copy(m.content[m.lineStart[i]:], m.lines[i].render(highlighted))
 }
 
 // mergeNotice stands in for the diff of a merge commit, which gitl doesn't
@@ -542,9 +566,9 @@ func (m *DetailModel) jumpCursor(line int) {
 // highlight changed, then scrolls the viewport by the minimum needed to keep
 // the cursor visible.
 func (m *DetailModel) setCursor(pos int) {
-	from := m.cursorLine
+	from, to := m.highlight()
 	m.cursorLine = m.blockStart(clamp(pos, 0, m.contentLen-1))
-	m.repaintCursor(from)
+	m.repaintHighlight(from, to)
 	m.ensureCursorVisible()
 	m.syncHighlightFromScroll()
 }
@@ -625,9 +649,9 @@ func (m *DetailModel) landOnLine(line int) {
 	if line != m.cursorLine {
 		m.pushJump(m.cursorLine)
 	}
-	from := m.cursorLine
+	from, to := m.highlight()
 	m.cursorLine = m.blockStart(line)
-	m.repaintCursor(from)
+	m.repaintHighlight(from, to)
 	m.vp.SetYOffset(line)
 	m.syncHighlightFromScroll()
 }

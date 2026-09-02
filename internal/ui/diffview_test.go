@@ -46,7 +46,7 @@ func fixtureDiffFiles() []git.File {
 // rows they produced, which is the flattened shape these tests assert on.
 func renderDiffRows(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool, cursorLine int) (rows []string, ranges []FileRange, matchRows []int) {
 	lines, logicalRanges, matchLines := RenderDiff(files, width, matches, activeMatch, dismissed)
-	rows, lineStart := renderRows(lines, cursorLine)
+	rows, lineStart := renderRows(lines, cursorLine, cursorLine)
 
 	rowOf := func(logical int) int {
 		if logical < len(lineStart) {

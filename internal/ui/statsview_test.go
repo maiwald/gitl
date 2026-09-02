@@ -26,7 +26,7 @@ func searchedStatRows(files []git.File, width, cursorLine int, matches []StatMat
 	if len(lines) == 0 {
 		return nil, nil
 	}
-	rows, lineStart := renderRows(lines, cursorLine)
+	rows, lineStart := renderRows(lines, cursorLine, cursorLine)
 	matchRows = make([]int, len(matchLines))
 	for i, ln := range matchLines {
 		matchRows[i] = lineStart[ln]

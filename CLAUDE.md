@@ -226,8 +226,8 @@ before every commit — don't commit red.
 - A `reflow()` is the detail view's only way to change *what its lines say*,
   so every writer of that (`SetSearchDisplay`, `SetSize`, `setMatchPos`)
   ends in one. Which line the cursor is on is the sole exception: it goes
-  through `repaintCursor`, which re-renders only the line being left and the
-  line being taken up and splices them into the cached rows. That invariant
+  through `repaintHighlight`, which re-renders only the line being left and
+  the line being taken up and splices them into the cached rows. That invariant
   is what lets `jumpToMatch` read `messageMatchLines`/`diffMatchLines` out of
   the *previous* reflow instead of forcing a fresh one first: those depend
   only on the match set and the wrap width, both of which already ended in a
@@ -247,14 +247,17 @@ before every commit — don't commit red.
   it, and `TestLineTextMatchesRenderedRow` is what catches one that drifts
   from what it renders. `reflow` concatenates the blocks and `renderRows`
   lays them out, returning the flattened rows plus the `lineStart` index and
-  applying the cursor to whichever line contains it. So the line indices a
+  applying the cursor background to every line the highlighted row range
+  covers — one line for a plain cursor, the whole of a linewise selection
+  while one is active. So the line indices a
   block reports (`FileRange`s, match lines) are in *its own* logical lines,
   counted from its own origin, and `reflow` rebases each one onto a row via
   `rowOf` — anything new that a block reports has to be rebased there too, or
   it will silently point into a different block.
 - `DetailModel` keeps the `lines` it last assembled next to the `content`
-  they rendered into, and `repaintCursor` patches the two logical lines whose
-  highlight changed rather than reflowing (`ListModel.renderedRows` /
+  they rendered into, and `repaintHighlight` patches only the logical lines
+  whose highlight actually changed — two for a plain cursor move, one per
+  line a selection grew or shrank by — rather than reflowing (`ListModel.renderedRows` /
   `renderCursorMoved` is the same bargain, with the same obligation: a change
   to what a line *says* must go through `reflow`, which rebuilds all three of
   `lines`/`content`/`lineStart` together). The splice depends on a line
@@ -312,7 +315,7 @@ before every commit — don't commit red.
   row count and then overwrites one of them in place with its cursor
   rendering, a mismatch there would silently shift every line index below it
   (`FileRange`s, match positions, `cursorLine`'s own bound) — and
-  `repaintCursor` patches lines into the cached rows on that same
+  `repaintHighlight` patches lines into the cached rows on that same
   assumption. Wrapping first
   also removes the need to strip lipgloss's plain padding back off before
   re-padding: nothing is padded until after styling.
