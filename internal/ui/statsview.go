@@ -123,8 +123,28 @@ func FindStatMatches(files []git.File, term string) []StatMatch {
 // statRow is the lineRenderer for one row of the stats table (see
 // renderStatLine, which does the rendering once the cursor is known).
 func statRow(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, matches []lineMatch, width int) lineRenderer {
-	return func(cursor bool) []string {
-		return []string{renderStatLine(label, binary, nameWidth, addWidth, delWidth, addCount, delCount, matches, width, cursor)}
+	return lineRenderer{
+		text: statLineText(label, binary, nameWidth, addWidth, delWidth, addCount, delCount),
+		render: func(cursor bool) []string {
+			return []string{renderStatLine(label, binary, nameWidth, addWidth, delWidth, addCount, delCount, matches, width, cursor)}
+		},
+	}
+}
+
+// statLineText lays out one stats row as plain text: what renderStatLine
+// styles piecewise, and what a selection copies. The two marker cases are
+// rendered from this string directly; the default case has to re-assemble the
+// same layout around its independently-styled counts, which is what
+// TestStatLineTextMatchesRenderedRow pins.
+func statLineText(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string) string {
+	name := fmt.Sprintf(" %-*s  ", nameWidth, label)
+	switch {
+	case binary:
+		return name + padLeft("Bin", addWidth+1+delWidth)
+	case addCount == "" && delCount == "":
+		return name + padLeft("0", addWidth+1+delWidth)
+	default:
+		return name + padLeft(addCount, addWidth) + " " + padLeft(delCount, delWidth)
 	}
 }
 
@@ -153,7 +173,6 @@ func formatCountParts(additions, deletions int) (add, del string) {
 // lands in the row.
 func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int, addCount, delCount string, matches []lineMatch, width int, cursor bool) string {
 	name := fmt.Sprintf(" %-*s  ", nameWidth, label)
-	combinedWidth := addWidth + 1 + delWidth
 
 	// name puts a single space in front of the label the offsets were found
 	// against, so every match sits one byte further along the row.
@@ -162,10 +181,9 @@ func renderStatLine(label string, binary bool, nameWidth, addWidth, delWidth int
 	}
 
 	switch {
-	case binary:
-		return statMarkerRow(name+padLeft("Bin", combinedWidth), matches, width, cursor)
-	case addCount == "" && delCount == "":
-		return statMarkerRow(name+padLeft("0", combinedWidth), matches, width, cursor)
+	case binary, addCount == "" && delCount == "":
+		text := statLineText(label, binary, nameWidth, addWidth, delWidth, addCount, delCount)
+		return statMarkerRow(text, matches, width, cursor)
 	default:
 		addStyle, delStyle, plain := diffAddStyle, diffDeleteStyle, lipgloss.NewStyle()
 		if cursor {

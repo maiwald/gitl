@@ -279,7 +279,7 @@ func (m *DetailModel) patchLine(pos, cursor int) {
 	if i < 0 || pos >= m.contentLen {
 		return
 	}
-	copy(m.content[m.lineStart[i]:], m.lines[i](i == cursor))
+	copy(m.content[m.lineStart[i]:], m.lines[i].render(i == cursor))
 }
 
 // mergeNotice stands in for the diff of a merge commit, which gitl doesn't
@@ -412,8 +412,11 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 			mi++
 		}
 		lineSpans := spans[li]
-		rendered = append(rendered, func(cursor bool) []string {
-			return wrapStyledRows(line, lineSpans, lineMatches, plainLine, width, cursor)
+		rendered = append(rendered, lineRenderer{
+			text: line,
+			render: func(cursor bool) []string {
+				return wrapStyledRows(line, lineSpans, lineMatches, plainLine, width, cursor)
+			},
 		})
 	}
 	return rendered, matchLines

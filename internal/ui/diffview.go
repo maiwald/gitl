@@ -52,8 +52,11 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 			matchLines[mi] = len(lines)
 			mi++
 		}
-		lines = append(lines, func(cursor bool) []string {
-			return []string{renderFileHeader(f, width, cursor, headerMatches)}
+		lines = append(lines, lineRenderer{
+			text: fileHeaderText(f),
+			render: func(cursor bool) []string {
+				return []string{renderFileHeader(f, width, cursor, headerMatches)}
+			},
 		})
 		if f.Binary {
 			lines = append(lines, clippedLine(binaryNoticeStyle, "Binary file, diff not shown", width))
@@ -73,8 +76,11 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 					mi++
 				}
 				spans := hunkSpans[li]
-				lines = append(lines, func(cursor bool) []string {
-					return renderDiffLine(l, width, spans, lineMatches, cursor)
+				lines = append(lines, lineRenderer{
+					text: diffLineText(l),
+					render: func(cursor bool) []string {
+						return renderDiffLine(l, width, spans, lineMatches, cursor)
+					},
 				})
 			}
 		}
@@ -147,12 +153,19 @@ func FindDiffMatches(files []git.File, term string) []DiffMatch {
 // single renderClipped call instead of the composite-then-clip pass.
 func renderFileHeader(f git.File, width int, cursor bool, matches []lineMatch) string {
 	prefix := fileStatusGlyph(f.Status) + " "
-	label := prefix + filePathLabel(f)
+	label := fileHeaderText(f)
 	if len(matches) == 0 && !cursor {
 		return renderClipped(fileHeaderStyle, label, width)
 	}
 	content := renderLineWithBaseSpans(label, nil, shiftMatches(matches, shiftBy(len(prefix))), fileHeaderLine, cursor)
 	return renderClippedStyled(content, width, cursor)
+}
+
+// fileHeaderText is a file header's plain text — its status glyph and display
+// path — shared by the header's own renderer and by the copyable text of the
+// line it produces.
+func fileHeaderText(f git.File) string {
+	return fileStatusGlyph(f.Status) + " " + filePathLabel(f)
 }
 
 // filePathLabel is a file's display path: "old -> new" for renames (when the
@@ -188,10 +201,18 @@ func fileStatusGlyph(s git.FileStatus) string {
 // DiffLine.Text space as matches, so both shift past the prefix together.
 func renderDiffLine(l git.DiffLine, width int, spans []baseSpan, matches []lineMatch, cursor bool) []string {
 	style, prefix := diffLineStyle(l.Op)
-	text := prefix + l.Text
+	text := diffLineText(l)
 
 	at := shiftBy(len(prefix))
 	return wrapStyledRows(text, shiftSpans(spans, at), shiftMatches(matches, at), style, width, cursor)
+}
+
+// diffLineText is a diff line as it reads on screen and as a selection copies
+// it: its marker column followed by the line's own text, with tabs still tabs
+// (the renderer expands those itself, per row, after wrapping).
+func diffLineText(l git.DiffLine) string {
+	_, prefix := diffLineStyle(l.Op)
+	return prefix + l.Text
 }
 
 func diffLineStyle(op git.LineOp) (lineStyle, string) {

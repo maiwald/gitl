@@ -20,32 +20,50 @@ func clamp(v, lo, hi int) int {
 	return min(max(v, lo), hi)
 }
 
-// lineRenderer renders one logical line of a view's content, plain or with
-// the cursor row's background merged in. It returns a slice because a
-// word-wrapped line occupies several visual rows — and both renderings always
-// occupy the same number of them (see wrapRanges), which is what lets a cursor
-// move re-render one line in place instead of everything around it.
+// lineRenderer is one logical line of a view's content: how to render it, and
+// the plain text it renders from.
+//
+// render produces the line plain or with the cursor row's background merged
+// in. It returns a slice because a word-wrapped line occupies several visual
+// rows — and both renderings always occupy the same number of them (see
+// wrapRanges), which is what lets a cursor move re-render one line in place
+// instead of everything around it.
 //
 // Describing lines as renderers rather than finished rows is what makes the
 // cursor a property applied at render time: a block describes its lines once,
 // and renderRows decides afterwards where each lands and which one the cursor
 // is on.
-type lineRenderer func(cursor bool) []string
+//
+// text is the line as it would read with no terminal involved — tabs intact,
+// unwrapped, unpadded — which is what a selection copies. It has to be kept
+// here because the rendered rows can't be turned back into it: by then the
+// tabs are expanded, the line may have been split across rows, and the fill
+// to the right of the text is indistinguishable from trailing spaces of its
+// own.
+type lineRenderer struct {
+	text   string
+	render func(cursor bool) []string
+}
 
 // clippedLine is the lineRenderer for a line rendered in one uniform style
 // and truncated (never wrapped) to width — a hunk header, a binary-file
 // notice, the stats block's heading.
 func clippedLine(style lipgloss.Style, text string, width int) lineRenderer {
-	return func(cursor bool) []string {
-		return []string{renderClipped(cursorMerged(style, cursor), text, width)}
+	return lineRenderer{
+		text: text,
+		render: func(cursor bool) []string {
+			return []string{renderClipped(cursorMerged(style, cursor), text, width)}
+		},
 	}
 }
 
 // blankRow is the lineRenderer for a blank separator row between two content
 // blocks (see blankLine).
 func blankRow(width int) lineRenderer {
-	return func(cursor bool) []string {
-		return []string{blankLine(width, cursor)}
+	return lineRenderer{
+		render: func(cursor bool) []string {
+			return []string{blankLine(width, cursor)}
+		},
 	}
 }
 
@@ -58,15 +76,15 @@ func blankRow(width int) lineRenderer {
 // bound it themselves.
 func renderRows(lines []lineRenderer, cursorLine int) (rows []string, lineStart []int) {
 	lineStart = make([]int, len(lines))
-	for i, render := range lines {
+	for i, l := range lines {
 		lineStart[i] = len(rows)
-		rows = append(rows, render(false)...)
+		rows = append(rows, l.render(false)...)
 	}
 	if cursorLine >= 0 && cursorLine < len(rows) {
 		i := logicalAt(lineStart, cursorLine)
 		// Same row count either way, so the cursor rendering overwrites the
 		// plain one in place and nothing below it shifts.
-		copy(rows[lineStart[i]:], lines[i](true))
+		copy(rows[lineStart[i]:], lines[i].render(true))
 	}
 	return rows, lineStart
 }

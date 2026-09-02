@@ -237,10 +237,15 @@ before every commit — don't commit red.
   on a large commit that's a whole re-render of every diff line per `n`/`N`
   press.
 - A block of detail-view content (`renderHeaderLines`, `statLinesFor`,
-  `RenderDiff`) returns `[]lineRenderer` (`render.go`) — one closure per
-  *logical* line, each able to render itself plain or with the cursor row's
-  background — and knows nothing about where its lines will land or which
-  one the cursor is on. `reflow` concatenates the blocks and `renderRows`
+  `RenderDiff`) returns `[]lineRenderer` (`render.go`) — one entry per
+  *logical* line, pairing a closure that renders it plain or with the cursor
+  row's background with the line's plain `text` — and knows nothing about
+  where its lines will land or which one the cursor is on. That `text` is
+  the line as it reads with no terminal involved (tabs intact, unwrapped,
+  unpadded), and it can't be recovered from the rendered rows afterwards,
+  which is why it's carried rather than derived; every new line has to set
+  it, and `TestLineTextMatchesRenderedRow` is what catches one that drifts
+  from what it renders. `reflow` concatenates the blocks and `renderRows`
   lays them out, returning the flattened rows plus the `lineStart` index and
   applying the cursor to whichever line contains it. So the line indices a
   block reports (`FileRange`s, match lines) are in *its own* logical lines,

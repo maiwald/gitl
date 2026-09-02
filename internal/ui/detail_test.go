@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/maiwald/gitl/internal/git"
 )
 
@@ -980,5 +981,61 @@ func TestDetailModelMergeCommitStillExplainsItself(t *testing.T) {
 	m.SetSize(80, 24)
 	if !strings.Contains(m.View(), "Merge commit") {
 		t.Errorf("View() = %q, want the merge explanation", m.View())
+	}
+}
+
+// TestLineTextMatchesRenderedRow pins every logical line's plain text against
+// the row it actually renders into: strip the styling and the fill and the two
+// must agree. That is the whole contract a selection copies through, and it
+// spans every block — header, stats, diff — so a new line whose text and
+// renderer drift apart fails here rather than silently copying the wrong
+// thing.
+//
+// Width is set wide enough that nothing wraps, and the fixture avoids tabs,
+// since both are deliberate differences between the text and its rows.
+// Trailing spaces are trimmed off both sides rather than compared: a row is
+// padded to the full width, so its own trailing spaces are indistinguishable
+// from the fill.
+func TestLineTextMatchesRenderedRow(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithFiles(2, 3), &jumplist{})
+	m.SetSize(200, 20)
+
+	if len(m.lines) == 0 {
+		t.Fatal("fixture produced no lines")
+	}
+	for i, l := range m.lines {
+		row := strings.TrimRight(ansi.Strip(m.content[m.lineStart[i]]), " ")
+		if want := strings.TrimRight(l.text, " "); row != want {
+			t.Errorf("line %d: rendered %q, text %q", i, row, want)
+		}
+	}
+}
+
+// TestStatLineTextMatchesRenderedRow covers the one row whose plain text is
+// laid out twice — statLineText assembles it in one piece, renderStatLine
+// re-assembles the same layout around independently styled counts (see
+// statLineText) — across the cases where those two paths differ.
+func TestStatLineTextMatchesRenderedRow(t *testing.T) {
+	cases := []struct {
+		name           string
+		binary         bool
+		addCnt, delCnt string
+	}{
+		{name: "both counts", addCnt: "+12", delCnt: "-3"},
+		{name: "additions only", addCnt: "+12"},
+		{name: "deletions only", delCnt: "-3"},
+		{name: "binary", binary: true},
+		{name: "no changes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const nameWidth, addWidth, delWidth = 12, 3, 2
+			text := statLineText("some/path.go", tc.binary, nameWidth, addWidth, delWidth, tc.addCnt, tc.delCnt)
+			rendered := renderStatLine("some/path.go", tc.binary, nameWidth, addWidth, delWidth, tc.addCnt, tc.delCnt, nil, 200, false)
+			got := strings.TrimRight(ansi.Strip(rendered), " ")
+			if want := strings.TrimRight(text, " "); got != want {
+				t.Errorf("rendered %q, statLineText %q", got, want)
+			}
+		})
 	}
 }
