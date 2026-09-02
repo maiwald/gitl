@@ -266,8 +266,8 @@ func intralineSpans(h git.Hunk) map[int][]baseSpan {
 			if !ok {
 				continue
 			}
-			spans[di] = []baseSpan{{start: oldSpan[0], end: oldSpan[1], style: diffDeleteEmphStyle}}
-			spans[ai] = []baseSpan{{start: newSpan[0], end: newSpan[1], style: diffAddEmphStyle}}
+			spans[di] = []baseSpan{{start: oldSpan[0], end: oldSpan[1], style: &diffDeleteEmphStyle}}
+			spans[ai] = []baseSpan{{start: newSpan[0], end: newSpan[1], style: &diffAddEmphStyle}}
 		}
 	}
 

@@ -333,7 +333,7 @@ func TestRenderLineWithBaseSpansMatchWinsOnOverlap(t *testing.T) {
 	text := "Author: Ada Lovelace <ada@example.com>"
 	nameStart := strings.Index(text, "Ada Lovelace")
 	nameEnd := nameStart + len("Ada Lovelace")
-	spans := []baseSpan{{start: nameStart, end: nameEnd, style: authorStyle}}
+	spans := []baseSpan{{start: nameStart, end: nameEnd, style: &authorStyle}}
 
 	matchStart := strings.Index(text, "Lovelace")
 	matchEnd := matchStart + len("Lovelace")

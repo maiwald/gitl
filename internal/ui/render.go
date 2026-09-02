@@ -525,7 +525,12 @@ func cursorMerged(base lipgloss.Style, isCursor bool) lipgloss.Style {
 // with search-match highlighting.
 type baseSpan struct {
 	start, end int
-	style      lipgloss.Style
+	// style points at one of the package's own styles rather than holding a
+	// copy: a lipgloss.Style is 552 bytes, and spans are copied per line and
+	// again per wrapped row (shiftSpans, clipSpans), which made a span cost
+	// more to carry than the line it marks up. Nothing mutates a style —
+	// lipgloss's setters return copies — so sharing one is safe.
+	style *lipgloss.Style
 }
 
 // lineMatch is a search match's byte-offset position within one rendered
@@ -597,7 +602,7 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch,
 				if cursor {
 					return s.style.Background(cursorRowBg), true
 				}
-				return s.style, true
+				return *s.style, true
 			}
 		}
 		return lipgloss.Style{}, false

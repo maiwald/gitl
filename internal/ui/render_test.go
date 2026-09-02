@@ -76,7 +76,7 @@ func TestRenderLineWithBaseSpansFastPathMatchesGeneralPath(t *testing.T) {
 	for _, base := range allLineStyles {
 		for _, text := range texts {
 			for _, cursor := range []bool{false, true} {
-				whole := []baseSpan{{start: 0, end: len(text), style: base.style}}
+				whole := []baseSpan{{start: 0, end: len(text), style: &base.style}}
 				want := renderLineWithBaseSpans(text, whole, nil, base, cursor)
 				got := renderLineWithBaseSpans(text, nil, nil, base, cursor)
 				if got != want {
@@ -131,9 +131,9 @@ func TestRenderLineWithBaseSpansMatchesRenderPerSegment(t *testing.T) {
 		spans   []baseSpan
 		matches []lineMatch
 	}{
-		{name: "span in the middle", spans: []baseSpan{{start: 11, end: 15, style: diffAddEmphStyle}}},
-		{name: "span at the start", spans: []baseSpan{{start: 0, end: 4, style: diffDeleteEmphStyle}}},
-		{name: "span to the end", spans: []baseSpan{{start: 20, end: len(text), style: diffAddEmphStyle}}},
+		{name: "span in the middle", spans: []baseSpan{{start: 11, end: 15, style: &diffAddEmphStyle}}},
+		{name: "span at the start", spans: []baseSpan{{start: 0, end: 4, style: &diffDeleteEmphStyle}}},
+		{name: "span to the end", spans: []baseSpan{{start: 20, end: len(text), style: &diffAddEmphStyle}}},
 		{name: "match", matches: []lineMatch{{start: 11, end: 15}}},
 		{name: "active match", matches: []lineMatch{{start: 5, end: 9, active: true}}},
 	}
@@ -179,7 +179,7 @@ func renderSegmentsWithRender(text string, spans []baseSpan, matches []lineMatch
 				if cursor {
 					return s.style.Background(cursorRowBg)
 				}
-				return s.style
+				return *s.style
 			}
 		}
 		return cursorMerged(base.style, cursor)
