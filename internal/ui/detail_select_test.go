@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -8,8 +9,8 @@ import (
 	"github.com/maiwald/gitl/internal/git"
 )
 
-// selectedRows reports which flattened rows carry the cursor row's background,
-// which is what a selection and the cursor both paint with.
+// highlightedRows reports which flattened rows carry the cursor row's
+// background, which is what a selection and the cursor both paint with.
 func highlightedRows(m *DetailModel) []int {
 	var rows []int
 	for i, row := range m.content[:m.contentLen] {
@@ -42,7 +43,7 @@ func TestVisualSelectionCoversAnchorToCursor(t *testing.T) {
 	m.moveCursor(1)
 
 	want := []int{0, 1, 2}
-	if got := highlightedRows(&m); !equalInts(got, want) {
+	if got := highlightedRows(&m); !slices.Equal(got, want) {
 		t.Errorf("highlighted rows = %v, want %v", got, want)
 	}
 	if n := m.selectedLineCount(); n != 3 {
@@ -61,7 +62,7 @@ func TestVisualSelectionExtendsUpwards(t *testing.T) {
 	m.moveCursor(-1)
 
 	want := []int{1, 2, 3}
-	if got := highlightedRows(&m); !equalInts(got, want) {
+	if got := highlightedRows(&m); !slices.Equal(got, want) {
 		t.Errorf("highlighted rows = %v, want %v", got, want)
 	}
 }
@@ -75,7 +76,7 @@ func TestClearingSelectionLeavesOnlyTheCursorHighlighted(t *testing.T) {
 	m.moveCursor(1)
 	m.clearSelection()
 
-	if got := highlightedRows(&m); !equalInts(got, []int{2}) {
+	if got := highlightedRows(&m); !slices.Equal(got, []int{2}) {
 		t.Errorf("highlighted rows = %v, want just the cursor at 2", got)
 	}
 	if m.selecting {
@@ -111,19 +112,7 @@ func TestSelectionPatchMatchesFullReflow(t *testing.T) {
 	}
 	for _, step := range steps {
 		step.do()
-		patched := append([]string(nil), m.content...)
-		at := m.cursorLine
-
-		m.reflow()
-		if len(patched) != len(m.content) {
-			t.Fatalf("after %s: patched content has %d rows, a full reflow produces %d", step.name, len(patched), len(m.content))
-		}
-		for i := range patched {
-			if patched[i] != m.content[i] {
-				t.Fatalf("after %s (cursor at %d): row %d differs\n patched: %q\n reflown: %q",
-					step.name, at, i, patched[i], m.content[i])
-			}
-		}
+		assertPatchMatchesReflow(t, &m, step.name)
 	}
 }
 
@@ -171,18 +160,6 @@ func fixtureDetailWithTabs() *git.CommitDetail {
 			}},
 		}},
 	}
-}
-
-func equalInts(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // TestResizeDoesNotResurrectAClippedAnchor pins the anchor's half of reflow's

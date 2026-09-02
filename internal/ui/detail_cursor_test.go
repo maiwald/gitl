@@ -405,21 +405,31 @@ func TestDetailModelCursorPatchMatchesFullReflow(t *testing.T) {
 	}
 	for _, step := range steps {
 		step.do()
-		patched := append([]string(nil), m.content...)
 		at := m.cursorLine
-
-		m.reflow()
+		assertPatchMatchesReflow(t, &m, step.name)
 		if at != m.cursorLine {
 			t.Fatalf("after %s: reflow moved the cursor from %d to %d", step.name, at, m.cursorLine)
 		}
-		if len(patched) != len(m.content) {
-			t.Fatalf("after %s: patched content has %d rows, a full reflow produces %d", step.name, len(patched), len(m.content))
-		}
-		for i := range patched {
-			if patched[i] != m.content[i] {
-				t.Fatalf("after %s (cursor at %d): row %d differs\n patched: %q\n reflown: %q",
-					step.name, at, i, patched[i], m.content[i])
-			}
+	}
+}
+
+// assertPatchMatchesReflow checks the bargain both patch tests are about: the
+// content the incremental repaints have been splicing into must be
+// byte-for-byte what a full reflow at the same position produces. It reflows
+// m as a side effect, which is the point — the comparison is against a freshly
+// built content, and the model carries on from it.
+func assertPatchMatchesReflow(t *testing.T, m *DetailModel, after string) {
+	t.Helper()
+	patched := append([]string(nil), m.content...)
+
+	m.reflow()
+	if len(patched) != len(m.content) {
+		t.Fatalf("after %s: patched content has %d rows, a full reflow produces %d", after, len(patched), len(m.content))
+	}
+	for i := range patched {
+		if patched[i] != m.content[i] {
+			t.Fatalf("after %s (cursor at %d): row %d differs\n patched: %q\n reflown: %q",
+				after, m.cursorLine, i, patched[i], m.content[i])
 		}
 	}
 }

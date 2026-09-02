@@ -829,11 +829,9 @@ func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // leaveSelection drops any selection in the detail view, for the transitions
 // that take the user out of the state it was made in. A selection never
-// outlives the view it was taken in.
+// outlives the view it was taken in. Safe to call when there is none.
 func (m *Model) leaveSelection() {
-	if m.detail.selecting {
-		m.detail.clearSelection()
-	}
+	m.detail.clearSelection()
 }
 
 // toggleSelection starts a linewise selection at the cursor, or ends the one
