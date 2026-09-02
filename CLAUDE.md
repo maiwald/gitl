@@ -278,6 +278,14 @@ before every commit — don't commit red.
   keypress across two fixture sizes (bytes, not allocation count: the
   regression they were written for moved a megabyte per keystroke in a
   constant 77 allocations).
+- Row widths are measured through `displayWidth`, not `ansi.StringWidth`
+  directly: printable ASCII, which is the great majority of a diff, is one
+  cell per byte and needs no escape parser. `padRow` doesn't even measure the
+  row it pads — `wrapStyledRows` hands it the width of the *plain* text the
+  row was styled from (`padMeasuredRow`), since styling only adds zero-width
+  escapes, and the parser then never runs over a styled string at all.
+  `TestDisplayWidthMatchesAnsiStringWidth` pins the fast path and
+  `TestEveryRowIsExactlyOneFullWidthLine` pins the handed-in width.
 - Four places sidestep lipgloss on the reflow path, which pays every one of
   them once per line of the whole commit. `wrapRanges` doesn't wrap a line
   that already fits; `padRow` neither truncates nor styles a plain

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // fastPathLines are the shapes a line reaches padRow/wrapRanges in: plain
@@ -193,4 +194,33 @@ func renderSegmentsWithRender(text string, spans []baseSpan, matches []lineMatch
 		b.WriteString(styleAt(start).Render(text[start:end]))
 	}
 	return b.String()
+}
+
+// TestDisplayWidthMatchesAnsiStringWidth pins the fast path displayWidth takes
+// for printable ASCII, where it counts bytes instead of running the escape
+// parser. Every shape a row can take has to agree with ansi.StringWidth
+// exactly: it decides how much padding a row gets, so a disagreement would
+// misalign every row of the kind that hit it.
+func TestDisplayWidthMatchesAnsiStringWidth(t *testing.T) {
+	cases := []string{
+		"",
+		"plain ascii line",
+		"-\tremoved",
+		"   ",
+		"punctuation !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~",
+		"unicode ünïcödé",
+		"日本語のテキスト",
+		"emoji 👍🏽 and ✓",
+		"combining é mark",
+		"\x1b[32mstyled\x1b[0m",
+		"\x1b[48;5;238mfilled \x1b[0m\x1b[1;32mspan\x1b[0m",
+		"\x7f",
+		"\x00null",
+		"tab\there",
+	}
+	for _, s := range cases {
+		if got, want := displayWidth(s), ansi.StringWidth(s); got != want {
+			t.Errorf("displayWidth(%q) = %d, want %d (ansi.StringWidth)", s, got, want)
+		}
+	}
 }

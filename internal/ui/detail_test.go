@@ -1039,3 +1039,28 @@ func TestStatLineTextMatchesRenderedRow(t *testing.T) {
 		})
 	}
 }
+
+// TestEveryRowIsExactlyOneFullWidthLine pins what the viewport relies on and
+// what padding now takes on trust: each rendered row is one display line,
+// padded to exactly the terminal width (or left empty, which is the same
+// picture once the terminal erases to end of line). Padding is measured from
+// the plain text a row was styled from (see padMeasuredRow), so a styled row
+// that came out wider than its text would show up here as a short or
+// overlong row.
+func TestEveryRowIsExactlyOneFullWidthLine(t *testing.T) {
+	for _, width := range []int{40, 80, 200} {
+		m := NewDetailModel(fixtureDetailWithLongLines(), &jumplist{})
+		m.SetSize(width, 12)
+		m.SetSearchDisplay("context", false)
+		m.setCursor(m.contentLen / 2)
+
+		for i, row := range m.content[:m.contentLen] {
+			if strings.Contains(row, "\n") {
+				t.Fatalf("width %d: row %d spans several display lines: %q", width, i, row)
+			}
+			if w := ansi.StringWidth(row); w != width && w != 0 {
+				t.Errorf("width %d: row %d is %d cells wide, want %d or empty: %q", width, i, w, width, row)
+			}
+		}
+	}
+}

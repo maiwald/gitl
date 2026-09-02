@@ -206,6 +206,15 @@ func rowFillStyle(cursor bool) lipgloss.Style {
 // one display line, which is the invariant renderClipped's Inline(true)
 // exists to hold, so the split only ever produces the one piece.
 func padRow(row string, width int, cursor bool) string {
+	return padMeasuredRow(row, displayWidth(row), width, cursor)
+}
+
+// padMeasuredRow is padRow for a caller that already knows the row's display
+// width. wrapStyledRows does: it wrapped the plain text the row was styled
+// from, and styling only adds zero-width escapes, so that text's width is the
+// row's. Measuring there instead means the escape parser never runs over the
+// styled string, once per line of the whole commit.
+func padMeasuredRow(row string, w, width int, cursor bool) string {
 	style := rowFillStyle(cursor)
 	// A plain fill contributes nothing but the truncation itself, so a row
 	// already within width comes back from that Render byte-for-byte
@@ -213,10 +222,9 @@ func padRow(row string, width int, cursor bool) string {
 	// The cursor's fill does carry a style, so its row is always rendered.
 	// (Hot path: a reflow pads every line of the commit.)
 	plain := !cursor
-	w := ansi.StringWidth(row)
 	if !plain || w > width {
 		row = style.MaxWidth(width).Render(row)
-		w = ansi.StringWidth(row)
+		w = displayWidth(row)
 	}
 	if pad := width - w; pad > 0 {
 		spaces := strings.Repeat(" ", pad)
@@ -227,6 +235,19 @@ func padRow(row string, width int, cursor bool) string {
 		}
 	}
 	return row
+}
+
+// displayWidth is ansi.StringWidth with a fast path for what the great
+// majority of a diff is: printable ASCII, where every byte is one cell and the
+// escape parser has nothing to find. Anything else — an escape sequence, a
+// wide or combining rune, a control character — falls back to the real thing.
+func displayWidth(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] >= 0x7f {
+			return ansi.StringWidth(s)
+		}
+	}
+	return len(s)
 }
 
 // lipglossTabWidth mirrors lipgloss's own default tab handling (Render
@@ -302,7 +323,7 @@ func wrapRanges(text string, width int) [][2]int {
 	// half of laying a line out, which a reflow pays once per line of the
 	// entire commit. Trimming the trailing spaces is what the general path
 	// below would do to that single row anyway.
-	if !strings.Contains(text, "\n") && ansi.StringWidth(text) <= width {
+	if !strings.Contains(text, "\n") && displayWidth(text) <= width {
 		return [][2]int{{0, len(strings.TrimRight(text, " "))}}
 	}
 	rows := strings.Split(lipgloss.NewStyle().Width(width).Render(text), "\n")
@@ -351,7 +372,7 @@ func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lin
 			rows = append(rows, rendered)
 			continue
 		}
-		rows = append(rows, padRow(rendered, width, cursor))
+		rows = append(rows, padMeasuredRow(rendered, displayWidth(text[r[0]:r[1]]), width, cursor))
 	}
 	return rows
 }
