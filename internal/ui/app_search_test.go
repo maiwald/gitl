@@ -294,14 +294,54 @@ func TestSlashOpensPromptAndTypingUpdatesSearchInput(t *testing.T) {
 	}
 }
 
-func TestSlashIsNoopWithoutRepo(t *testing.T) {
+// TestSlashIsNoopWithNothingToSearch covers the list view before the repo
+// has opened: there is no content on screen and no repo to query, so the
+// prompt must not open.
+func TestSlashIsNoopWithNothingToSearch(t *testing.T) {
 	m := newSearchableListModel()
 	m.repo = nil
 
 	newModel, _ := m.Update(keyRune('/'))
 	m = newModel.(Model)
 	if m.searchPromptOpen {
-		t.Fatal("searchPromptOpen = true without a loaded repo, want false")
+		t.Fatal("searchPromptOpen = true with neither a repo nor a detail view, want false")
+	}
+}
+
+// TestSlashSearchesHeaderlessPipedPatch covers `git diff` / `git diff
+// --staged` piped in: that run never opens a repo (its preamble names no
+// commit), but its detail view resolves matches in memory, so / must still
+// work there — it was gated on the repo alone before.
+func TestSlashSearchesHeaderlessPipedPatch(t *testing.T) {
+	jl := &jumplist{}
+	m := Model{start: StartTarget{Piped: &git.PipedPatch{}}, active: viewDetail, jl: jl}
+	m.width, m.height = 80, 24
+	m.detail = NewDetailModel(fixtureDetailForSearch(), jl)
+	m.detail.SetSize(80, 4)
+	if m.repo != nil {
+		t.Fatal("fixture should have no repo")
+	}
+
+	// Driven inline rather than via submitSearchPrompt, which asserts on the
+	// list queries this run has no repo to make.
+	newModel, _ := m.Update(keyRune('/'))
+	m = newModel.(Model)
+	if !m.searchPromptOpen {
+		t.Fatal("searchPromptOpen = false after / on a headerless piped patch, want true")
+	}
+	for _, r := range "needle" {
+		newModel, _ = m.Update(keyRune(r))
+		m = newModel.(Model)
+	}
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+
+	pos, total := m.detail.MatchPosition()
+	if !m.hasActiveSearch() || total != 2 || pos != 1 {
+		t.Fatalf("pos=%d total=%d active=%v, want (1, 2, true)", pos, total, m.hasActiveSearch())
+	}
+	if m.searchingTerm != "" {
+		t.Fatalf("searchingTerm = %q, want no list query started without a repo", m.searchingTerm)
 	}
 }
 

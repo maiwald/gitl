@@ -403,7 +403,9 @@ before every commit — don't commit red.
   still showing, or n/N reviving it there. A search that stays inside one
   commit never pays for it, and neither does the usual way out — the first
   q/esc dismisses the search, so the second arrives at a list that displays
-  no search at all.
+  no search at all. Which is also why `/` is gated on `canSearch` rather
+  than on a repo: a headerless piped patch (`git diff`, `git diff --staged`)
+  never opens one, and its detail view is searchable without it.
 - What a deferred list search does when it lands is decided when it's
   *started* (`Model.jumpOnResolve`), never read off the active view when it
   resolves: a search started merely to light up the list's rows must not

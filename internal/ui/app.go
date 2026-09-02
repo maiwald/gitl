@@ -563,6 +563,11 @@ const (
 // the term so their results can be recognized as still wanted when they
 // arrive, and what to do with them once they do.
 func (m Model) startListSearch(term string, jump int) (Model, tea.Cmd) {
+	// A run with no repo (a headerless piped patch) has no list behind the
+	// detail view and nothing to query — see canSearch.
+	if m.repo == nil {
+		return m, nil
+	}
 	m.searchingTerm = term
 	m.jumpOnResolve = jump
 	return m, searchCmd(m.repo, term, m.allHashes)
@@ -660,7 +665,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.searchPromptOpen {
 		return m.handleSearchPromptKey(msg)
 	}
-	if m.repo != nil && key.Matches(msg, DefaultKeyMap.Search) {
+	if m.canSearch() && key.Matches(msg, DefaultKeyMap.Search) {
 		m.searchInput = textinput.New()
 		m.searchInput.Prompt = "/"
 		m.searchInput.Width = m.width - 2
@@ -692,6 +697,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDetailViewKey(msg)
 	}
 	return m.handleListViewKey(msg)
+}
+
+// canSearch reports whether opening the search prompt can lead anywhere. The
+// list's half of a search is git queries and needs a repo, but the detail
+// view resolves its matches in memory — which is what lets a headerless piped
+// patch (`git diff`, `git diff --staged`), a run that never opens a repo at
+// all, still be searched.
+func (m Model) canSearch() bool {
+	return m.repo != nil || m.detail.detail != nil
 }
 
 // currentJumpPos captures the active view's current position as a jumpPos.
