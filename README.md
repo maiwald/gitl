@@ -122,7 +122,9 @@ Run `gitl --help` (or `-h`) at any time for the full flag reference.
 | `/`                     | Search (list: author + message + hash; detail: message + diff) |
 | `n` / `N`               | Next / previous search match (wraps)    |
 | `ctrl-o` / `ctrl-i`     | Jump back / forward through the positions you left |
-| `Esc` / `q`             | Hide the search, then back (detail view) / quit (list view) |
+| `V`                     | Start/end a linewise selection (detail view); any movement key extends it |
+| `Enter` / `y`           | Copy the selection to the clipboard (while selecting) |
+| `Esc` / `q`             | Undo one thing per press: cancel the selection, hide the search, then back (detail view) / quit (list view) |
 | `ctrl-c`                | Quit                                     |
 
 ## Known limitations
@@ -136,6 +138,11 @@ Run `gitl --help` (or `-h`) at any time for the full flag reference.
   message body (not the one-line subject shown in the row) counts toward
   the match total but has nothing visible to highlight in that row —
   distinguishable from a true non-match only by not being dimmed.
+- Copying a selection goes out as an OSC 52 escape sequence, so it reaches
+  the clipboard of whichever machine your terminal is on — the right one
+  over ssh — but only if the terminal allows clipboard writes. There's no
+  reply to wait for, so gitl reports the copy as sent either way; a terminal
+  with that turned off (or `tmux set-clipboard off`) drops it silently.
 - The working-tree/staged rows are a snapshot taken at startup, like the
   rest of the app's data — there's no key to refresh them if you edit files
   in another terminal while gitl is running.
