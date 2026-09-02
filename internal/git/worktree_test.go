@@ -285,43 +285,6 @@ func TestFetchCommitDetailIsNotPseudo(t *testing.T) {
 	}
 }
 
-// dirtyTwoFileRepo returns a repo with two tracked files, both edited in the
-// working tree and one of them also staged, plus an untracked file — enough
-// for the pathspec tests below to tell "limited to a.txt" apart from
-// "everything".
-func dirtyTwoFileRepo(t *testing.T) *Repo {
-	t.Helper()
-	dir := t.TempDir()
-	ctx := context.Background()
-
-	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
-	for _, name := range []string{"a.txt", "b.txt"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("one\n"), 0o644); err != nil {
-			t.Fatalf("WriteFile: %v", err)
-		}
-	}
-	runGitCmd(t, dir, fixtureCommitEnv, "add", "a.txt", "b.txt")
-	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "add a.txt and b.txt")
-
-	for _, name := range []string{"a.txt", "b.txt"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("one\ntwo\n"), 0o644); err != nil {
-			t.Fatalf("WriteFile: %v", err)
-		}
-	}
-	runGitCmd(t, dir, fixtureCommitEnv, "add", "b.txt")
-	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
-	return repo
-}
-
 func TestFetchWorktreeSummariesOmitsEmptyAndOrdersWorktreeFirst(t *testing.T) {
 	repo := initFixtureRepoWithFile(t)
 	ctx := context.Background()
