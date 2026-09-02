@@ -111,3 +111,53 @@ func TestStatusBarShowsVisualMode(t *testing.T) {
 		t.Errorf("status bar = %q, want 2 lines after extending", got)
 	}
 }
+
+// TestSelectionAndVisibleSearchAreMutuallyExclusive pins both directions of
+// the rule that keeps esc unambiguous: only one of the two can be showing, so
+// a single press never has to choose which it is cancelling.
+func TestSelectionAndVisibleSearchAreMutuallyExclusive(t *testing.T) {
+	t.Run("V retires a visible search", func(t *testing.T) {
+		m := newSearchableDetailModel()
+		m.setSearchDisplay("needle", false)
+
+		newModel, _ := m.Update(keyRune('V'))
+		m = newModel.(Model)
+		if !m.detail.selecting {
+			t.Fatal("selecting = false after V")
+		}
+		if !m.searchDismissed {
+			t.Error("searchDismissed = false, want the search retired by V")
+		}
+		if m.searchTerm != "needle" {
+			t.Errorf("searchTerm = %q, want the term kept for n/N to revive", m.searchTerm)
+		}
+	})
+
+	t.Run("/ ends a selection", func(t *testing.T) {
+		m := newSearchableDetailModel()
+		newModel, _ := m.Update(keyRune('V'))
+		m = newModel.(Model)
+
+		newModel, _ = m.Update(keyRune('/'))
+		m = newModel.(Model)
+		if m.detail.selecting {
+			t.Error("selecting = true after /, want the selection ended")
+		}
+		if !m.searchPromptOpen {
+			t.Error("searchPromptOpen = false, want / to have opened the prompt")
+		}
+	})
+
+	t.Run("n ends a selection", func(t *testing.T) {
+		m := newSearchableDetailModel()
+		m.setSearchDisplay("needle", false)
+		newModel, _ := m.Update(keyRune('V'))
+		m = newModel.(Model)
+
+		newModel, _ = m.Update(keyRune('n'))
+		m = newModel.(Model)
+		if m.detail.selecting {
+			t.Error("selecting = true after n, want the selection ended")
+		}
+	})
+}

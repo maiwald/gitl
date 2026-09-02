@@ -686,6 +686,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSearchPromptKey(msg)
 	}
 	if m.canSearch() && key.Matches(msg, DefaultKeyMap.Search) {
+		// A search and a selection are mutually exclusive states — see
+		// toggleSelection, which retires a search the other way round.
+		m.leaveSelection()
 		m.searchInput = textinput.New()
 		m.searchInput.Prompt = "/"
 		m.searchInput.Width = m.width - 2
@@ -971,6 +974,10 @@ func (m Model) dismissSearch() (Model, tea.Cmd) {
 // may dispatch a targeted fetch if the newly-selected match isn't loaded
 // yet; the detail view is synchronous and never needs one.
 func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
+	// Stepping to a match makes the search the visible state, so it ends a
+	// selection rather than dragging one to wherever the match is.
+	m.leaveSelection()
+
 	// Only reviving a dismissed search needs setSearchDisplay's own
 	// render/reflow: NextMatch/PrevMatch below re-render anyway, so calling
 	// it unconditionally would pay for that twice on every n/N press.
