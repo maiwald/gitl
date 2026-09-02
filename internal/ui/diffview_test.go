@@ -528,8 +528,8 @@ func TestRenderDiffLineCursorRowCountMatchesPlain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			line := git.DiffLine{Op: git.OpDelete, Text: tt.text}
-			plain := renderDiffLine(line, width, nil, nil, false)
-			cursor := renderDiffLine(line, width, nil, nil, true)
+			plain := renderDiffLine(line.Op, diffLineText(line), width, nil, nil, false)
+			cursor := renderDiffLine(line.Op, diffLineText(line), width, nil, nil, true)
 			if len(plain) != len(cursor) {
 				t.Fatalf("plain wrapped to %d rows, cursor to %d — they must agree", len(plain), len(cursor))
 			}

@@ -77,14 +77,15 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 					mi++
 				}
 				spans := hunkSpans[li]
+				text := diffLineText(l)
 				lines = append(lines, lineRenderer{
-					text: diffLineText(l),
+					text: text,
 					// The marker column doesn't count: a line added or
 					// removed empty is a paragraph break in the file it
 					// came from.
 					blank: strings.TrimSpace(l.Text) == "",
 					render: func(cursor bool) []string {
-						return renderDiffLine(l, width, spans, lineMatches, cursor)
+						return renderDiffLine(l.Op, text, width, spans, lineMatches, cursor)
 					},
 				})
 			}
@@ -201,12 +202,15 @@ func fileStatusGlyph(s git.FileStatus) string {
 // renderDiffLine renders a single diff line, word-wrapping it to width when it
 // doesn't fit on one row. Each wrapped row is its own element, so it becomes
 // its own entry in the flattened diff content and FileRange line-index
-// bookkeeping stays correct. spans (from intralineSpans) mark the intraline
-// change within a paired add/delete line, in the same byte-offset-into-
-// DiffLine.Text space as matches, so both shift past the prefix together.
-func renderDiffLine(l git.DiffLine, width int, spans []baseSpan, matches []lineMatch, cursor bool) []string {
-	style, prefix := diffLineStyle(l.Op)
-	text := diffLineText(l)
+// bookkeeping stays correct.
+//
+// text is the line as diffLineText builds it, marker column included — handed
+// in rather than rebuilt, the caller having already built it to carry as the
+// line's plain text. spans (from intralineSpans) mark the intraline change
+// within a paired add/delete line, in the same byte-offset-into-DiffLine.Text
+// space as matches, so both shift past the prefix together.
+func renderDiffLine(op git.LineOp, text string, width int, spans []baseSpan, matches []lineMatch, cursor bool) []string {
+	style, prefix := diffLineStyle(op)
 
 	at := shiftBy(len(prefix))
 	return wrapStyledRows(text, shiftSpans(spans, at), shiftMatches(matches, at), style, width, cursor)
