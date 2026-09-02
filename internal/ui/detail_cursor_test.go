@@ -372,7 +372,7 @@ func TestDetailModelWrappedCursorBlockIsFullyVisible(t *testing.T) {
 }
 
 // TestDetailModelCursorPatchMatchesFullReflow pins down the bargain
-// repaintCursor makes: moving the cursor re-renders only the two logical
+// repaintHighlight makes: moving the cursor re-renders only the two logical
 // lines whose highlight changed and splices them into the cached content, so
 // that content must stay byte-for-byte identical to what a full reflow at
 // the same cursor position would have produced. Anything that made a line's
@@ -454,7 +454,7 @@ func fixtureBigDetail(files, linesPerHunk int) *git.CommitDetail {
 }
 
 // TestDetailCursorMoveCostIsIndependentOfCommitSize is the other half of
-// repaintCursor's bargain: not just "don't re-render every line on a keypress"
+// repaintHighlight's bargain: not just "don't re-render every line on a keypress"
 // but "don't re-read them either". The benchmarks below only ever compare a
 // cursor move against a reflow of the *same* commit, so they stayed happy
 // while bubbles/viewport re-joined and re-split the whole content and measured
@@ -493,7 +493,7 @@ func bytesPerRun(runs int, f func()) uint64 {
 }
 
 // BenchmarkDetailCursorMove and BenchmarkDetailReflow are the measurement
-// behind repaintCursor: a cursor move must cost a couple of line renders and
+// behind repaintHighlight: a cursor move must cost a couple of line renders and
 // an O(1) viewport handoff, not a re-render of the whole commit. On an
 // 8000-line diff the two differ by three orders of magnitude (~6 µs against
 // ~13 ms), and if they ever converge, something has started reflowing on every

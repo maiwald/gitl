@@ -18,6 +18,10 @@ type KeyMap struct {
 	Search       key.Binding
 	NextMatch    key.Binding
 	PrevMatch    key.Binding
+	// Select starts/ends a linewise selection in the detail view (vim's
+	// shift-V), and Yank copies one, alongside Enter.
+	Select key.Binding
+	Yank   key.Binding
 	// JumpBack and JumpForward step through the shared jumplist (see
 	// jumplist in app.go), vim's ctrl+o/ctrl+i. JumpForward is bound to
 	// "tab", not "ctrl+i": the two are the same byte (0x09) at the terminal
@@ -44,6 +48,8 @@ var DefaultKeyMap = KeyMap{
 	Search:       key.NewBinding(key.WithKeys("/")),
 	NextMatch:    key.NewBinding(key.WithKeys("n")),
 	PrevMatch:    key.NewBinding(key.WithKeys("N")),
+	Select:       key.NewBinding(key.WithKeys("V")),
+	Yank:         key.NewBinding(key.WithKeys("y")),
 	JumpBack:     key.NewBinding(key.WithKeys("ctrl+o")),
 	JumpForward:  key.NewBinding(key.WithKeys("tab")),
 }

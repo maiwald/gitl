@@ -745,6 +745,10 @@ func (m Model) doJumpForward() (tea.Model, tea.Cmd) {
 // commit does — a jump to the first match would fight the cursorLine this
 // restore is trying to land on.
 func (m Model) gotoJumpPos(pos jumpPos) (Model, tea.Cmd) {
+	// A jump lands the cursor somewhere the selection was never anchored
+	// from, and can leave the detail view entirely, so it ends any selection
+	// rather than dragging one along behind it.
+	m.leaveSelection()
 	if pos.view == viewList {
 		m.active = viewList
 		m.list.JumpTo(pos.listCursor)
@@ -761,18 +765,60 @@ func (m Model) gotoJumpPos(pos jumpPos) (Model, tea.Cmd) {
 }
 
 // handleDetailViewKey routes a key press while the detail view is active:
-// Back returns to the list (or quits, see quitOnBack), everything else goes
-// to the diff viewport.
+// the selection keys first, then Back to return to the list (or quit, see
+// quitOnBack), everything else to the diff viewport.
+//
+// Selection is handled here rather than in DetailModel.Update because both
+// halves of it reach past the detail view: V has to retire a visible search
+// (the canonical search state lives on Model), and a copy is the one detail
+// view key that produces a tea.Cmd.
 func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, DefaultKeyMap.Select) {
+		return m.toggleSelection()
+	}
+	if m.detail.selecting {
+		// Back cancels the selection and goes no further: it never falls
+		// through to leaving the view, so one press undoes one thing.
+		if key.Matches(msg, DefaultKeyMap.Back) {
+			m.detail.clearSelection()
+			return m, nil
+		}
+	}
 	if key.Matches(msg, DefaultKeyMap.Back) {
 		if m.quitOnBack {
 			m.quitting = true
 			return m, tea.Quit
 		}
+		m.leaveSelection()
 		m.active = viewList
 		return m.ensureListSearch(jumpNone)
 	}
 	m.detail.Update(msg)
+	return m, nil
+}
+
+// leaveSelection drops any selection in the detail view, for the transitions
+// that take the user out of the state it was made in. A selection never
+// outlives the view it was taken in.
+func (m *Model) leaveSelection() {
+	if m.detail.selecting {
+		m.detail.clearSelection()
+	}
+}
+
+// toggleSelection starts a linewise selection at the cursor, or ends the one
+// in progress (vim's V). Starting one retires a visible search: the two are
+// mutually exclusive states, which is what keeps a single esc unambiguous
+// about which of them it is cancelling.
+func (m Model) toggleSelection() (tea.Model, tea.Cmd) {
+	if m.detail.selecting {
+		m.detail.clearSelection()
+		return m, nil
+	}
+	if m.hasActiveSearch() && !m.searchDismissed {
+		m, _ = m.dismissSearch()
+	}
+	m.detail.startSelection()
 	return m, nil
 }
 
@@ -957,15 +1003,22 @@ func (m Model) contentHeight() int {
 }
 
 // renderStatusBar renders the bottom status bar, in priority order: the live
-// query while the search prompt is open, a loading indicator while the list's
-// queries are in flight, the active view's search term/position, or the most
-// recent non-fatal fetch failure.
+// query while the search prompt is open, the selection in progress, a loading
+// indicator while the list's queries are in flight, the active view's search
+// term/position, or the most recent non-fatal fetch failure.
+//
+// The selection outranks the search cases, which can't fire under it anyway —
+// starting a selection retires a visible search — but the order says which
+// state the bar is reporting rather than leaving it to that coincidence.
 func (m Model) renderStatusBar() string {
 	style := statusBarStyle
 	var content string
 	switch {
 	case m.searchPromptOpen:
 		content = m.searchInput.View()
+	case m.active == viewDetail && m.detail.selecting:
+		n := m.detail.selectedLineCount()
+		content = fmt.Sprintf("-- VISUAL --  %d %s", n, pluralize(n, "line", "lines"))
 	case m.searchingTerm != "":
 		content = fmt.Sprintf("/%s  searching…", m.searchingTerm)
 	case m.searchTerm != "" && !m.searchDismissed:

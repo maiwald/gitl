@@ -402,6 +402,17 @@ before every commit — don't commit red.
   `gotoJumpPos`/`newDetailModel`, which installs the search term the same
   non-jumping way opening a commit does — a jump to the first match would
   fight the `cursorLine` this restore is specifically trying to land on.
+- `V` starts a linewise selection in the detail view, anchored at the cursor
+  (`DetailModel.selecting`/`selectAnchor`), and every motion extends it —
+  they all go through `setCursor`, and `highlight` reads both ends, so no
+  motion knows a selection exists. A selection and a *visible* search are
+  mutually exclusive states: `V` retires a showing search and `/`/`n`/`N`
+  end a selection. That exclusivity is what keeps `esc` unambiguous, since
+  it peels exactly one layer per press and only one of those two can ever be
+  pending: search prompt → selection → search highlighting → the detail view
+  → quit. A selection never outlives the view it was taken in
+  (`Model.leaveSelection`), and `q` peels exactly as `esc` does, the two
+  halves of the `Back` binding staying interchangeable.
 - There is **one search term**, owned by the root `Model` (`searchTerm`/
   `searchDismissed`/`listMatches`, written only by `setSearchDisplay`), and
   **both views answer to it** — but each is searched only when its answer is

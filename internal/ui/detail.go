@@ -73,11 +73,24 @@ type DetailModel struct {
 	// the cursor can't wander into rows that hold no content.
 	contentLen int
 
+	// selecting reports whether a linewise selection (V) is in progress, and
+	// selectAnchor is the row it was anchored at, meaningful only while it
+	// is. The selection runs from the anchor's logical line to the cursor's,
+	// in whichever direction the cursor has since moved, so every existing
+	// motion extends it without knowing it exists — see highlight, which is
+	// the only thing that reads either field.
+	//
+	// A bool rather than a sentinel anchor because row 0 is a perfectly good
+	// place to start a selection, and because the zero DetailModel then
+	// means "not selecting" without having to be constructed.
+	selecting    bool
+	selectAnchor int
+
 	// lines are the logical lines the last reflow assembled, in document
 	// order, each able to re-render itself with or without the cursor row's
 	// background; content is what they rendered into (padding included), and
 	// lineStart[i] is the row lines[i] begins at. Keeping all three is what
-	// makes a cursor move cost two line renders (repaintCursor) instead of a
+	// makes a cursor move cost two line renders (repaintHighlight) instead of a
 	// whole reflow — with the obligation that anything changing
 	// what a line *says* must go through reflow, which rebuilds all three
 	// together.
@@ -256,9 +269,70 @@ func (m *DetailModel) setContent() {
 }
 
 // highlight is the inclusive range of rows drawn with the cursor row's
-// background: the line the cursor is on.
+// background: the line the cursor is on, or everything between the selection
+// anchor and the cursor while a selection is active.
 func (m DetailModel) highlight() (from, to int) {
-	return m.cursorLine, m.cursorLine
+	if !m.selecting {
+		return m.cursorLine, m.cursorLine
+	}
+	return min(m.selectAnchor, m.cursorLine), max(m.selectAnchor, m.cursorLine)
+}
+
+// startSelection anchors a linewise selection at the cursor. Every motion
+// from here extends it, since they all move the cursor and highlight reads
+// both ends.
+func (m *DetailModel) startSelection() {
+	if m.selecting {
+		return
+	}
+	m.selecting = true
+	m.selectAnchor = m.cursorLine
+	// Nothing moved, so nothing to repaint: the anchor line is the cursor
+	// line, and it already carries the highlight.
+}
+
+// clearSelection drops the selection, repainting the lines that lose their
+// highlight. A no-op when there is none, so callers can clear unconditionally.
+func (m *DetailModel) clearSelection() {
+	if !m.selecting {
+		return
+	}
+	from, to := m.highlight()
+	m.selecting = false
+	m.repaintHighlight(from, to)
+}
+
+// selectedLines is the inclusive range of logical lines the selection covers,
+// empty (first > last) when there is no selection.
+func (m DetailModel) selectedLines() (first, last int) {
+	if !m.selecting {
+		return 0, -1
+	}
+	from, to := m.highlight()
+	return logicalRangeAt(m.lineStart, m.contentLen, from, to)
+}
+
+// selectedLineCount is how many logical lines the selection covers.
+func (m DetailModel) selectedLineCount() int {
+	first, last := m.selectedLines()
+	return last - first + 1
+}
+
+// SelectedText is the selection as plain text: one logical line per line,
+// verbatim — tabs, diff markers and any trailing whitespace of the line's own
+// intact — ending in a newline the way a linewise yank does. Empty when
+// nothing is selected.
+func (m DetailModel) SelectedText() string {
+	first, last := m.selectedLines()
+	if first > last {
+		return ""
+	}
+	var b strings.Builder
+	for i := first; i <= last; i++ {
+		b.WriteString(m.lines[i].text)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // repaintHighlight re-renders only the logical lines whose highlight actually
