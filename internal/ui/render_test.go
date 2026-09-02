@@ -260,3 +260,53 @@ func TestExpandTabsMappedRelocatesEveryOffset(t *testing.T) {
 		t.Error("a tab-free line got a mapping, want nil (the identity)")
 	}
 }
+
+// TestWrapStyledRowsFusedRowMatchesUnfused pins the shortcut wrapStyledRows
+// takes for the rows most of a diff is made of, where styling a row and
+// padding it collapse into one concatenation. The reference is those two steps
+// done separately, which is what every other row still does — so the fused
+// row has to come out byte-for-byte the same, at every width, including the
+// ones where it declines to fuse at all.
+func TestWrapStyledRowsFusedRowMatchesUnfused(t *testing.T) {
+	texts := []string{
+		"",
+		"short",
+		"\tindented call(arg)",
+		"a line long enough that it has to wrap more than once at a narrow width",
+		"unicode ünïcödé ✓ 日本語 in the middle",
+		"   leading and trailing   ",
+	}
+	for _, base := range allLineStyles {
+		for _, text := range texts {
+			for _, width := range []int{0, 1, 5, 20, len(text), 200} {
+				want := unfusedStyledRows(text, base, width)
+				got := wrapStyledRows(text, nil, nil, base, width, false)
+				if len(got) != len(want) {
+					t.Fatalf("text %q width %d: %d rows, want %d", text, width, len(got), len(want))
+				}
+				for i := range got {
+					if got[i] != want[i] {
+						t.Errorf("text %q width %d row %d: %q, want %q", text, width, i, got[i], want[i])
+					}
+				}
+			}
+		}
+	}
+}
+
+// unfusedStyledRows is wrapStyledRows for a line with nothing to composite,
+// with the row always styled and then padded as two separate steps.
+func unfusedStyledRows(text string, base lineStyle, width int) []string {
+	text = expandTabs(text)
+	var rows []string
+	for _, r := range wrapRanges(text, width) {
+		seg := text[r[0]:r[1]]
+		rendered := renderLineWithBaseSpans(seg, nil, nil, base, false)
+		if width <= 0 {
+			rows = append(rows, rendered)
+			continue
+		}
+		rows = append(rows, padMeasuredRow(rendered, displayWidth(seg), width, false))
+	}
+	return rows
+}

@@ -286,6 +286,11 @@ before every commit — don't commit red.
   escapes, and the parser then never runs over a styled string at all.
   `TestDisplayWidthMatchesAnsiStringWidth` pins the fast path and
   `TestEveryRowIsExactlyOneFullWidthLine` pins the handed-in width.
+- Styling a row and padding it are one concatenation, not two, on the path
+  most of a diff takes: no cursor, nothing composited, and a row that fits
+  (`sgr.renderPadded`, taken in `wrapStyledRows`). Every other row still does
+  the two steps separately, and `TestWrapStyledRowsFusedRowMatchesUnfused`
+  holds the fused one to producing exactly what they would have.
 - Four places sidestep lipgloss on the reflow path, which pays every one of
   them once per line of the whole commit. `wrapRanges` doesn't wrap a line
   that already fits; `padRow` neither truncates nor styles a plain

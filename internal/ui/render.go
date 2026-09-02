@@ -353,15 +353,28 @@ func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lin
 		matches = shiftMatches(matches, expanded)
 	}
 
+	plain := !cursor && len(spans) == 0 && len(matches) == 0
 	ranges := wrapRanges(text, width)
 	rows := make([]string, 0, len(ranges))
 	for _, r := range ranges {
-		rendered := renderLineWithBaseSpans(text[r[0]:r[1]], clipSpans(spans, r), clipMatches(matches, r), base, cursor)
+		seg := text[r[0]:r[1]]
+		w := displayWidth(seg)
+		// Styling a row and then padding it are two concatenations of the
+		// same string; on the path most of a diff takes — no cursor, nothing
+		// composited, and a row that fits — they are the same concatenation,
+		// and a reflow does this once per line of the commit. The pieces are
+		// exactly what those two steps would have produced, which is what
+		// TestWrapStyledRowsFusedRowMatchesUnfused checks.
+		if plain && width > 0 && seg != "" && w <= width {
+			rows = append(rows, base.sgr(false).renderPadded(seg, width-w))
+			continue
+		}
+		rendered := renderLineWithBaseSpans(seg, clipSpans(spans, r), clipMatches(matches, r), base, cursor)
 		if width <= 0 {
 			rows = append(rows, rendered)
 			continue
 		}
-		rows = append(rows, padMeasuredRow(rendered, displayWidth(text[r[0]:r[1]]), width, cursor))
+		rows = append(rows, padMeasuredRow(rendered, w, width, cursor))
 	}
 	return rows
 }
@@ -495,6 +508,12 @@ func newSGR(s lipgloss.Style) sgr {
 }
 
 func (g sgr) render(text string) string { return g.prefix + text + g.suffix }
+
+// renderPadded is render followed by padRow's plain fill, in one
+// concatenation rather than two — see wrapStyledRows, its only caller.
+func (g sgr) renderPadded(text string, pad int) string {
+	return g.prefix + text + g.suffix + strings.Repeat(" ", pad)
+}
 
 // cursorMerged merges the cursor row's background into base when isCursor is
 // true, else returns base unchanged. Only safe for a row rendered in a single
