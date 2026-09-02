@@ -412,7 +412,14 @@ before every commit — don't commit red.
   pending: search prompt → selection → search highlighting → the detail view
   → quit. A selection never outlives the view it was taken in
   (`Model.leaveSelection`), and `q` peels exactly as `esc` does, the two
-  halves of the `Back` binding staying interchangeable.
+  halves of the `Back` binding staying interchangeable. `Enter`/`y` copies it
+  (`copyCmd`, `clipboard.go`) as an OSC 52 sequence written straight to
+  `Model.out` — the terminal's clipboard, which is the right machine's over
+  ssh, at the cost of it being a write gitl can't get an answer to: a
+  terminal that disallows clipboard writes drops it silently. That write and
+  bubbletea's frames share stdout from different goroutines, so it is one
+  Write of one self-contained sequence, and the keypress behind it has
+  already cleared the selection, which repaints those rows regardless.
 - There is **one search term**, owned by the root `Model` (`searchTerm`/
   `searchDismissed`/`listMatches`, written only by `setSearchDisplay`), and
   **both views answer to it** — but each is searched only when its answer is

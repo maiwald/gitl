@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -110,6 +112,18 @@ type Model struct {
 	// jl is the single, cross-view jumplist backing ctrl-o/ctrl-i, shared
 	// by pointer with ListModel and DetailModel.
 	jl *jumplist
+
+	// out is where an out-of-band terminal write goes — currently only the
+	// clipboard's OSC 52 sequence. os.Stdout in both run modes: the normal
+	// path never overrides the program's output, and the pager path has
+	// already established stdout is a terminal (its /dev/tty handle is open
+	// for reading only). Nil falls back to os.Stdout, so a Model built
+	// without going through NewModel still copies.
+	out io.Writer
+
+	// copied is the line count of the most recent copy, reported in the
+	// status bar until the next key press.
+	copied int
 }
 
 // jumpPos identifies one position recorded in the jumplist: either a list
@@ -157,6 +171,7 @@ func NewModel(target StartTarget) Model {
 		start:      target,
 		quitOnBack: target.opensDetail(),
 		jl:         jl,
+		out:        os.Stdout,
 		// Built empty rather than left a zero value until commitsLoadedMsg
 		// replaces it: keys reach it from the very first frame, and a zero
 		// ListModel has no jumplist to push onto.
@@ -543,7 +558,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = msg.err
 		}
 		return m, nil
+	case copiedMsg:
+		m.copied = msg.lines
+		return m, nil
 	case tea.KeyMsg:
+		// The confirmation stands until the user does anything else.
+		m.copied = 0
 		return m.handleKey(msg)
 	}
 	return m, nil
@@ -783,6 +803,13 @@ func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detail.clearSelection()
 			return m, nil
 		}
+		// Enter's other meaning (jump to this file from a stats row) is
+		// unreachable while selecting, which is what a selection is for.
+		if key.Matches(msg, DefaultKeyMap.Enter) || key.Matches(msg, DefaultKeyMap.Yank) {
+			text, lines := m.detail.SelectedText(), m.detail.selectedLineCount()
+			m.detail.clearSelection()
+			return m, copyCmd(m.out, text, lines)
+		}
 	}
 	if key.Matches(msg, DefaultKeyMap.Back) {
 		if m.quitOnBack {
@@ -1019,6 +1046,8 @@ func (m Model) renderStatusBar() string {
 	case m.active == viewDetail && m.detail.selecting:
 		n := m.detail.selectedLineCount()
 		content = fmt.Sprintf("-- VISUAL --  %d %s", n, pluralize(n, "line", "lines"))
+	case m.copied > 0:
+		content = fmt.Sprintf("copied %d %s", m.copied, pluralize(m.copied, "line", "lines"))
 	case m.searchingTerm != "":
 		content = fmt.Sprintf("/%s  searching…", m.searchingTerm)
 	case m.searchTerm != "" && !m.searchDismissed:
