@@ -89,6 +89,9 @@ func blankRow(width int) lineRenderer {
 // it themselves.
 func renderRows(lines []lineRenderer, from, to int) (rows []string, lineStart []int) {
 	lineStart = make([]int, len(lines))
+	// Most lines are one row, so this is the right order of magnitude and
+	// saves regrowing a slice the length of the whole commit.
+	rows = make([]string, 0, len(lines))
 	for i, l := range lines {
 		lineStart[i] = len(rows)
 		rows = append(rows, l.render(false)...)

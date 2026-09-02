@@ -574,3 +574,26 @@ func TestRenderDiffRowsNeverEmbedNewlines(t *testing.T) {
 		}
 	}
 }
+
+// TestDiffLineCountMatchesRenderDiff pins the size estimate RenderDiff
+// preallocates from. A wrong count only costs a regrow, never correctness —
+// which is exactly why it would drift unnoticed as the diff grows a new kind
+// of line.
+func TestDiffLineCountMatchesRenderDiff(t *testing.T) {
+	files := []git.File{
+		{Path: "a.go", Status: git.StatusModified, Hunks: []git.Hunk{
+			{Header: "@@ -1,2 +1,2 @@", Lines: []git.DiffLine{
+				{Op: git.OpContext, Text: "ctx"},
+				{Op: git.OpDelete, Text: "old"},
+				{Op: git.OpAdd, Text: "new"},
+			}},
+			{Header: "@@ -9,1 +9,1 @@", Lines: []git.DiffLine{{Op: git.OpContext, Text: "tail"}}},
+		}},
+		{Path: "bin.png", Status: git.StatusModified, Binary: true},
+		{Path: "empty.go", Status: git.StatusAdded},
+	}
+	lines, _, _ := RenderDiff(files, 80, nil, -1, false)
+	if got, want := diffLineCount(files), len(lines); got != want {
+		t.Errorf("diffLineCount = %d, RenderDiff emitted %d lines", got, want)
+	}
+}

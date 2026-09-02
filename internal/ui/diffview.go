@@ -35,7 +35,7 @@ type FileRange struct {
 // and is computed from the full list regardless of dismissed, so a dismissed
 // match still lands correctly once n/N revives it.
 func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool) ([]lineRenderer, []FileRange, []int) {
-	var lines []lineRenderer
+	lines := make([]lineRenderer, 0, diffLineCount(files))
 	ranges := make([]FileRange, 0, len(files))
 	matchLines := make([]int, len(matches))
 	mi := 0
@@ -93,6 +93,23 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 		ranges = append(ranges, FileRange{FileIndex: fi, StartLine: start, EndLine: len(lines)})
 	}
 	return lines, ranges, matchLines
+}
+
+// diffLineCount is how many logical lines RenderDiff will emit for files, so
+// it can size its slice once instead of regrowing it the length of the whole
+// commit. It mirrors RenderDiff's own structure: a header per file, a notice
+// for a binary one, and a header plus its lines for every hunk.
+func diffLineCount(files []git.File) int {
+	n := len(files)
+	for _, f := range files {
+		if f.Binary {
+			n++
+		}
+		for _, h := range f.Hunks {
+			n += 1 + len(h.Lines)
+		}
+	}
+	return n
 }
 
 // DiffMatchKind distinguishes a DiffMatch found in a file's own displayed name
