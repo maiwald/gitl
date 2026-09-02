@@ -245,7 +245,10 @@ before every commit — don't commit red.
   unpadded), and it can't be recovered from the rendered rows afterwards,
   which is why it's carried rather than derived; every new line has to set
   it, and `TestLineTextMatchesRenderedRow` is what catches one that drifts
-  from what it renders. `reflow` concatenates the blocks and `renderRows`
+  from what it renders. The same entry carries `blank`, the paragraph break
+  `{`/`}` navigate by, which is set rather than derived from `text` because a
+  diff line's text carries its marker column — a line added empty reads as
+  `"+"`, blank in the file being shown but not in the string. `reflow` concatenates the blocks and `renderRows`
   lays them out, returning the flattened rows plus the `lineStart` index and
   applying the cursor background to every line the highlighted row range
   covers — one line for a plain cursor, the whole of a linewise selection
@@ -402,6 +405,11 @@ before every commit — don't commit red.
   `gotoJumpPos`/`newDetailModel`, which installs the search term the same
   non-jumping way opening a commit does — a jump to the first match would
   fight the `cursorLine` this restore is specifically trying to land on.
+- Every detail-view motion goes through `setCursor`, which is what lets a new
+  one (`jumpParagraph`, vim's `{`/`}`) extend a selection and repaint
+  correctly without knowing either exists. A motion that can move a long way
+  should also `pushJump` first, as `g`/`G`, `[`/`]` and `{`/`}` do — the same
+  set vim treats as jump commands.
 - `V` starts a linewise selection in the detail view, anchored at the cursor
   (`DetailModel.selecting`/`selectAnchor`), and every motion extends it —
   they all go through `setCursor`, and `highlight` reads both ends, so no

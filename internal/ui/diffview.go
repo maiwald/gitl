@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"unicode"
 
 	"github.com/maiwald/gitl/internal/git"
@@ -78,6 +79,10 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 				spans := hunkSpans[li]
 				lines = append(lines, lineRenderer{
 					text: diffLineText(l),
+					// The marker column doesn't count: a line added or
+					// removed empty is a paragraph break in the file it
+					// came from.
+					blank: strings.TrimSpace(l.Text) == "",
 					render: func(cursor bool) []string {
 						return renderDiffLine(l, width, spans, lineMatches, cursor)
 					},

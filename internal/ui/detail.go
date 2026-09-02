@@ -511,7 +511,8 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 		}
 		lineSpans := spans[li]
 		rendered = append(rendered, lineRenderer{
-			text: line,
+			text:  line,
+			blank: strings.TrimSpace(line) == "",
 			render: func(cursor bool) []string {
 				return wrapStyledRows(line, lineSpans, lineMatches, plainLine, width, cursor)
 			},
@@ -575,6 +576,10 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 		m.jumpCursor(0)
 	case key.Matches(msg, DefaultKeyMap.Bottom):
 		m.jumpCursor(m.contentLen - 1)
+	case key.Matches(msg, DefaultKeyMap.PrevPara):
+		m.jumpParagraph(-1)
+	case key.Matches(msg, DefaultKeyMap.NextPara):
+		m.jumpParagraph(1)
 	case key.Matches(msg, DefaultKeyMap.PrevFile):
 		m.jumpToSection(-1)
 	case key.Matches(msg, DefaultKeyMap.NextFile):
@@ -672,6 +677,45 @@ func (m *DetailModel) ensureCursorVisible() {
 // cross-view jump knows which commit/entry to reconstruct.
 func (m *DetailModel) pushJump(pos int) {
 	m.jl.push(jumpPos{view: viewDetail, commit: m.detail, cursorLine: pos})
+}
+
+// jumpParagraph moves the cursor to the next (delta > 0) or previous blank
+// line, vim's } and {, clamping at the first/last line rather than wrapping.
+//
+// It follows vim's rule rather than "the nearest blank line": step off the
+// current line, skip the rest of the blank run if the cursor was in one, then
+// run to the far side of the text that follows. So a press from anywhere in a
+// block of lines lands on the blank that ends it, and a press from a blank
+// crosses the next block instead of sticking to its edge.
+//
+// Like g/G it's jump-worthy, and it goes through setCursor, so it extends a
+// selection the way every other motion does.
+func (m *DetailModel) jumpParagraph(delta int) {
+	last := len(m.lines) - 1
+	if last < 0 {
+		return
+	}
+	i := logicalAt(m.lineStart, m.cursorLine)
+	if i < 0 {
+		return
+	}
+
+	startedBlank := m.lines[i].blank
+	i += delta
+	if startedBlank {
+		for i >= 0 && i <= last && m.lines[i].blank {
+			i += delta
+		}
+	}
+	for i >= 0 && i <= last && !m.lines[i].blank {
+		i += delta
+	}
+
+	target := clamp(i, 0, last)
+	if row := m.lineStart[target]; row != m.cursorLine {
+		m.pushJump(m.cursorLine)
+		m.setCursor(row)
+	}
 }
 
 // jumpToSection scrolls the diff panel directly to the section

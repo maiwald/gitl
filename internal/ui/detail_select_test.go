@@ -106,6 +106,7 @@ func TestSelectionPatchMatchesFullReflow(t *testing.T) {
 		{"bottom", func() { press('G') }},
 		{"top", func() { press('g') }},
 		{"next file", func() { press(']') }},
+		{"next paragraph", func() { press('}') }},
 		{"clear", func() { m.clearSelection() }},
 	}
 	for _, step := range steps {

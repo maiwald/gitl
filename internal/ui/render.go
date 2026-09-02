@@ -40,8 +40,14 @@ func clamp(v, lo, hi int) int {
 // tabs are expanded, the line may have been split across rows, and the fill
 // to the right of the text is indistinguishable from trailing spaces of its
 // own.
+//
+// blank marks a paragraph break for { and }. It isn't derived from text
+// because a diff line's text carries its marker column: an added empty line
+// reads as "+", which is blank in the file being shown but not in the string.
+// Each block sets it, knowing what its own lines are.
 type lineRenderer struct {
 	text   string
+	blank  bool
 	render func(cursor bool) []string
 }
 
@@ -50,7 +56,8 @@ type lineRenderer struct {
 // notice, the stats block's heading.
 func clippedLine(style lipgloss.Style, text string, width int) lineRenderer {
 	return lineRenderer{
-		text: text,
+		text:  text,
+		blank: strings.TrimSpace(text) == "",
 		render: func(cursor bool) []string {
 			return []string{renderClipped(cursorMerged(style, cursor), text, width)}
 		},
@@ -61,6 +68,7 @@ func clippedLine(style lipgloss.Style, text string, width int) lineRenderer {
 // blocks (see blankLine).
 func blankRow(width int) lineRenderer {
 	return lineRenderer{
+		blank: true,
 		render: func(cursor bool) []string {
 			return []string{blankLine(width, cursor)}
 		},

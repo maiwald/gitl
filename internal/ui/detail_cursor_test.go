@@ -380,8 +380,8 @@ func TestDetailModelWrappedCursorBlockIsFullyVisible(t *testing.T) {
 // wrapped line's row count under the cursor — would show up here as a
 // divergence.
 //
-// The walk covers plain motion (j), a section jump ([ / ]), and a match step
-// (n), the three ways the cursor gets somewhere.
+// The walk covers plain motion (j), a section jump ([ / ]), a paragraph jump
+// ({ / }), and a match step (n), the ways the cursor gets somewhere.
 func TestDetailModelCursorPatchMatchesFullReflow(t *testing.T) {
 	m := NewDetailModel(fixtureDetailWithLongLines(), &jumplist{})
 	m.SetSize(60, 8)
@@ -396,6 +396,8 @@ func TestDetailModelCursorPatchMatchesFullReflow(t *testing.T) {
 		{"down", func() { press(tea.KeyMsg{Type: tea.KeyDown}) }},
 		{"down", func() { press(tea.KeyMsg{Type: tea.KeyDown}) }},
 		{"next file", func() { press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}) }},
+		{"next paragraph", func() { press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'}'}}) }},
+		{"prev paragraph", func() { press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'{'}}) }},
 		{"next match", func() { m.NextMatch() }},
 		{"up", func() { press(tea.KeyMsg{Type: tea.KeyUp}) }},
 		{"bottom", func() { press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}}) }},

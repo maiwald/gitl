@@ -119,6 +119,7 @@ Run `gitl --help` (or `-h`) at any time for the full flag reference.
 | `g` / `G`               | Jump to top / bottom                    |
 | `Enter`                 | Open commit detail; on a "Files changed" row, jump to that file's diff |
 | `[` / `]`               | Jump to previous/next file's diff (detail view) |
+| `{` / `}`               | Jump to previous/next blank line (detail view) |
 | `/`                     | Search (list: author + message + hash; detail: message + diff) |
 | `n` / `N`               | Next / previous search match (wraps)    |
 | `ctrl-o` / `ctrl-i`     | Jump back / forward through the positions you left |

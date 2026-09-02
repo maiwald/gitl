@@ -15,9 +15,12 @@ type KeyMap struct {
 	Quit         key.Binding
 	PrevFile     key.Binding
 	NextFile     key.Binding
-	Search       key.Binding
-	NextMatch    key.Binding
-	PrevMatch    key.Binding
+	// PrevPara and NextPara are vim's { and }: the previous/next blank line.
+	PrevPara  key.Binding
+	NextPara  key.Binding
+	Search    key.Binding
+	NextMatch key.Binding
+	PrevMatch key.Binding
 	// Select starts/ends a linewise selection in the detail view (vim's
 	// shift-V), and Yank copies one, alongside Enter.
 	Select key.Binding
@@ -45,6 +48,8 @@ var DefaultKeyMap = KeyMap{
 	Quit:         key.NewBinding(key.WithKeys("ctrl+c")),
 	PrevFile:     key.NewBinding(key.WithKeys("[")),
 	NextFile:     key.NewBinding(key.WithKeys("]")),
+	PrevPara:     key.NewBinding(key.WithKeys("{")),
+	NextPara:     key.NewBinding(key.WithKeys("}")),
 	Search:       key.NewBinding(key.WithKeys("/")),
 	NextMatch:    key.NewBinding(key.WithKeys("n")),
 	PrevMatch:    key.NewBinding(key.WithKeys("N")),
