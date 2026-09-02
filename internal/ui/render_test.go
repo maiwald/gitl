@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -113,4 +114,83 @@ func TestLineStyleSGRMatchesLipgloss(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestRenderLineWithBaseSpansMatchesRenderPerSegment pins the other
+// substitution renderLineWithBaseSpans makes: a line that does carry a span or
+// a match still walks boundaries, but only the covered stretches go through
+// lipgloss — the base-styled ones in between use the precomputed sequence. The
+// reference is what the walk produced when every segment was a Render, so a
+// lipgloss upgrade that made the two disagree (over tab expansion in a segment
+// that doesn't start at a tab stop, say) fails here.
+func TestRenderLineWithBaseSpansMatchesRenderPerSegment(t *testing.T) {
+	const text = "func x() {\tbody = value // trailing"
+	cases := []struct {
+		name    string
+		spans   []baseSpan
+		matches []lineMatch
+	}{
+		{name: "span in the middle", spans: []baseSpan{{start: 11, end: 15, style: diffAddEmphStyle}}},
+		{name: "span at the start", spans: []baseSpan{{start: 0, end: 4, style: diffDeleteEmphStyle}}},
+		{name: "span to the end", spans: []baseSpan{{start: 20, end: len(text), style: diffAddEmphStyle}}},
+		{name: "match", matches: []lineMatch{{start: 11, end: 15}}},
+		{name: "active match", matches: []lineMatch{{start: 5, end: 9, active: true}}},
+	}
+
+	for _, tc := range cases {
+		for _, base := range allLineStyles {
+			for _, cursor := range []bool{false, true} {
+				want := renderSegmentsWithRender(text, tc.spans, tc.matches, base, cursor)
+				got := renderLineWithBaseSpans(text, tc.spans, tc.matches, base, cursor)
+				if got != want {
+					t.Errorf("%s (cursor=%v): renderLineWithBaseSpans = %q, want %q (Render per segment)", tc.name, cursor, got, want)
+				}
+			}
+		}
+	}
+}
+
+// renderSegmentsWithRender is renderLineWithBaseSpans' boundary walk with
+// every segment rendered through lipgloss, the reference the real one is
+// allowed to shortcut.
+func renderSegmentsWithRender(text string, spans []baseSpan, matches []lineMatch, base lineStyle, cursor bool) string {
+	bounds := map[int]bool{0: true, len(text): true}
+	for _, s := range spans {
+		bounds[s.start], bounds[s.end] = true, true
+	}
+	for _, m := range matches {
+		bounds[m.start], bounds[m.end] = true, true
+	}
+	points := make([]int, 0, len(bounds))
+	for p := range bounds {
+		points = append(points, p)
+	}
+	sort.Ints(points)
+
+	styleAt := func(pos int) lipgloss.Style {
+		for _, m := range matches {
+			if pos >= m.start && pos < m.end {
+				return matchStyle(m.active)
+			}
+		}
+		for _, s := range spans {
+			if pos >= s.start && pos < s.end {
+				if cursor {
+					return s.style.Background(cursorRowBg)
+				}
+				return s.style
+			}
+		}
+		return cursorMerged(base.style, cursor)
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(points)-1; i++ {
+		start, end := points[i], points[i+1]
+		if start >= end {
+			continue
+		}
+		b.WriteString(styleAt(start).Render(text[start:end]))
+	}
+	return b.String()
 }

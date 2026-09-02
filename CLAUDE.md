@@ -282,7 +282,11 @@ before every commit — don't commit red.
   them once per line of the whole commit. `wrapRanges` doesn't wrap a line
   that already fits; `padRow` neither truncates nor styles a plain
   (non-cursor) fill; `renderLineWithBaseSpans` skips its boundary walk for a
-  line carrying no span and no match; and `lineStyle` (`styles.go`) renders
+  line carrying no span and no match, and takes that same shortcut for the
+  base-styled stretches *between* the spans of a line that has them (most of
+  it — an intraline emphasis or a search hit is a short middle with plain
+  text either side, and `n`/`N` reflow on every press); and `lineStyle`
+  (`styles.go`) renders
   such a line by concatenating the ANSI prefix/suffix lipgloss produces for
   its style (`sgr`, `render.go`) instead of calling `Render`, which re-reads
   every style property and runs the padding/alignment/border/margin pipeline
@@ -291,7 +295,9 @@ before every commit — don't commit red.
   Every one of those is a claim about lipgloss's behavior rather than ours,
   so `render_test.go` compares each against what lipgloss itself produces: an
   upgrade that changes any of them fails there instead of silently changing
-  every rendered row. Two consequences to keep in mind when touching this.
+  every rendered row — `TestRenderLineWithBaseSpansMatchesRenderPerSegment` is
+  the one for the mixed line, whose reference is the boundary walk with every
+  segment Rendered. Two consequences to keep in mind when touching this.
   `lineStyle`'s sequences are derived on **first use**, not at package init —
   lipgloss fixes its color profile the first time anything renders, and an
   explicit `SetColorProfile` (the tests set one) has to be able to get there

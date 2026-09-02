@@ -562,30 +562,44 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch,
 	}
 	sort.Ints(points)
 
-	styleAt := func(pos int) lipgloss.Style {
+	// ok is false where nothing covers pos and the line's own base style
+	// applies — which is most of a line, an intraline emphasis or a search hit
+	// being a short middle with plain text either side.
+	styleAt := func(pos int) (lipgloss.Style, bool) {
 		for _, m := range matches {
 			if pos >= m.start && pos < m.end {
-				return matchStyle(m.active)
+				return matchStyle(m.active), true
 			}
 		}
 		for _, s := range spans {
 			if pos >= s.start && pos < s.end {
 				if cursor {
-					return s.style.Background(cursorRowBg)
+					return s.style.Background(cursorRowBg), true
 				}
-				return s.style
+				return s.style, true
 			}
 		}
-		return cursorMerged(base.style, cursor)
+		return lipgloss.Style{}, false
 	}
 
+	baseSeq := base.sgr(cursor)
 	var b strings.Builder
 	for i := 0; i < len(points)-1; i++ {
 		start, end := points[i], points[i+1]
 		if start >= end {
 			continue
 		}
-		b.WriteString(styleAt(start).Render(text[start:end]))
+		seg := text[start:end]
+		if style, covered := styleAt(start); covered {
+			b.WriteString(style.Render(seg))
+			continue
+		}
+		// The base-styled stretches go through the precomputed sequence for
+		// the same reason the whole fast path above does: Render would re-read
+		// every style property and run the padding/border/margin pipeline to
+		// rediscover a sequence that never changes. Tabs are Render's other
+		// job (see the fast path), so they're expanded here.
+		b.WriteString(baseSeq.render(expandTabs(seg)))
 	}
 	return b.String()
 }
