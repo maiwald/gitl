@@ -235,13 +235,23 @@ func (m *DetailModel) reflow() {
 		}
 	}
 
-	// A resize can shrink contentLen out from under an already-set
-	// cursorLine — clamp it back in range and paint the cursor onto wherever
-	// it ended up, since renderRows above was given a position that no
-	// longer exists.
-	if clamped := clamp(m.cursorLine, 0, m.contentLen-1); clamped != m.cursorLine {
-		m.cursorLine = clamped
-		m.patchLine(m.cursorLine, true)
+	// A resize can shrink contentLen out from under an already-set cursorLine
+	// or selection anchor — clamp both back in range and repaint the
+	// highlight onto wherever they ended up, since renderRows above was given
+	// a range that no longer exists.
+	//
+	// The anchor has to be clamped and not merely clipped when it's read: an
+	// anchor left pointing past the content comes back to life the moment a
+	// resize makes the content that long again, silently resizing a selection
+	// nobody touched.
+	cursor := clamp(m.cursorLine, 0, m.contentLen-1)
+	anchor := clamp(m.selectAnchor, 0, m.contentLen-1)
+	if m.contentLen > 0 && (cursor != m.cursorLine || (m.selecting && anchor != m.selectAnchor)) {
+		drawn0, drawn1 := m.highlight()
+		m.cursorLine, m.selectAnchor = cursor, anchor
+		m.repaintHighlight(drawn0, drawn1)
+	} else {
+		m.cursorLine = cursor
 	}
 
 	m.setContent()
@@ -259,7 +269,7 @@ func (m DetailModel) rowOf(logical int) int {
 }
 
 // setContent hands the cached rows to the viewport, which borrows the slice
-// rather than copying it. So a line patched in place (patchLine) is already
+// rather than copying it. So a line patched in place (patchLogical) is already
 // visible without this call; what needs it is a reflow, which builds a fresh
 // slice, and the padding append below it, which may move the backing array.
 // It's also where a scroll offset left past the end of shrunken content gets
@@ -360,19 +370,9 @@ func (m *DetailModel) repaintHighlight(oldFrom, oldTo int) {
 	m.setContent()
 }
 
-// patchLine re-renders the logical line containing row pos, with or without
-// the cursor row's background. A no-op for a row outside the real content, so
-// callers can pass a stale cursor position without special-casing it.
-func (m *DetailModel) patchLine(pos int, highlighted bool) {
-	i := logicalAt(m.lineStart, pos)
-	if i < 0 || pos >= m.contentLen {
-		return
-	}
-	m.patchLogical(i, highlighted)
-}
-
 // patchLogical re-renders logical line i in place, with or without the cursor
-// row's background.
+// row's background. A no-op for a line that doesn't exist, so callers can pass
+// a stale position without special-casing it.
 func (m *DetailModel) patchLogical(i int, highlighted bool) {
 	if i < 0 || i >= len(m.lines) {
 		return

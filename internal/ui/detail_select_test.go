@@ -184,3 +184,31 @@ func equalInts(a, b []int) bool {
 	}
 	return true
 }
+
+// TestResizeDoesNotResurrectAClippedAnchor pins the anchor's half of reflow's
+// re-clamp. A resize that shrinks the content used to leave the anchor
+// pointing past the end, where reading it clipped it back into range — until
+// a later resize made the content that long again and the selection silently
+// grew, with no key pressed.
+func TestResizeDoesNotResurrectAClippedAnchor(t *testing.T) {
+	m := NewDetailModel(fixtureDetailWithLongLines(), &jumplist{})
+	m.SetSize(30, 10) // narrow, so lines wrap and the content is long
+
+	m.setCursor(m.contentLen - 1)
+	m.startSelection()
+	m.moveCursor(-3)
+	if n := m.selectedLineCount(); n < 2 {
+		t.Fatalf("fixture selected %d lines, want a multi-line selection to shrink", n)
+	}
+
+	m.SetSize(200, 10) // wide: the content gets much shorter
+	shrunk := m.selectedLineCount()
+	if m.selectAnchor >= m.contentLen {
+		t.Errorf("anchor = %d past contentLen = %d, want it clamped in range", m.selectAnchor, m.contentLen)
+	}
+
+	m.SetSize(30, 10) // back to where it started
+	if got := m.selectedLineCount(); got != shrunk {
+		t.Errorf("selection grew to %d lines across a resize round trip, want it to stay at %d", got, shrunk)
+	}
+}
