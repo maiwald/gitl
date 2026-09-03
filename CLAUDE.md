@@ -443,13 +443,27 @@ before every commit — don't commit red.
   → quit. A selection never outlives the view it was taken in
   (`Model.leaveSelection`), and `q` peels exactly as `esc` does, the two
   halves of the `Back` binding staying interchangeable. `Enter`/`y` copies it
-  (`copyCmd`, `clipboard.go`) as an OSC 52 sequence written straight to
-  `Model.out` — the terminal's clipboard, which is the right machine's over
-  ssh, at the cost of it being a write gitl can't get an answer to: a
-  terminal that disallows clipboard writes drops it silently. That write and
-  bubbletea's frames share stdout from different goroutines, so it is one
-  Write of one self-contained sequence, and the keypress behind it has
-  already cleared the selection, which repaints those rows regardless.
+  (`copyCmd`, `clipboard.go`) by **every route at once**: an OSC 52 sequence
+  written straight to `Model.out`, *and* every local clipboard command this
+  machine has (`clipboardTools`). None of them can be checked — OSC 52 has no
+  reply, and a tool exiting 0 only proves *a* clipboard took the text — so
+  they are not tried in order until one works; they all run, on identical
+  text, and a machine where several work just sets the same clipboard twice.
+  Picking one instead is what left copying broken in the two commonest setups:
+  a terminal whose clipboard-write permission is off by default (Ghostty's
+  `clipboard-write`, iTerm2's preference) drops the sequence silently, and
+  tmux's default `set-clipboard external` refuses to let an *application* set
+  the clipboard at all — which is why the tool list leads with `tmux
+  load-buffer -w`, tmux setting it *itself*, the one thing `external` does
+  permit, and so the one route needing no tmux.conf change. OSC 52 is still
+  the one that always runs: it alone reaches the clipboard of the machine the
+  *terminal* is on, the right one over ssh, where every local tool would set a
+  clipboard nobody can see. That write and bubbletea's frames share stdout
+  from different goroutines, so it is one Write of one self-contained
+  sequence, and the keypress behind it has already cleared the selection,
+  which repaints those rows regardless. The subprocess half sits behind the
+  `copyLocally` var purely so tests can stub it — running the real tools under
+  `go test` would overwrite the clipboard of whoever ran it.
 - There is **one search term**, owned by the root `Model` (`searchTerm`/
   `searchDismissed`/`listMatches`, written only by `setSearchDisplay`), and
   **both views answer to it** — but each is searched only when its answer is
