@@ -119,10 +119,19 @@ func TestRenderCommitRowActiveMatchUsesDistinctStyleFromOrdinaryMatch(t *testing
 	}
 }
 
-func TestRenderCommitRowSkipsHighlightingWhenSelected(t *testing.T) {
-	row := renderCommitRow(fixtureCommitForRow(), 120, true, false, "alice", true)
-	if strings.Contains(row, searchMatchStyle.Render("Alice")) || strings.Contains(row, searchActiveMatchStyle.Render("Alice")) {
-		t.Errorf("selected row = %q, should not apply search highlight styles (selection style stays authoritative)", row)
+// TestRenderCommitRowHighlightsWhenSelected pins that the cursor row keeps its
+// search highlighting: the match style brings its own background, so it stays
+// visible over the cursor's, and the row the user is looking at is exactly the
+// one where seeing which field matched is worth most.
+func TestRenderCommitRowHighlightsWhenSelected(t *testing.T) {
+	row := renderCommitRow(fixtureCommitForRow(), 120, true, false, "alice", false)
+	if !strings.Contains(row, searchMatchStyle.Render("Alice")) {
+		t.Errorf("selected row = %q, want the match rendered with searchMatchStyle", row)
+	}
+
+	active := renderCommitRow(fixtureCommitForRow(), 120, true, false, "alice", true)
+	if !strings.Contains(active, searchActiveMatchStyle.Render("Alice")) {
+		t.Errorf("selected active-match row = %q, want the match rendered with searchActiveMatchStyle", active)
 	}
 }
 

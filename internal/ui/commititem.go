@@ -86,17 +86,14 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 		when = date + gap(" ") + clock
 	}
 
-	// The cursor row shows no search highlighting: its own background is
-	// already the strongest signal on screen, as in renderLineWithBaseSpans.
-	// An empty term is how highlightSpans expresses that.
-	term := searchTerm
-	if selected {
-		term = ""
-	}
+	// A match keeps its own highlight on the cursor row too, exactly as in
+	// renderLineWithBaseSpans: the match style carries its own background, so
+	// it stays legible over the cursor's, and blanking it would hide which
+	// field matched on the one row the user is actually looking at.
 	ms := matchStyle(isActiveMatch)
-	sha = highlightSpans(sha, term, shaBase, ms)
-	author = highlightSpans(author, term, authorBase, ms)
-	subject = highlightSpans(subject, term, subjectBase, ms)
+	sha = highlightSpans(sha, searchTerm, shaBase, ms)
+	author = highlightSpans(author, searchTerm, authorBase, ms)
+	subject = highlightSpans(subject, searchTerm, subjectBase, ms)
 	refs := formatRefs(c.Refs, selected, dimmed)
 
 	var row string
