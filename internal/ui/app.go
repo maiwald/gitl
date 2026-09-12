@@ -199,8 +199,18 @@ func showPipedCmd(p *git.PipedPatch) tea.Cmd {
 // pathspec the user gave git. A commit the repo can't produce (a shallow
 // clone, a patch from elsewhere) falls back to showing the preamble verbatim
 // rather than failing the run.
+//
+// So does a preamble that named a commit but carried no diff: `--stat`,
+// `--name-only`, `--raw` and a merge's combined diff all print something
+// other than a patch, and gitl's header over an empty diff would show
+// strictly less than git just printed. Redrawing the header around git's
+// text would also mean printing the message twice, since the preamble
+// already carries it.
 func fetchPipedCommitCmd(repo *git.Repo, p *git.PipedPatch) tea.Cmd {
 	return func() tea.Msg {
+		if len(p.Files) == 0 {
+			return commitDetailLoadedMsg{detail: p.Detail()}
+		}
 		detail, err := repo.FetchCommitMeta(context.Background(), p.Hash)
 		if err != nil {
 			return commitDetailLoadedMsg{detail: p.Detail()}

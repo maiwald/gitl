@@ -557,9 +557,15 @@ before every commit — don't commit red.
   `core.pager` it would receive `git status`, `git branch -v` and `git help`,
   which the verbatim-preamble path renders as an undifferentiated wall of
   plain text rather than breaking — but there is nothing gitl adds to them.
-- `git show --stat -p` shows git's own stat block in the preamble *and*
-  gitl's stats block below it. `git show --stat` alone emits no patch at all,
-  so gitl has no files to build its own block from and shows git's text.
+- A piped command that names a commit but prints no patch — `--stat`,
+  `--name-only`, `--name-status`, `--raw`, `-s`, a merge's combined `--cc`
+  diff — is shown exactly as git printed it (`fetchPipedCommitCmd`). There
+  are no files to build gitl's own stats block or diff from, and its header
+  over an empty diff would show strictly less than git just had. `git show
+  --stat -p` does carry a patch, so that one renders as a normal commit with
+  gitl's own stats block, and git's stat text, which arrived in the same
+  preamble as the message, is dropped rather than printed alongside a message
+  gitl is already drawing itself.
 - `DetailModel.cursorLine` and jumplist entries are raw indices into the
   flattened, already-word-wrapped line space, which shifts on a terminal
   resize (rewrapping changes how many flattened lines the same content
