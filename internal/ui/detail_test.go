@@ -952,6 +952,28 @@ func TestPipedEntryWithoutAPreambleFallsBackToATitle(t *testing.T) {
 	}
 }
 
+// TestPseudoEntryTitleIsNotRepeatedUnderTheStickyHeader: with a diff to show,
+// the sticky header already reads "Working tree", so the header block opens
+// with the description rather than the same title a second time.
+func TestPseudoEntryTitleIsNotRepeatedUnderTheStickyHeader(t *testing.T) {
+	for _, kind := range []git.EntryKind{git.EntryStaged, git.EntryWorktree, git.EntryPiped} {
+		m := NewDetailModel(fixturePseudoDetail(kind, []git.File{
+			{Path: "a.txt", Status: git.StatusModified, Additions: 1},
+		}), &jumplist{})
+		m.SetSize(80, 24)
+
+		got := 0
+		for _, row := range strings.Split(ansi.Strip(m.View()), "\n") {
+			if strings.TrimSpace(row) == entryTitle(kind) {
+				got++
+			}
+		}
+		if got != 1 {
+			t.Errorf("View() for kind %v shows the title %q %d times, want once", kind, entryTitle(kind), got)
+		}
+	}
+}
+
 // TestDetailModelEmptyDiffShowsNothing pins the deliberate silence: gitl no
 // longer parses what was asked for — git did, and it didn't pass the pathspec
 // along — so an empty diff can't be explained without risking a claim that

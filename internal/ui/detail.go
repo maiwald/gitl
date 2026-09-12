@@ -443,11 +443,16 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 
 	// A pseudo entry (working tree/staged) has no commit metadata to show,
 	// just a title and a dim description, and nothing eligible for message
-	// search — hence authorLine = -1.
+	// search — hence authorLine = -1. The title is left out whenever there's a
+	// diff, because the sticky header then already shows it directly above;
+	// only an empty diff, which gets no sticky header, needs it in the block.
 	if d.IsPseudo() {
+		if len(d.Files) == 0 {
+			lines = append(lines, entryTitle(d.Kind))
+		}
 		desc := entryDescription(d.Kind)
-		lines = append(lines, entryTitle(d.Kind), desc)
-		spans[1] = []baseSpan{{start: 0, end: len(desc), style: &dimStyle}}
+		spans[len(lines)] = []baseSpan{{start: 0, end: len(desc), style: &dimStyle}}
+		lines = append(lines, desc)
 		return lines, -1, len(lines), spans
 	}
 
