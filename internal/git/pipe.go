@@ -45,8 +45,10 @@ func ReadPipedPatch(r io.Reader) (*PipedPatch, error) {
 		// Not everything git prints for a pager is a unified diff: --word-diff
 		// and --color-words rewrite the per-line markers the parser reads. gitl
 		// *is* the pager here, so failing the read fails the git command the
-		// user ran — showing them nothing at all. Degrade to the verbatim text
-		// instead, the same as a preamble that named no commit.
+		// user ran — showing them nothing at all. Report no files and hand the
+		// whole text back as the preamble instead: a patch with no files is
+		// what runAsPager gives to a real pager, so the floor of a piped run
+		// stays "what git printed".
 		files, preamble = nil, text
 	}
 

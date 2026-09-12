@@ -26,6 +26,9 @@ main.go                    entry point: builds and runs the root tea.Program,
                            there's nowhere to draw)
 args.go                    command-line parsing: the two print-and-exit flags
                            and pagerMode, as a unit-testable options value
+pager.go                   handOffToPager/pipeToPager: giving input gitl has
+                           nothing to add to (no patch it could parse) to a
+                           real pager, or printing it where none runs
 internal/concurrent/       RunConcurrently: generic "run these fns in parallel,
                            return the first error in call order" helper, with no
                            git- or TUI-specific logic, shared by both packages below
@@ -37,6 +40,8 @@ internal/git/              data access layer, no TUI dependencies
                            diff), FetchCommitMeta (the metadata half alone)
   pipe.go                  PipedPatch, ReadPipedPatch: a patch read from stdin
                            when git runs gitl as its pager
+  pager.go                 FallbackPager: the pager git would have run for the
+                           command it is currently paging through gitl
   diff.go                  File/Hunk/DiffLine, ParseUnifiedDiff (go-gitdiff wrapper)
   search.go                SearchCommitHashes (author+message, OR), AllCommitHashes,
                            HashesMatching (in-memory hash-substring filter, list search only)
@@ -374,9 +379,29 @@ before every commit — don't commit red.
   `--pretty`, `log.date` and locale can't reshape — and the header gitl draws
   is fetched again in its own format (`FetchCommitMeta`). The diff still
   comes from the pipe, which is what preserves the user's pathspec. A
-  preamble naming no commit is shown verbatim (`EntryPiped`), so
-  `git status` or a reconfigured format degrades to plain text instead of
-  being mangled.
+  preamble whose commit the repo can't produce (a shallow clone, a patch from
+  elsewhere) is shown verbatim (`EntryPiped`), so a reconfigured format
+  degrades to plain text instead of being mangled. A preamble with no diff
+  behind it at all never reaches the TUI — see the next bullet.
+- Input carrying no patch gitl could parse — `--stat`, `--name-only`,
+  `--name-status`, `--raw`, `-s`, a merge's combined `--cc` diff,
+  `--word-diff`, `git show HEAD:file` — is handed to a real pager
+  (`handOffToPager`, `pager.go`) rather than drawn, and `runAsPager` keeps
+  the raw bytes for exactly that. gitl has nothing to add to text it can't
+  parse, and git's own output, colors included (git colors for a pager), is
+  already what the user asked for; gitl's own rendering could only be a
+  plainer copy of it. `git.FallbackPager` resolves that pager in git's own
+  order — `GIT_PAGER`, `core.pager`, `PAGER`, `less` — minus the
+  `pager.<cmd>` entry that named gitl, skipping any candidate that names
+  gitl (which would recurse) and reporting none rather than one, where
+  `pipeToPager` writes the text itself. A pager that isn't installed (the
+  shell's exit 127) falls back the same way: the floor of a piped run stays
+  "what git printed". The pager inherits gitl's environment, which is the
+  one git built for a pager — `LESS=FRX` is already in it. `git show
+  --stat -p` does carry a patch, so that one still renders as a normal
+  commit with gitl's own stats block, and git's stat text, which arrived in
+  the same preamble as the message, is dropped rather than printed alongside
+  a message gitl is already drawing itself.
 - The non-interactive CLI paths say nothing when there's nothing to show:
   an empty pipe (git runs its pager even for a command that produced
   nothing) and `-n` in a repo with no commits (`printCommits`) both just
@@ -555,23 +580,16 @@ before every commit — don't commit red.
   than erroring.
 - gitl is wired as `pager.diff`/`pager.show`, not `core.pager`. As
   `core.pager` it would receive `git status`, `git branch -v` and `git help`,
-  which the verbatim-preamble path renders as an undifferentiated wall of
-  plain text rather than breaking — but there is nothing gitl adds to them.
-- A piped command that names a commit but prints no patch — `--stat`,
-  `--name-only`, `--name-status`, `--raw`, `-s`, a merge's combined `--cc`
-  diff — is shown exactly as git printed it (`fetchPipedCommitCmd`). There
-  are no files to build gitl's own stats block or diff from, and its header
-  over an empty diff would show strictly less than git just had. `git show
-  --stat -p` does carry a patch, so that one renders as a normal commit with
-  gitl's own stats block, and git's stat text, which arrived in the same
-  preamble as the message, is dropped rather than printed alongside a message
-  gitl is already drawing itself.
-- `--word-diff`/`--color-words` are shown as plain text, not parsed: they
-  replace the per-line `+`/`-` markers a unified diff is read by with inline
-  `{+…+}`/`[-…-]` runs, which go-gitdiff rejects outright. `ReadPipedPatch`
-  keeps the text rather than returning the error, since gitl is the pager and
-  a pager that fails is a `git show` that fails. Any future shape the parser
-  can't take lands there too, so a piped run's floor is "what git printed".
+  none of which carry a patch, so every one of them would end up in the
+  handoff to a real pager — working, but an extra process between git and
+  `less` for nothing.
+- `--word-diff`/`--color-words` go to the fallback pager, not the parser:
+  they replace the per-line `+`/`-` markers a unified diff is read by with
+  inline `{+…+}`/`[-…-]` runs, which go-gitdiff rejects outright.
+  `ReadPipedPatch` keeps the text as the preamble rather than returning the
+  error, since gitl is the pager and a pager that fails is a `git show` that
+  fails — and a patch with no files is exactly what `runAsPager` hands on.
+  Any future shape the parser can't take lands there too.
 - `DetailModel.cursorLine` and jumplist entries are raw indices into the
   flattened, already-word-wrapped line space, which shifts on a terminal
   resize (rewrapping changes how many flattened lines the same content

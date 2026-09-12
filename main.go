@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -84,16 +85,32 @@ func runAsPager() error {
 	}
 	defer tty.Close()
 
-	patch, err := git.ReadPipedPatch(os.Stdin)
+	// Read the input once and keep it: whether gitl shows this at all is
+	// decided only after parsing it, and the pager it may go to instead needs
+	// the original bytes — git colors its output when a pager is in use, and
+	// ReadPipedPatch strips that.
+	raw, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
 	}
-	if len(patch.Files) == 0 && patch.Preamble == "" {
-		// git runs its pager even for a command that produced nothing, so
-		// `git diff` with a clean tree arrives here as an empty pipe. Exit
-		// rather than open a full screen showing it — the same "say nothing
-		// when there's nothing to show" the non-interactive paths follow.
-		return nil
+	patch, err := git.ReadPipedPatch(bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	if len(patch.Files) == 0 {
+		if patch.Preamble == "" {
+			// git runs its pager even for a command that produced nothing, so
+			// `git diff` with a clean tree arrives here as an empty pipe. Exit
+			// rather than open a full screen showing it — the same "say nothing
+			// when there's nothing to show" the non-interactive paths follow.
+			return nil
+		}
+		// Something other than a patch: `--stat`, `--name-only`, `--raw`,
+		// `-s`, a merge's combined diff, `--word-diff`, `git show HEAD:file`.
+		// gitl parses none of those and has nothing to add to any of them, so
+		// git's own text — the colors it printed included — goes to the pager
+		// git would have used if gitl weren't configured for this command.
+		return handOffToPager(raw)
 	}
 	p := tea.NewProgram(
 		ui.NewModel(ui.StartTarget{Piped: patch}),
@@ -154,10 +171,13 @@ func versionString() string {
 	return info.Main.Version
 }
 
-// openCWDRepo opens the repository rooted at the current working directory —
-// the only place gitl's CLI hardcodes ".", keeping internal/git path-agnostic.
+// cwd is the current working directory, the only path gitl's CLI ever hands
+// internal/git — which stays path-agnostic itself.
+const cwd = "."
+
+// openCWDRepo opens the repository rooted at the current working directory.
 func openCWDRepo(ctx context.Context) (*git.Repo, error) {
-	return git.OpenRepo(ctx, ".")
+	return git.OpenRepo(ctx, cwd)
 }
 
 func printCommits(n int) error {
