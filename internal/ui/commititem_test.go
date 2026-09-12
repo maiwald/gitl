@@ -169,11 +169,23 @@ func TestRenderCommitListJoinsPlainRows(t *testing.T) {
 	got := RenderCommitList(commits, 120)
 
 	want := strings.Join([]string{
-		renderCommitRow(commits[0], 120, false, false, "", false),
-		renderCommitRow(commits[1], 120, false, false, "", false),
+		strings.TrimRight(renderCommitRow(commits[0], 120, false, false, "", false), " "),
+		strings.TrimRight(renderCommitRow(commits[1], 120, false, false, "", false), " "),
 	}, "\n")
 	if got != want {
 		t.Errorf("RenderCommitList = %q, want %q", got, want)
+	}
+}
+
+// TestRenderCommitListHasNoTrailingWhitespace pins that printed rows stop at
+// their last visible character: padding out to the width they were rendered
+// at would wrap every line the moment the window is narrower than that.
+func TestRenderCommitListHasNoTrailingWhitespace(t *testing.T) {
+	commits := []git.Commit{fixtureCommitForRow(), fixtureCommitForRow()}
+	for i, line := range strings.Split(RenderCommitList(commits, 200), "\n") {
+		if strings.TrimRight(line, " \t") != line {
+			t.Errorf("line %d = %q, want no trailing whitespace", i, line)
+		}
 	}
 }
 

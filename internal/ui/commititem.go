@@ -132,10 +132,17 @@ func rowGap(selected bool) func(string) string {
 
 // RenderCommitList renders commits as plain list rows, one per line, with
 // no selection/dim/search styling — used by the -n non-interactive flag.
+//
+// The rows come back padded out to width, which is what the TUI wants (every
+// row is exactly one full-width line) and what printed output doesn't: the
+// trailing spaces wrap onto a second line as soon as the window is narrower
+// than the width the rows were measured at. A plain row's padding is appended
+// as literal spaces after the styled fields (see padMeasuredRow), so trimming
+// them back off here touches no escape sequence.
 func RenderCommitList(commits []git.Commit, width int) string {
 	lines := make([]string, len(commits))
 	for i, c := range commits {
-		lines[i] = renderCommitRow(c, width, false, false, "", false)
+		lines[i] = strings.TrimRight(renderCommitRow(c, width, false, false, "", false), " ")
 	}
 	return strings.Join(lines, "\n")
 }
