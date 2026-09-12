@@ -84,3 +84,26 @@ func TestReadPipedPatchWithoutACommitHeader(t *testing.T) {
 		t.Errorf("got hash=%q preamble=%q files=%d, want everything as preamble", status.Hash, status.Preamble, len(status.Files))
 	}
 }
+
+// TestReadPipedPatchOnUnparsablePatchKeepsTheText covers --word-diff, whose
+// markers the unified-diff parser rejects. gitl is git's pager here: an error
+// would leave the user's `git show --word-diff` showing nothing and failing,
+// so the text stands in for the diff gitl couldn't parse.
+func TestReadPipedPatchOnUnparsablePatchKeepsTheText(t *testing.T) {
+	wordDiff := showPatch[:strings.Index(showPatch, "@@ -1 +1,2 @@")] +
+		"@@ -1 +1,2 @@\nbase\n{+onbranch+}\n"
+
+	p, err := ReadPipedPatch(strings.NewReader(wordDiff))
+	if err != nil {
+		t.Fatalf("ReadPipedPatch: %v", err)
+	}
+	if len(p.Files) != 0 {
+		t.Errorf("Files = %+v, want none — the patch didn't parse", p.Files)
+	}
+	if !strings.Contains(p.Preamble, "{+onbranch+}") {
+		t.Errorf("Preamble = %q, want the whole input verbatim", p.Preamble)
+	}
+	if p.Hash != "31cfe2074df3dffbf5903ba3d55f5f653220f045" {
+		t.Errorf("Hash = %q, want the header's commit hash even so", p.Hash)
+	}
+}

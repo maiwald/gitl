@@ -566,6 +566,12 @@ before every commit — don't commit red.
   gitl's own stats block, and git's stat text, which arrived in the same
   preamble as the message, is dropped rather than printed alongside a message
   gitl is already drawing itself.
+- `--word-diff`/`--color-words` are shown as plain text, not parsed: they
+  replace the per-line `+`/`-` markers a unified diff is read by with inline
+  `{+…+}`/`[-…-]` runs, which go-gitdiff rejects outright. `ReadPipedPatch`
+  keeps the text rather than returning the error, since gitl is the pager and
+  a pager that fails is a `git show` that fails. Any future shape the parser
+  can't take lands there too, so a piped run's floor is "what git printed".
 - `DetailModel.cursorLine` and jumplist entries are raw indices into the
   flattened, already-word-wrapped line space, which shifts on a terminal
   resize (rewrapping changes how many flattened lines the same content

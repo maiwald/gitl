@@ -42,7 +42,12 @@ func ReadPipedPatch(r io.Reader) (*PipedPatch, error) {
 
 	files, preamble, err := ParsePatch(strings.NewReader(text))
 	if err != nil {
-		return nil, err
+		// Not everything git prints for a pager is a unified diff: --word-diff
+		// and --color-words rewrite the per-line markers the parser reads. gitl
+		// *is* the pager here, so failing the read fails the git command the
+		// user ran — showing them nothing at all. Degrade to the verbatim text
+		// instead, the same as a preamble that named no commit.
+		files, preamble = nil, text
 	}
 
 	p := &PipedPatch{Files: files, Preamble: preamble}
