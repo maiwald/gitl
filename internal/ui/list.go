@@ -12,10 +12,6 @@ import (
 // must get before a lazy-load fetch is triggered.
 const loadMoreLookahead = 20
 
-// jumplistCap bounds the jumplist so a long session's can't grow
-// unboundedly — matching vim's own default jumplist size.
-const jumplistCap = 100
-
 // fetchRequest describes a batch of commits ListModel needs from the repo
 // to satisfy a navigation that has run past the currently loaded data.
 type fetchRequest struct {

@@ -139,6 +139,10 @@ type jumpPos struct {
 	cursorLine int
 }
 
+// jumplistCap bounds the jumplist so a long session's can't grow
+// unboundedly — matching vim's own default jumplist size.
+const jumplistCap = 100
+
 // jumplist is the shared, cross-view jumplist backing ctrl-o/ctrl-i, matching
 // vim's semantics where switching buffers (here: list <-> detail) is itself
 // jump-recordable, not just movement within one. Owned by the root Model and
@@ -758,23 +762,17 @@ func (m Model) currentJumpPos() jumpPos {
 // doJumpBack and doJumpForward step through the shared jumplist (ctrl-o/
 // ctrl-i), each pushing the position it leaves onto the other stack so they
 // exactly undo one another. A no-op when the relevant stack is empty.
-func (m Model) doJumpBack() (tea.Model, tea.Cmd) {
-	if len(m.jl.back) == 0 {
-		return m, nil
-	}
-	target := m.jl.back[len(m.jl.back)-1]
-	m.jl.back = m.jl.back[:len(m.jl.back)-1]
-	m.jl.forward = append(m.jl.forward, m.currentJumpPos())
-	return m.gotoJumpPos(target)
-}
+func (m Model) doJumpBack() (tea.Model, tea.Cmd)    { return m.jumpAcross(&m.jl.back, &m.jl.forward) }
+func (m Model) doJumpForward() (tea.Model, tea.Cmd) { return m.jumpAcross(&m.jl.forward, &m.jl.back) }
 
-func (m Model) doJumpForward() (tea.Model, tea.Cmd) {
-	if len(m.jl.forward) == 0 {
+func (m Model) jumpAcross(from, to *[]jumpPos) (tea.Model, tea.Cmd) {
+	n := len(*from)
+	if n == 0 {
 		return m, nil
 	}
-	target := m.jl.forward[len(m.jl.forward)-1]
-	m.jl.forward = m.jl.forward[:len(m.jl.forward)-1]
-	m.jl.back = append(m.jl.back, m.currentJumpPos())
+	target := (*from)[n-1]
+	*from = (*from)[:n-1]
+	*to = append(*to, m.currentJumpPos())
 	return m.gotoJumpPos(target)
 }
 
