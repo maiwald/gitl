@@ -269,11 +269,10 @@ var tabSpaces = strings.Repeat(" ", lipglossTabWidth)
 
 // expandTabs replaces tabs with lipglossTabWidth spaces.
 //
-// It's the half of expandTabsMapped that most lines need: relocating offsets
-// onto the expanded text costs an int per byte of the line, and a reflow would
-// otherwise pay that on every tab-indented line of the commit — which, for
-// source code, is nearly all of them, while carrying neither an intraline span
-// nor a search match to relocate.
+// It's the half of expandTabsMapped that most lines need: the offset map is a
+// closure allocated per tab-indented line, and a reflow would otherwise pay
+// for one on nearly every line of source code, most of which carry neither an
+// intraline span nor a search match to relocate.
 func expandTabs(text string) string {
 	return strings.ReplaceAll(text, "\t", tabSpaces)
 }
@@ -288,8 +287,8 @@ func expandTabsMapped(text string) (string, offsetMap) {
 	}
 	// Counting the tabs in front of an offset, rather than tabulating where
 	// every byte of the line moved to: a line has a handful of offsets to
-	// relocate (a span's two ends, a match's two), and the table cost an int
-	// per byte of the line to answer them.
+	// relocate (a span's two ends, a match's two), which a table would spend
+	// an int per byte of the line to answer.
 	return expandTabs(text), func(i int) int {
 		return i + (lipglossTabWidth-1)*strings.Count(text[:i], "\t")
 	}
@@ -366,9 +365,8 @@ func appendTrailingSpaces(ranges [][2]int, text string, width int) [][2]int {
 // height identical to the same line's without it — see wrapRanges — and means
 // no caller has to strip lipgloss's plain padding back off before re-padding.
 func wrapStyledRows(text string, spans []baseSpan, matches []lineMatch, base lineStyle, width int, cursor bool) []string {
-	// Expanding with an offset mapping costs an int per byte of the line, so
-	// it's only done when there is something to relocate onto the expanded
-	// text — see expandTabs.
+	// The offset map is only built when there is something to relocate onto
+	// the expanded text — see expandTabs.
 	if len(spans) == 0 && len(matches) == 0 {
 		text = expandTabs(text)
 	} else {

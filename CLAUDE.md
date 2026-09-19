@@ -325,11 +325,11 @@ before every commit — don't commit red.
   the `offsetMap` relocating a byte offset onto the expanded text.
   `wrapStyledRows` takes the second only when it has a span or a match to
   relocate — which the great majority of diff lines, tab-indented and carrying
-  neither, do not. Building it unconditionally was 40% of the bytes a reflow
-  allocated. The map counts the tabs in front of the offset it's asked about
-  rather than tabulating where every byte of the line moved to: a line has a
-  handful of offsets to relocate and the table cost an int per byte to answer
-  them.
+  neither, do not; building the map for every one of them would cost a
+  closure per line (~10% of a reflow's allocations). The map counts the tabs
+  in front of the offset it's asked about rather than tabulating where every
+  byte of the line moved to: a line has a handful of offsets to relocate, and
+  a table would spend an int per byte to answer them.
 - Word-wrapping happens on **plain text**, before any styling
   (`wrapRanges`/`wrapStyledRows` in `render.go`, used by `renderDiffLine`
   and `renderHeaderLines`): the wrap is computed as byte ranges into the
