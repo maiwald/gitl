@@ -371,6 +371,58 @@ func TestDetailModelWrappedCursorBlockIsFullyVisible(t *testing.T) {
 	}
 }
 
+// TestDetailModelTallLinesScrollIntoViewRowByRow pins down that a line
+// wrapping to more rows than the viewport holds (a minified file is one
+// line) can be read in full: j/k scroll through it before stepping off it,
+// rather than jumping from one logical line's start to the next and skipping
+// everything off screen in between. The last line of a diff is the case that
+// made this visible — with nothing below it to step to, the rest of it could
+// never be scrolled into view at all.
+func TestDetailModelTallLinesScrollIntoViewRowByRow(t *testing.T) {
+	tall := strings.Repeat("word ", 400)
+	d := &git.CommitDetail{
+		Commit: git.Commit{Hash: strings.Repeat("a", 40), Subject: "subject"},
+		Body:   "subject",
+		Files: []git.File{{
+			Path: "spec.json", Status: git.StatusModified, Additions: 1, Deletions: 1,
+			Hunks: []git.Hunk{{
+				Header: "@@ -1 +1 @@",
+				Lines: []git.DiffLine{
+					{Op: git.OpDelete, Text: tall},
+					{Op: git.OpAdd, Text: tall + "changed"},
+				},
+			}},
+		}},
+	}
+	m := NewDetailModel(d, &jumplist{})
+	m.SetSize(60, 8)
+	if last := m.contentLen - 1; last-m.blockStart(last) < 2*m.vp.Height {
+		t.Fatalf("last line spans %d rows at height %d — the fixture no longer exercises a tall line",
+			last-m.blockStart(last)+1, m.vp.Height)
+	}
+
+	walk := func(msg tea.KeyMsg) {
+		t.Helper()
+		seen := make([]bool, m.contentLen)
+		for press := 0; press < 10*m.contentLen; press++ {
+			for r := m.vp.YOffset; r < min(m.vp.YOffset+m.vp.Height, m.contentLen); r++ {
+				seen[r] = true
+			}
+			m.Update(msg)
+		}
+		for r, ok := range seen {
+			if !ok {
+				t.Fatalf("%s: row %d of %d never came into view", msg, r, m.contentLen)
+			}
+		}
+	}
+	walk(tea.KeyMsg{Type: tea.KeyDown})
+	walk(tea.KeyMsg{Type: tea.KeyUp})
+	if m.cursorLine != 0 || m.vp.YOffset != 0 {
+		t.Fatalf("after walking back up: cursorLine=%d YOffset=%d, want both 0", m.cursorLine, m.vp.YOffset)
+	}
+}
+
 // TestDetailModelCursorPatchMatchesFullReflow pins down the bargain
 // repaintHighlight makes: moving the cursor re-renders only the two logical
 // lines whose highlight changed and splices them into the cached content, so

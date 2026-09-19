@@ -363,7 +363,12 @@ before every commit — don't commit red.
   containing it), `setCursor` snaps whatever it's given back to `blockStart`,
   and downward motion is floored at `blockEnd`.
   The highlight covers a wrapped line's whole block, so stepping row by row
-  through it would make presses look like dead keys.
+  through it would make presses look like dead keys. The one exception is a
+  block taller than the viewport (a minified JSON/OpenAPI file is one line of
+  thousands of rows): `moveCursor` scrolls the viewport through it first
+  (`scrollWithinBlock`), cursor staying put, and `ensureCursorVisible` counts
+  any of its rows on screen as visible. Otherwise its off-screen middle would
+  be skipped, and as the last line of a diff its rest would be unreachable.
 - gitl parses no revision, range or pathspec of its own. Everything beyond
   the commit list arrives through git, which runs gitl as its pager
   (`pagerMode` in `args.go`, `runAsPager` in `main.go`) and has already

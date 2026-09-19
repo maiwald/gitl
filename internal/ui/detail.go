@@ -603,12 +603,38 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 // snaps back to the start of whatever block it's given, so a plain j inside
 // a line that wrapped to several rows would otherwise snap back where it
 // started and look like a dead key.
+//
+// A block taller than the viewport (a minified file is one logical line of
+// thousands of rows) is scrolled through before the cursor leaves it, delta
+// rows at a time, since stepping straight to the next logical line would
+// jump over everything of it that isn't on screen — and on the last line of
+// a diff there is no next line to step to, so its rest could never be seen.
 func (m *DetailModel) moveCursor(delta int) {
+	if m.scrollWithinBlock(delta) {
+		return
+	}
 	pos := m.cursorLine + delta
 	if delta > 0 {
 		pos = max(pos, m.blockEnd(m.cursorLine))
 	}
 	m.setCursor(pos)
+}
+
+// scrollWithinBlock scrolls the viewport delta rows through the cursor's
+// block, stopping at its edge, if the block still extends past the viewport
+// in that direction. It reports whether it did, leaving the cursor put.
+func (m *DetailModel) scrollWithinBlock(delta int) bool {
+	top := m.vp.YOffset
+	switch end := m.blockEnd(m.cursorLine); {
+	case delta > 0 && end > top+m.vp.Height:
+		m.vp.SetYOffset(min(top+delta, end-m.vp.Height))
+	case delta < 0 && m.cursorLine < top:
+		m.vp.SetYOffset(max(top+delta, m.cursorLine))
+	default:
+		return false
+	}
+	m.syncHighlightFromScroll()
+	return true
 }
 
 // blockStart returns the first row of the logical line pos falls in;
@@ -659,16 +685,26 @@ func (m *DetailModel) setCursor(pos int) {
 
 // ensureCursorVisible scrolls the diff panel so the cursor line stays within
 // the visible viewport. A wrapped line is highlighted as a whole block, so
-// it's the block's last row that has to come into view when moving down —
-// except when the block is taller than the viewport, where showing its start
-// is the best that can be done.
+// it's the block's last row that has to come into view when moving down.
+//
+// A block taller than the viewport can't be shown whole, so any row of it on
+// screen counts as visible, and one that isn't is brought in by its nearer
+// edge — its first row at the bottom coming down, its last row at the top
+// coming up — for moveCursor to scroll through from there
+// (scrollWithinBlock). Snapping to its start instead would skip the whole of
+// it on the way up, and undo a scroll into it on every repaint.
 func (m *DetailModel) ensureCursorVisible() {
 	if m.vp.Height <= 0 {
 		return
 	}
 	last := m.blockEnd(m.cursorLine) - 1
 	if last-m.cursorLine >= m.vp.Height {
-		last = m.cursorLine
+		if last < m.vp.YOffset {
+			m.vp.SetYOffset(last)
+		} else if m.cursorLine >= m.vp.YOffset+m.vp.Height {
+			m.vp.SetYOffset(m.cursorLine - m.vp.Height + 1)
+		}
+		return
 	}
 	if m.cursorLine < m.vp.YOffset {
 		m.vp.SetYOffset(m.cursorLine)
