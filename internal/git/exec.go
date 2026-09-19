@@ -66,11 +66,6 @@ func runGitTrimmed(ctx context.Context, dir string, args ...string) (string, err
 	return strings.TrimSpace(string(out)), nil
 }
 
-// trimTrailingNewlines strips trailing "\n" characters from out.
-func trimTrailingNewlines(out []byte) string {
-	return strings.TrimRight(string(out), "\n")
-}
-
 // splitLines trims trailing newlines from out and splits it into
 // non-empty lines. It returns nil for empty input.
 func splitLines(out []byte) []string {

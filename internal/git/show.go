@@ -75,7 +75,7 @@ func (r *Repo) FetchCommitMeta(ctx context.Context, hash string) (*CommitDetail,
 }
 
 func parseCommitDetail(out []byte) (*CommitDetail, error) {
-	text := trimTrailingNewlines(out)
+	text := strings.TrimRight(string(out), "\n")
 	fields := strings.SplitN(text, fieldSep, numLogFields+1)
 	if len(fields) != numLogFields+1 {
 		return nil, fmt.Errorf("unexpected commit detail format (got %d fields)", len(fields))
