@@ -41,7 +41,7 @@ var (
 	// refStyle reuses errFg's red, distinguished by weight (bold) rather
 	// than a new hue, to stay within the 16-color ANSI palette.
 	refStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("1")).
+			Foreground(errFg).
 			Bold(true)
 
 	errStyle = lipgloss.NewStyle().
@@ -66,14 +66,12 @@ var (
 	// hue as diffAddStyle/diffDeleteStyle plus a tinted background and bold
 	// weight, so the changed substring stands out against the rest of the
 	// line rather than recoloring it.
-	diffAddEmphStyle = lipgloss.NewStyle().
+	diffAddEmphStyle = diffAddStyle.
 				Bold(true).
-				Foreground(lipgloss.Color("2")).
 				Background(lipgloss.Color("22"))
 
-	diffDeleteEmphStyle = lipgloss.NewStyle().
+	diffDeleteEmphStyle = diffDeleteStyle.
 				Bold(true).
-				Foreground(lipgloss.Color("167")).
 				Background(lipgloss.Color("52"))
 
 	// diffWhitespaceStyle marks trailing whitespace an added or removed
