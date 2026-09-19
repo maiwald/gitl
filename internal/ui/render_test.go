@@ -77,7 +77,7 @@ func TestRenderLineWithBaseSpansFastPathMatchesGeneralPath(t *testing.T) {
 	for _, base := range allLineStyles {
 		for _, text := range texts {
 			for _, cursor := range []bool{false, true} {
-				whole := []baseSpan{{start: 0, end: len(text), style: &base.style}}
+				whole := []baseSpan{{start: 0, end: len(text), style: &base}}
 				want := renderLineWithBaseSpans(text, whole, nil, base, cursor)
 				got := renderLineWithBaseSpans(text, nil, nil, base, cursor)
 				if got != want {
@@ -91,6 +91,13 @@ func TestRenderLineWithBaseSpansFastPathMatchesGeneralPath(t *testing.T) {
 // allLineStyles is every lineStyle the app renders a whole line in — the set
 // TestLineStyleSGRMatchesLipgloss and the fast-path test above must cover.
 var allLineStyles = []lineStyle{plainLine, diffAddLine, diffDeleteLine, diffContextLine, fileHeaderLine}
+
+// allSpanStyles is every lineStyle a stretch within a line is rendered in,
+// which TestLineStyleSGRMatchesLipgloss covers alongside allLineStyles.
+var allSpanStyles = []lineStyle{
+	shaSpan, authorSpan, dateSpan, dimSpan, diffAddEmphSpan, diffDeleteEmphSpan,
+	diffWhitespaceSpan, searchMatchSpan, searchActiveMatchSpan,
+}
 
 // TestLineStyleSGRMatchesLipgloss pins the substitution lineStyle.sgr makes
 // for lipgloss.Style.Render: for a style setting none of width/padding/border/
@@ -106,7 +113,7 @@ var allLineStyles = []lineStyle{plainLine, diffAddLine, diffDeleteLine, diffCont
 // TestRenderLineWithBaseSpansFastPathMatchesGeneralPath covers.
 func TestLineStyleSGRMatchesLipgloss(t *testing.T) {
 	texts := []string{"x", "plain context line", "unicode ünïcödé ✓ 日本語", "   ", "line with \x1b not-an-escape"}
-	for i, ls := range allLineStyles {
+	for i, ls := range append(slices.Clone(allLineStyles), allSpanStyles...) {
 		for _, text := range texts {
 			for _, cursor := range []bool{false, true} {
 				want := cursorMerged(ls.style, cursor).Render(text)
@@ -120,8 +127,8 @@ func TestLineStyleSGRMatchesLipgloss(t *testing.T) {
 
 // TestRenderLineWithBaseSpansMatchesRenderPerSegment pins the other
 // substitution renderLineWithBaseSpans makes: a line that does carry a span or
-// a match still walks boundaries, but only the covered stretches go through
-// lipgloss — the base-styled ones in between use the precomputed sequence. The
+// a match still walks boundaries, but renders every stretch — span, match or
+// base-styled gap — through its precomputed sequence rather than lipgloss. The
 // reference is what the walk produced when every segment was a Render, so a
 // lipgloss upgrade that made the two disagree (over tab expansion in a segment
 // that doesn't start at a tab stop, say) fails here.
@@ -132,9 +139,9 @@ func TestRenderLineWithBaseSpansMatchesRenderPerSegment(t *testing.T) {
 		spans   []baseSpan
 		matches []lineMatch
 	}{
-		{name: "span in the middle", spans: []baseSpan{{start: 11, end: 15, style: &diffAddEmphStyle}}},
-		{name: "span at the start", spans: []baseSpan{{start: 0, end: 4, style: &diffDeleteEmphStyle}}},
-		{name: "span to the end", spans: []baseSpan{{start: 20, end: len(text), style: &diffAddEmphStyle}}},
+		{name: "span in the middle", spans: []baseSpan{{start: 11, end: 15, style: &diffAddEmphSpan}}},
+		{name: "span at the start", spans: []baseSpan{{start: 0, end: 4, style: &diffDeleteEmphSpan}}},
+		{name: "span to the end", spans: []baseSpan{{start: 20, end: len(text), style: &diffAddEmphSpan}}},
 		{name: "match", matches: []lineMatch{{start: 11, end: 15}}},
 		{name: "active match", matches: []lineMatch{{start: 5, end: 9, active: true}}},
 	}
@@ -178,9 +185,9 @@ func renderSegmentsWithRender(text string, spans []baseSpan, matches []lineMatch
 		for _, s := range spans {
 			if pos >= s.start && pos < s.end {
 				if cursor {
-					return s.style.Background(cursorRowBg)
+					return s.style.style.Background(cursorRowBg)
 				}
-				return *s.style
+				return s.style.style
 			}
 		}
 		return cursorMerged(base.style, cursor)

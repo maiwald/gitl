@@ -256,7 +256,7 @@ func TestHeaderLinesForColorsHashAuthorAndDate(t *testing.T) {
 	if len(hashSpans) != 1 || lines[0][hashSpans[0].start:hashSpans[0].end] != d.Hash {
 		t.Fatalf("spans[0] = %+v on line %q, want a single span covering %q", hashSpans, lines[0], d.Hash)
 	}
-	if hashSpans[0].style.GetForeground() != shaStyle.GetForeground() {
+	if hashSpans[0].style.style.GetForeground() != shaStyle.GetForeground() {
 		t.Errorf("hash span style = %v, want shaStyle", hashSpans[0].style)
 	}
 
@@ -264,7 +264,7 @@ func TestHeaderLinesForColorsHashAuthorAndDate(t *testing.T) {
 	if len(authorSpans) != 1 || lines[authorLine][authorSpans[0].start:authorSpans[0].end] != d.AuthorName {
 		t.Fatalf("spans[authorLine] = %+v on line %q, want a single span covering %q", authorSpans, lines[authorLine], d.AuthorName)
 	}
-	if authorSpans[0].style.GetForeground() != authorStyle.GetForeground() {
+	if authorSpans[0].style.style.GetForeground() != authorStyle.GetForeground() {
 		t.Errorf("author span style = %v, want authorStyle", authorSpans[0].style)
 	}
 
@@ -274,7 +274,7 @@ func TestHeaderLinesForColorsHashAuthorAndDate(t *testing.T) {
 	if len(dateSpans) != 1 || lines[dateLine][dateSpans[0].start:dateSpans[0].end] != dateText {
 		t.Fatalf("spans[dateLine] = %+v on line %q, want a single span covering %q", dateSpans, lines[dateLine], dateText)
 	}
-	if dateSpans[0].style.GetForeground() != dateStyle.GetForeground() {
+	if dateSpans[0].style.style.GetForeground() != dateStyle.GetForeground() {
 		t.Errorf("date span style = %v, want dateStyle", dateSpans[0].style)
 	}
 }
@@ -300,7 +300,7 @@ func TestHeaderLinesForColorsMergeParents(t *testing.T) {
 		if got := lines[1][mergeSpans[i].start:mergeSpans[i].end]; got != want {
 			t.Errorf("mergeSpans[%d] covers %q, want %q", i, got, want)
 		}
-		if mergeSpans[i].style.GetForeground() != shaStyle.GetForeground() {
+		if mergeSpans[i].style.style.GetForeground() != shaStyle.GetForeground() {
 			t.Errorf("mergeSpans[%d] style = %v, want shaStyle", i, mergeSpans[i].style)
 		}
 	}
@@ -333,7 +333,7 @@ func TestRenderLineWithBaseSpansMatchWinsOnOverlap(t *testing.T) {
 	text := "Author: Ada Lovelace <ada@example.com>"
 	nameStart := strings.Index(text, "Ada Lovelace")
 	nameEnd := nameStart + len("Ada Lovelace")
-	spans := []baseSpan{{start: nameStart, end: nameEnd, style: &authorStyle}}
+	spans := []baseSpan{{start: nameStart, end: nameEnd, style: &authorSpan}}
 
 	matchStart := strings.Index(text, "Lovelace")
 	matchEnd := matchStart + len("Lovelace")

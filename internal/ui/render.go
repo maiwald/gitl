@@ -542,17 +542,15 @@ func cursorMerged(base lipgloss.Style, isCursor bool) lipgloss.Style {
 }
 
 // baseSpan is a byte-offset [start,end) run of a header line rendered in a
-// specific non-match base style (e.g. the author's name in authorStyle),
+// specific non-match base style (e.g. the author's name in authorSpan),
 // computed alongside the line's plain text in headerLinesFor so it composes
 // with search-match highlighting.
 type baseSpan struct {
 	start, end int
-	// style points at one of the package's own styles rather than holding a
-	// copy: a lipgloss.Style is 552 bytes, and spans are copied per line and
-	// again per wrapped row (shiftSpans, clipSpans), which made a span cost
-	// more to carry than the line it marks up. Nothing mutates a style —
-	// lipgloss's setters return copies — so sharing one is safe.
-	style *lipgloss.Style
+	// style points at one of the package's own span styles rather than
+	// holding a copy: a lineStyle carries a 552-byte lipgloss.Style, and spans
+	// are copied per line and again per wrapped row (shiftSpans, clipSpans).
+	style *lineStyle
 }
 
 // lineMatch is a search match's byte-offset position within one rendered
@@ -647,44 +645,27 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch,
 	slices.Sort(points)
 	points = slices.Compact(points)
 
-	// ok is false where nothing covers pos and the line's own base style
-	// applies — which is most of a line, an intraline emphasis or a search hit
-	// being a short middle with plain text either side.
-	styleAt := func(pos int) (lipgloss.Style, bool) {
+	// Every stretch is rendered through a precomputed sequence rather than
+	// Render, for the same reason the whole fast path above is. Tabs are
+	// Render's other job (see the fast path), so they're expanded here.
+	styleAt := func(pos int) sgr {
 		for _, m := range matches {
 			if pos >= m.start && pos < m.end {
-				return matchStyle(m.active), true
+				return matchSpan(m.active)
 			}
 		}
 		for _, s := range spans {
 			if pos >= s.start && pos < s.end {
-				if cursor {
-					return s.style.Background(cursorRowBg), true
-				}
-				return *s.style, true
+				return s.style.sgr(cursor)
 			}
 		}
-		return lipgloss.Style{}, false
+		return base.sgr(cursor)
 	}
 
-	baseSeq := base.sgr(cursor)
 	var b strings.Builder
 	for i := 0; i < len(points)-1; i++ {
 		start, end := points[i], points[i+1]
-		if start >= end {
-			continue
-		}
-		seg := text[start:end]
-		if style, covered := styleAt(start); covered {
-			b.WriteString(style.Render(seg))
-			continue
-		}
-		// The base-styled stretches go through the precomputed sequence for
-		// the same reason the whole fast path above does: Render would re-read
-		// every style property and run the padding/border/margin pipeline to
-		// rediscover a sequence that never changes. Tabs are Render's other
-		// job (see the fast path), so they're expanded here.
-		b.WriteString(baseSeq.render(expandTabs(seg)))
+		b.WriteString(styleAt(start).render(expandTabs(text[start:end])))
 	}
 	return b.String()
 }

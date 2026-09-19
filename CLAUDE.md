@@ -299,16 +299,15 @@ before every commit — don't commit red.
   them once per line of the whole commit. `wrapRanges` doesn't wrap a line
   that already fits; `padRow` neither truncates nor styles a plain
   (non-cursor) fill; `renderLineWithBaseSpans` skips its boundary walk for a
-  line carrying no span and no match, and takes that same shortcut for the
-  base-styled stretches *between* the spans of a line that has them (most of
-  it — an intraline emphasis or a search hit is a short middle with plain
-  text either side, and `n`/`N` reflow on every press); and `lineStyle`
-  (`styles.go`) renders
-  such a line by concatenating the ANSI prefix/suffix lipgloss produces for
-  its style (`sgr`, `render.go`) instead of calling `Render`, which re-reads
-  every style property and runs the padding/alignment/border/margin pipeline
-  to rediscover a sequence that never changes — most of a reflow's cost
-  before it was removed.
+  line carrying no span and no match; and `lineStyle` (`styles.go`) renders
+  every stretch of a line — the whole of a plain one, and each span, match
+  and base-styled gap of one that has them (`n`/`N` reflow on every press) —
+  by concatenating the ANSI prefix/suffix lipgloss produces for its style
+  (`sgr`, `render.go`) instead of calling `Render`, which re-reads every style
+  property and runs the padding/alignment/border/margin pipeline to
+  rediscover a sequence that never changes. That is why `baseSpan.style` is a
+  `*lineStyle` (`shaSpan`, `diffAddEmphSpan`, …) rather than a lipgloss
+  style.
   Every one of those is a claim about lipgloss's behavior rather than ours,
   so `render_test.go` compares each against what lipgloss itself produces: an
   upgrade that changes any of them fails there instead of silently changing

@@ -451,14 +451,14 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 			lines = append(lines, entryTitle(d.Kind))
 		}
 		desc := entryDescription(d.Kind)
-		spans[len(lines)] = []baseSpan{{start: 0, end: len(desc), style: &dimStyle}}
+		spans[len(lines)] = []baseSpan{{start: 0, end: len(desc), style: &dimSpan}}
 		lines = append(lines, desc)
 		return lines, -1, len(lines), spans
 	}
 
 	const commitPrefix = "Commit: "
 	lines = append(lines, commitPrefix+d.Hash)
-	spans[0] = []baseSpan{{start: len(commitPrefix), end: len(commitPrefix) + len(d.Hash), style: &shaStyle}}
+	spans[0] = []baseSpan{{start: len(commitPrefix), end: len(commitPrefix) + len(d.Hash), style: &shaSpan}}
 
 	if d.IsMerge() {
 		const mergePrefix = "Merge:  "
@@ -466,7 +466,7 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 		mergeSpans := make([]baseSpan, 0, len(d.Parents))
 		col := len(mergePrefix)
 		for i, p := range d.Parents {
-			mergeSpans = append(mergeSpans, baseSpan{start: col, end: col + len(p), style: &shaStyle})
+			mergeSpans = append(mergeSpans, baseSpan{start: col, end: col + len(p), style: &shaSpan})
 			col += len(p)
 			if i < len(d.Parents)-1 {
 				col++ // the separating space strings.Join inserts
@@ -478,12 +478,12 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 	authorLine = len(lines)
 	const authorPrefix = "Author: "
 	lines = append(lines, fmt.Sprintf("%s%s <%s>", authorPrefix, d.AuthorName, d.AuthorEmail))
-	spans[authorLine] = []baseSpan{{start: len(authorPrefix), end: len(authorPrefix) + len(d.AuthorName), style: &authorStyle}}
+	spans[authorLine] = []baseSpan{{start: len(authorPrefix), end: len(authorPrefix) + len(d.AuthorName), style: &authorSpan}}
 
 	const datePrefix = "Date:   "
 	dateText := d.AuthorDate.Local().Format("2006-01-02 15:04:05 -0700")
 	lines = append(lines, datePrefix+dateText)
-	spans[len(lines)-1] = []baseSpan{{start: len(datePrefix), end: len(datePrefix) + len(dateText), style: &dateStyle}}
+	spans[len(lines)-1] = []baseSpan{{start: len(datePrefix), end: len(datePrefix) + len(dateText), style: &dateSpan}}
 
 	lines = append(lines, "")
 	bodyStart = len(lines)

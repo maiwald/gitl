@@ -170,3 +170,29 @@ var (
 	diffContextLine = newLineStyle(diffContextStyle)
 	fileHeaderLine  = newLineStyle(fileHeaderStyle)
 )
+
+// The styles a stretch within a line is rendered in: a baseSpan's, or a search
+// match's. renderLineWithBaseSpans renders those through their sequences too,
+// since a line carrying one is exactly the line n/N reflows on every press.
+var (
+	shaSpan            = newLineStyle(shaStyle)
+	authorSpan         = newLineStyle(authorStyle)
+	dateSpan           = newLineStyle(dateStyle)
+	dimSpan            = newLineStyle(dimStyle)
+	diffAddEmphSpan    = newLineStyle(diffAddEmphStyle)
+	diffDeleteEmphSpan = newLineStyle(diffDeleteEmphStyle)
+	diffWhitespaceSpan = newLineStyle(diffWhitespaceStyle)
+
+	searchMatchSpan       = newLineStyle(searchMatchStyle)
+	searchActiveMatchSpan = newLineStyle(searchActiveMatchStyle)
+)
+
+// matchSpan is matchStyle as a lineStyle. A match is always rendered in its
+// own style's plain sequence, cursor row or not: its background is already the
+// line's strongest signal.
+func matchSpan(active bool) sgr {
+	if active {
+		return searchActiveMatchSpan.sgr(false)
+	}
+	return searchMatchSpan.sgr(false)
+}
