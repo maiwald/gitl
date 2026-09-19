@@ -83,15 +83,15 @@ func TestDetailModelMessageScrollsWithDiff(t *testing.T) {
 
 	// At the top, still within the header/message, the current section is
 	// the commit metadata section itself.
-	if m.currentSection != 0 || m.sections[0].kind != sectionKindCommit {
-		t.Fatalf("currentSection=%d kind=%v at top, want section 0 (commit)", m.currentSection, m.sections[m.currentSection].kind)
+	if m.currentSection() != 0 || m.sections[0].kind != sectionKindCommit {
+		t.Fatalf("currentSection=%d kind=%v at top, want section 0 (commit)", m.currentSection(), m.sections[m.currentSection()].kind)
 	}
 
 	// Scroll all the way to the bottom, into the last file's content.
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	lastSection := len(m.sections) - 1
-	if m.currentSection != lastSection || m.sections[lastSection].kind != sectionKindFile {
-		t.Fatalf("currentSection=%d at bottom, want last section (%d), a file", m.currentSection, lastSection)
+	if m.currentSection() != lastSection || m.sections[lastSection].kind != sectionKindFile {
+		t.Fatalf("currentSection=%d at bottom, want last section (%d), a file", m.currentSection(), lastSection)
 	}
 }
 
@@ -181,8 +181,8 @@ func TestDetailModelSearchFindsAndJumpsToMatch(t *testing.T) {
 	if m.vp.YOffset != m.diffMatchLines[0] {
 		t.Fatalf("YOffset = %d after the search, want %d (first match's line)", m.vp.YOffset, m.diffMatchLines[0])
 	}
-	if want := fileSectionIndex(m.sections, 0); m.currentSection != want {
-		t.Fatalf("currentSection = %d after jumping to the first match, want %d (a.txt)", m.currentSection, want)
+	if want := fileSectionIndex(m.sections, 0); m.currentSection() != want {
+		t.Fatalf("currentSection = %d after jumping to the first match, want %d (a.txt)", m.currentSection(), want)
 	}
 }
 
@@ -450,16 +450,16 @@ func TestDetailModelNextPrevMatchCyclesAcrossFilesAndWraps(t *testing.T) {
 	if m.vp.YOffset != m.diffMatchLines[1] {
 		t.Fatalf("YOffset = %d after NextMatch, want %d (second match's line)", m.vp.YOffset, m.diffMatchLines[1])
 	}
-	if want := fileSectionIndex(m.sections, 1); m.currentSection != want {
-		t.Fatalf("currentSection = %d after jumping to the second match, want %d (b.txt)", m.currentSection, want)
+	if want := fileSectionIndex(m.sections, 1); m.currentSection() != want {
+		t.Fatalf("currentSection = %d after jumping to the second match, want %d (b.txt)", m.currentSection(), want)
 	}
 
 	m.NextMatch()
 	if pos, total := m.MatchPosition(); pos != 1 || total != 2 {
 		t.Fatalf("MatchPosition after NextMatch past the last match = (%d, %d), want wrap to (1, 2)", pos, total)
 	}
-	if want := fileSectionIndex(m.sections, 0); m.currentSection != want {
-		t.Fatalf("currentSection = %d after wrapping to the first match, want %d (a.txt)", m.currentSection, want)
+	if want := fileSectionIndex(m.sections, 0); m.currentSection() != want {
+		t.Fatalf("currentSection = %d after wrapping to the first match, want %d (a.txt)", m.currentSection(), want)
 	}
 
 	m.PrevMatch()
@@ -506,8 +506,8 @@ func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 	m := NewDetailModel(fixtureDetailWithFiles(3, 10), &jumplist{})
 	m.SetSize(80, 8) // small viewport so scrolling moves meaningfully
 
-	if m.currentSection != 0 || m.sections[0].kind != sectionKindCommit {
-		t.Fatalf("initial currentSection = %d, want 0 (commit)", m.currentSection)
+	if m.currentSection() != 0 || m.sections[0].kind != sectionKindCommit {
+		t.Fatalf("initial currentSection = %d, want 0 (commit)", m.currentSection())
 	}
 
 	// file 0 occupies fileRanges[0]; scroll past its end into file 1.
@@ -516,8 +516,8 @@ func TestDetailModelHighlightFollowsScroll(t *testing.T) {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 
-	if want := fileSectionIndex(m.sections, 1); m.currentSection != want {
-		t.Fatalf("currentSection = %d after scrolling into file 1, want %d", m.currentSection, want)
+	if want := fileSectionIndex(m.sections, 1); m.currentSection() != want {
+		t.Fatalf("currentSection = %d after scrolling into file 1, want %d", m.currentSection(), want)
 	}
 }
 
@@ -594,27 +594,27 @@ func TestDetailModelNextPrevSectionJumpsAndClamps(t *testing.T) {
 	last := len(m.sections) - 1
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
-	if m.currentSection != 1 || m.vp.YOffset != m.sections[1].startLine+1 {
-		t.Fatalf("after ']': currentSection=%d YOffset=%d, want section 1 at %d", m.currentSection, m.vp.YOffset, m.sections[1].startLine+1)
+	if m.currentSection() != 1 || m.vp.YOffset != m.sections[1].startLine+1 {
+		t.Fatalf("after ']': currentSection=%d YOffset=%d, want section 1 at %d", m.currentSection(), m.vp.YOffset, m.sections[1].startLine+1)
 	}
 
 	for i := 0; i < last; i++ { // more than enough presses to clamp at the last section
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
 	}
-	if m.currentSection != last {
-		t.Fatalf("currentSection = %d after repeated ']', want clamped at %d (last section)", m.currentSection, last)
+	if m.currentSection() != last {
+		t.Fatalf("currentSection = %d after repeated ']', want clamped at %d (last section)", m.currentSection(), last)
 	}
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
-	if m.currentSection != last-1 || m.vp.YOffset != m.sections[last-1].startLine+1 {
-		t.Fatalf("after '[': currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.vp.YOffset, last-1, m.sections[last-1].startLine+1)
+	if m.currentSection() != last-1 || m.vp.YOffset != m.sections[last-1].startLine+1 {
+		t.Fatalf("after '[': currentSection=%d YOffset=%d, want section %d at %d", m.currentSection(), m.vp.YOffset, last-1, m.sections[last-1].startLine+1)
 	}
 
 	for i := 0; i < last; i++ { // more than enough presses to clamp at the first section
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
 	}
-	if m.currentSection != 0 {
-		t.Fatalf("currentSection = %d after repeated '[', want clamped at 0", m.currentSection)
+	if m.currentSection() != 0 {
+		t.Fatalf("currentSection = %d after repeated '[', want clamped at 0", m.currentSection())
 	}
 }
 
@@ -639,8 +639,8 @@ func TestDetailModelEnterOnStatsRowJumpsToFile(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	target := fileSectionIndex(m.sections, 1)
-	if m.currentSection != target || m.vp.YOffset != m.sections[target].startLine+1 {
-		t.Fatalf("after Enter on file 1's stats row: currentSection=%d YOffset=%d, want section %d at %d", m.currentSection, m.vp.YOffset, target, m.sections[target].startLine+1)
+	if m.currentSection() != target || m.vp.YOffset != m.sections[target].startLine+1 {
+		t.Fatalf("after Enter on file 1's stats row: currentSection=%d YOffset=%d, want section %d at %d", m.currentSection(), m.vp.YOffset, target, m.sections[target].startLine+1)
 	}
 }
 
@@ -657,22 +657,22 @@ func TestDetailModelEnterElsewhereIsNoop(t *testing.T) {
 	if _, ok := m.statsFileIndexAt(m.cursorLine); ok {
 		t.Fatalf("statsFileIndexAt(%d) = ok, want false on the stats heading row", m.cursorLine)
 	}
-	before := m.currentSection
+	before := m.currentSection()
 	beforeOffset := m.vp.YOffset
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.currentSection != before || m.vp.YOffset != beforeOffset {
-		t.Fatalf("Enter on the stats heading row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection, m.vp.YOffset, before, beforeOffset)
+	if m.currentSection() != before || m.vp.YOffset != beforeOffset {
+		t.Fatalf("Enter on the stats heading row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection(), m.vp.YOffset, before, beforeOffset)
 	}
 
 	m.jumpCursor(m.fileRanges[0].StartLine) // a file's own header row inside the diff (not a stats row)
 	if _, ok := m.statsFileIndexAt(m.cursorLine); ok {
 		t.Fatalf("statsFileIndexAt(%d) = ok, want false on a file's own header row inside the diff", m.cursorLine)
 	}
-	before = m.currentSection
+	before = m.currentSection()
 	beforeOffset = m.vp.YOffset
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.currentSection != before || m.vp.YOffset != beforeOffset {
-		t.Fatalf("Enter on a file's own header row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection, m.vp.YOffset, before, beforeOffset)
+	if m.currentSection() != before || m.vp.YOffset != beforeOffset {
+		t.Fatalf("Enter on a file's own header row moved the view: currentSection=%d YOffset=%d, want unchanged (%d, %d)", m.currentSection(), m.vp.YOffset, before, beforeOffset)
 	}
 }
 
@@ -693,8 +693,8 @@ func TestDetailModelNextFileReachesShortTrailingFile(t *testing.T) {
 	for i := 0; i < target; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
 	}
-	if m.currentSection != target || m.vp.YOffset != m.sections[target].startLine+1 {
-		t.Fatalf("after %d ']' presses: currentSection=%d YOffset=%d, want section %d at %d", target, m.currentSection, m.vp.YOffset, target, m.sections[target].startLine+1)
+	if m.currentSection() != target || m.vp.YOffset != m.sections[target].startLine+1 {
+		t.Fatalf("after %d ']' presses: currentSection=%d YOffset=%d, want section %d at %d", target, m.currentSection(), m.vp.YOffset, target, m.sections[target].startLine+1)
 	}
 }
 
@@ -712,8 +712,8 @@ func TestDetailModelNextPrevFileNoopWithoutFiles(t *testing.T) {
 
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
-	if m.currentSection != 0 {
-		t.Fatalf("currentSection = %d after [/] on a diff-less commit, want 0 (untouched)", m.currentSection)
+	if m.currentSection() != 0 {
+		t.Fatalf("currentSection = %d after [/] on a diff-less commit, want 0 (untouched)", m.currentSection())
 	}
 }
 

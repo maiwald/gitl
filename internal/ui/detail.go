@@ -30,8 +30,7 @@ type DetailModel struct {
 	// from fileRanges, so it's never present without them (the
 	// len(m.fileRanges) == 0 guards below double as "is there anything to
 	// be sticky about").
-	sections       []detailSection
-	currentSection int
+	sections []detailSection
 
 	vp rowViewport
 
@@ -255,7 +254,6 @@ func (m *DetailModel) reflow() {
 	}
 
 	m.setContent()
-	m.syncHighlightFromScroll()
 }
 
 // rowOf is the row a logical line begins at, or contentLen for the
@@ -633,7 +631,6 @@ func (m *DetailModel) scrollWithinBlock(delta int) bool {
 	default:
 		return false
 	}
-	m.syncHighlightFromScroll()
 	return true
 }
 
@@ -680,7 +677,6 @@ func (m *DetailModel) setCursor(pos int) {
 	m.cursorLine = m.blockStart(clamp(pos, 0, m.contentLen-1))
 	m.repaintHighlight(from, to)
 	m.ensureCursorVisible()
-	m.syncHighlightFromScroll()
 }
 
 // ensureCursorVisible scrolls the diff panel so the cursor line stays within
@@ -759,15 +755,15 @@ func (m *DetailModel) jumpParagraph(delta int) {
 	}
 }
 
-// jumpToSection scrolls the diff panel directly to the section
-// currentSection+delta away, clamping at the first/last section (no
+// jumpToSection scrolls the diff panel directly to the section delta away
+// from the current one, clamping at the first/last section (no
 // wraparound), and moves the cursor there too. A no-op on a diff-less commit,
 // where the commit section is the only one there is.
 func (m *DetailModel) jumpToSection(delta int) {
 	if len(m.sections) <= 1 {
 		return
 	}
-	target := clamp(m.currentSection+delta, 0, len(m.sections)-1)
+	target := clamp(m.currentSection()+delta, 0, len(m.sections)-1)
 	m.landOnLine(sectionContentStart(m.sections[target]))
 }
 
@@ -812,7 +808,6 @@ func (m *DetailModel) landOnLine(line int) {
 	m.cursorLine = m.blockStart(line)
 	m.repaintHighlight(from, to)
 	m.vp.SetYOffset(line)
-	m.syncHighlightFromScroll()
 }
 
 // sectionContentStart returns the scroll position jumpToSection lands on: one
@@ -827,13 +822,10 @@ func sectionContentStart(s detailSection) int {
 	return s.startLine + 1
 }
 
-// syncHighlightFromScroll recomputes which section the diff panel's topmost
-// visible line belongs to, for the sticky header.
-func (m *DetailModel) syncHighlightFromScroll() {
-	if len(m.sections) == 0 {
-		return
-	}
-	m.currentSection = sectionAt(m.sections, m.vp.YOffset)
+// currentSection is the index of the section the diff panel's topmost visible
+// line belongs to, or -1 when there are no sections.
+func (m DetailModel) currentSection() int {
+	return sectionAt(m.sections, m.vp.YOffset)
 }
 
 // computeMatches finds every occurrence of term across this commit's header
@@ -996,7 +988,7 @@ func (m DetailModel) View() string {
 // metadata/message block, statsSectionTitle for the stats block, or a diff
 // file's header.
 //
-// Looked up one line behind YOffset, not from currentSection: a section's own
+// Looked up one line behind YOffset, not at currentSection: a section's own
 // header row renders identically to its sticky title, so switching a line
 // early would show that title twice. sectionContentStart accounts for this,
 // so a [ / ] jump still shows the new title immediately.
