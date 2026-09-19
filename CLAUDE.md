@@ -176,8 +176,8 @@ before every commit — don't commit red.
   touching all of those instead of none of them. The cursor always stays
   within `[topIndex(), lastIndex()]`, the rows that actually exist:
   `lastIndex()` floors `len(commits)-1` at `topIndex()` so a list with
-  nothing loaded yet (every run's first frames, and the whole of a
-  headerless piped run) can't put the cursor on a row that isn't there.
+  nothing loaded yet (every run's first frames, and the whole of a piped
+  run) can't put the cursor on a row that isn't there.
 - A synthetic leading row (working tree/staged) is represented as a
   `git.CommitDetail` with `Kind != EntryCommit` and the embedded `Commit`
   left zero-valued (`IsPseudo()`). `detail.go`'s diff/stats/sections/search
@@ -443,9 +443,10 @@ before every commit — don't commit red.
   (previously two independent per-view jumplists couldn't). `jl` is seeded
   with a single entry at the list's position 0 in `NewModel`, so ctrl-o can
   always reach the very top even before any real jump has happened — but
-  only when the run actually has a list (`StartTarget.opensList`), since
-  a headerless piped patch never loads one and ctrl-o would otherwise strand
-  the user on a permanently empty list view.
+  only when the run actually has a list (`StartTarget.opensList`). A piped
+  patch never loads one: it is a single screen, as a pager is — ctrl-o has
+  nowhere to go and q/esc quit (`quitOnBack`) — so the repo it opens (for a
+  named commit's header) serves that header alone.
   `ctrl+i` (not the literal string `"ctrl+i"`) is bound to bubbletea's
   `"tab"` key string — the two are the same byte (0x09) at the terminal
   protocol level, and bubbletea's own decoder reports it as tab (see
@@ -577,10 +578,6 @@ before every commit — don't commit red.
   reporting `searching…` while the queries it deferred run — the cost of not
   running them for every search made inside a commit. The hash order they
   need is fetched once per run and cached (`Model.allHashes`).
-- A piped `git show <rev>` for a commit not reachable from HEAD still opens
-  its detail view — git already produced the diff — but its hash isn't in the
-  list's history (`resolveListPositionCmd`), so the list behind it is left at
-  the top rather than erroring.
 - gitl is wired as `pager.diff`/`pager.show`, not `core.pager`. As
   `core.pager` it would receive `git status`, `git branch -v` and `git help`,
   none of which carry a patch, so every one of them would end up in the

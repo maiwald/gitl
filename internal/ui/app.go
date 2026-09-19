@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -40,18 +39,10 @@ type StartTarget struct {
 	Piped *git.PipedPatch
 }
 
-// opensDetail reports whether gitl was asked to open straight into a detail
-// view, skipping the list as the initial screen.
-func (t StartTarget) opensDetail() bool { return t.Piped != nil }
-
-// opensList reports whether the commit list gets loaded at all. Not the
-// negation of opensDetail: a piped patch whose preamble named a commit opens
-// a detail view *and* loads the list behind it, which is what gives ctrl-o
-// somewhere to go. A bare `git diff` has no position in history to return to,
-// so it gets no list at any point.
-func (t StartTarget) opensList() bool {
-	return t.Piped == nil || t.Piped.Hash != ""
-}
+// opensList reports whether this run has a commit list at all. A piped patch
+// is a single screen, the way a pager is: it opens the detail view, q/esc
+// quit, and no list is loaded behind it for anything to reach.
+func (t StartTarget) opensList() bool { return t.Piped == nil }
 
 // Model is the root Bubble Tea model for the application.
 type Model struct {
@@ -60,8 +51,7 @@ type Model struct {
 
 	start StartTarget
 	// quitOnBack makes Back/q from the detail view quit outright instead of
-	// returning to the list — set for the startup jumps that open straight
-	// into a detail view with no list to return to.
+	// returning to the list — set when there is no list (see opensList).
 	quitOnBack bool
 
 	repo   *git.Repo
@@ -76,12 +66,6 @@ type Model struct {
 	lastError error
 	summaries []git.EntrySummary // canonical copy, mirrored into list.leading as it and the list each become available
 
-	// pendingListPos is the list position a piped patch's commit resolved to,
-	// not yet applied because the list or the resolved position is still
-	// missing — two independent halves that can land in either order, joined
-	// by pumpPendingListPos.
-	pendingListPos *int
-
 	searchPromptOpen bool
 	searchInput      textinput.Model
 	// searchingTerm is the term whose list queries are currently in flight,
@@ -90,10 +74,9 @@ type Model struct {
 	// bar's "searching…" report.
 	searchingTerm string
 	// allHashes is the full reachable commit-hash history in log order,
-	// fetched once — by the first search, or by placing a piped commit in
-	// the list — and reused for every later search. gitl has no refresh
-	// mechanism, so it can't go stale during a run. Nil means "not fetched
-	// yet".
+	// fetched once on the first search and reused for every later one —
+	// gitl has no refresh mechanism, so it can't go stale during a run.
+	// Nil means "not fetched yet".
 	allHashes []string
 
 	// searchTerm and searchDismissed are the single, canonical search state
@@ -168,14 +151,14 @@ func NewModel(target StartTarget) Model {
 	// Seeded with an entry at the list's top so ctrl-o can always get back
 	// there even if the cursor only ever moved by plain motion. Skipped when
 	// the run has no list at all (see opensList), where ctrl-o would strand
-	// the user on a permanently empty list view.
+	// the user on an empty list view.
 	jl := &jumplist{}
 	if target.opensList() {
 		jl.back = []jumpPos{{view: viewList, listCursor: 0}}
 	}
 	return Model{
 		start:      target,
-		quitOnBack: target.opensDetail(),
+		quitOnBack: !target.opensList(),
 		jl:         jl,
 		out:        os.Stdout,
 		// Built empty rather than left a zero value until commitsLoadedMsg
@@ -249,18 +232,6 @@ type worktreeSummariesLoadedMsg struct {
 	summaries []git.EntrySummary
 }
 
-// listPositionMsg carries the list position the commit named by a piped
-// patch's preamble resolved to, for positioning the list's cursor behind the
-// detail view. found is false when that commit isn't reachable from HEAD —
-// there's then no sensible list position and the cursor is left where it is.
-// order is the hash order the position was read from, cached for later
-// searches (see allHashes); nil when it couldn't be fetched.
-type listPositionMsg struct {
-	pos   int
-	found bool
-	order []string
-}
-
 // errSeverity says how much of the UI a failed fetch invalidates.
 type errSeverity int
 
@@ -279,8 +250,8 @@ type errMsg struct {
 }
 
 // runCmd wraps fetch as a tea.Cmd: on success toMsg(v) becomes the resulting
-// message, on failure errMsg{err, severity} does. fetchMoreCmd and
-// resolveListPositionCmd report failures their own way instead.
+// message, on failure errMsg{err, severity} does. fetchMoreCmd reports its
+// failures its own way instead.
 func runCmd[T any](severity errSeverity, fetch func(context.Context) (T, error), toMsg func(T) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		v, err := fetch(context.Background())
@@ -306,11 +277,10 @@ func openRepoCmd() tea.Cmd {
 }
 
 // loadListCmd fetches the first batch of commits and the total reachable
-// count, two independent reads run concurrently. severity is fatal on the
-// plain startup path, where the list is the whole screen, and nonFatal
-// behind a piped patch, whose detail view can succeed without it.
-func loadListCmd(repo *git.Repo, severity errSeverity) tea.Cmd {
-	return runCmd(severity, func(ctx context.Context) (commitsLoadedMsg, error) {
+// count, two independent reads run concurrently. Its failure is fatal: the
+// list is the whole screen.
+func loadListCmd(repo *git.Repo) tea.Cmd {
+	return runCmd(fatal, func(ctx context.Context) (commitsLoadedMsg, error) {
 		var commits []git.Commit
 		var total int
 		err := concurrent.RunConcurrently(
@@ -334,29 +304,6 @@ func loadWorktreeSummariesCmd(repo *git.Repo) tea.Cmd {
 	}, func(summaries []git.EntrySummary) tea.Msg {
 		return worktreeSummariesLoadedMsg{summaries: summaries}
 	})
-}
-
-// resolveListPositionCmd places hash within HEAD's history so the list's
-// cursor can land on it. A commit that isn't reachable from HEAD reports
-// listPositionMsg{found: false} rather than an errMsg: the detail view opens
-// from the piped patch either way, and this only affects where the cursor
-// ends up behind it.
-//
-// The hash arrives already resolved — git resolved whatever the user typed
-// before printing the header gitl read it from. It is looked up in the full
-// hash order rather than counted with `git rev-list --count hash..HEAD`,
-// which measures reachability distance rather than git log's traversal order:
-// the two diverge once merges are involved, and would silently place the
-// cursor on the wrong commit.
-func resolveListPositionCmd(repo *git.Repo, hash string) tea.Cmd {
-	return func() tea.Msg {
-		order, err := repo.AllCommitHashes(context.Background())
-		if err != nil {
-			return listPositionMsg{found: false}
-		}
-		pos := slices.Index(order, hash)
-		return listPositionMsg{pos: pos, found: pos >= 0, order: order}
-	}
 }
 
 // moreCommitsFailedMsg reports a failed pagination fetch. It bypasses
@@ -497,20 +444,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repo = msg.repo
 		if p := m.start.Piped; p != nil {
 			// Only reached with a hash: the header-less case never opened a
-			// repo (see Init). The list loads behind the detail view so
-			// ctrl-o reaches the commit's place in history.
-			return m, tea.Batch(
-				fetchPipedCommitCmd(msg.repo, p),
-				loadListCmd(msg.repo, nonFatal),
-				loadWorktreeSummariesCmd(msg.repo),
-				resolveListPositionCmd(msg.repo, p.Hash),
-			)
+			// repo (see Init). The repo is needed for the header alone.
+			return m, fetchPipedCommitCmd(msg.repo, p)
 		}
 		if !msg.hasCommits {
 			m.err = errors.New("this repository has no commits yet")
 			return m, nil
 		}
-		return m, tea.Batch(loadListCmd(msg.repo, fatal), loadWorktreeSummariesCmd(msg.repo))
+		return m, tea.Batch(loadListCmd(msg.repo), loadWorktreeSummariesCmd(msg.repo))
 	case commitsLoadedMsg:
 		m.list = NewListModel(msg.commits, m.jl)
 		m.list.SetTotalCount(msg.totalCount)
@@ -519,9 +460,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The search state can already be set: the prompt is available as
 		// soon as the repo opens, a whole fetch before this message.
 		m.list.SetSearchDisplay(m.searchTerm, m.searchDismissed)
-		m, matchCmd := m.applyListMatches(m.listMatches)
-		m, jumpCmd := m.pumpPendingListPos()
-		return m, tea.Batch(matchCmd, jumpCmd)
+		return m.applyListMatches(m.listMatches)
 	case moreCommitsLoadedMsg:
 		m.list.AppendCommits(msg.commits)
 		// A jump requested while this fetch was in flight was refused a fetch
@@ -540,19 +479,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.summaries = msg.summaries
 		m.list.SetLeadingSummaries(m.summaries)
 		return m, nil
-	case listPositionMsg:
-		if msg.order != nil {
-			m.allHashes = msg.order
-		}
-		if !msg.found {
-			// Not reachable from HEAD, or not resolvable at all: leave the
-			// cursor at the top rather than error. The detail view opens from
-			// fetchPipedCommitCmd regardless.
-			return m, nil
-		}
-		pos := msg.pos
-		m.pendingListPos = &pos
-		return m.pumpPendingListPos()
 	case commitDetailLoadedMsg:
 		return m.openDetail(msg.detail), nil
 	case searchLoadedMsg:
@@ -602,9 +528,9 @@ const (
 // the term so their results can be recognized as still wanted when they
 // arrive, and what to do with them once they do.
 func (m Model) startListSearch(term string, jump int) (Model, tea.Cmd) {
-	// A run with no repo (a headerless piped patch) has no list behind the
-	// detail view and nothing to query — see canSearch.
-	if m.repo == nil {
+	// A piped run has no list to search, and a headerless one no repo to
+	// query — see canSearch.
+	if m.repo == nil || !m.start.opensList() {
 		return m, nil
 	}
 	m.searchingTerm = term
@@ -677,22 +603,6 @@ func (m Model) loadUpToCmd(target int) tea.Cmd {
 		return fetchMoreCmd(m.repo, req)
 	}
 	return nil
-}
-
-// pumpPendingListPos applies a piped patch's resolved list position once both
-// of its independent halves are available: the list itself and the resolved
-// position. Called from whichever of the two lands last.
-func (m Model) pumpPendingListPos() (Model, tea.Cmd) {
-	if m.pendingListPos == nil || len(m.list.commits) == 0 {
-		return m, nil
-	}
-	pos := *m.pendingListPos
-	m.pendingListPos = nil
-
-	if needsLoad := m.list.JumpTo(pos); needsLoad {
-		return m, m.loadUpToCmd(pos)
-	}
-	return m, nil
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

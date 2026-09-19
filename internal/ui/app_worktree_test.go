@@ -73,30 +73,8 @@ func TestNewModelSetsQuitOnBackFromPipedTarget(t *testing.T) {
 	}
 }
 
-// TestHeaderlessPipedStartupHasNoListToJumpBackTo pins down that a piped
-// `git diff` — whose preamble names no commit, so no list is ever loaded (see
-// StartTarget.opensList) — leaves the jumplist unseeded, so ctrl-o stays in
-// the detail view instead of stranding the user on a permanently empty list.
-func TestHeaderlessPipedStartupHasNoListToJumpBackTo(t *testing.T) {
-	m := NewModel(StartTarget{Piped: &git.PipedPatch{}})
-	m.width, m.height = 80, 24
-	newModel, _ := m.Update(commitDetailLoadedMsg{
-		detail: &git.CommitDetail{Kind: git.EntryStaged, Files: []git.File{{Path: "a.txt"}}},
-	})
-	m = newModel.(Model)
-
-	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
-	m = newModel.(Model)
-	if m.active != viewDetail {
-		t.Fatalf("active view = %v after ctrl+o, want viewDetail (there is no list to go back to)", m.active)
-	}
-	if !strings.Contains(m.View(), "Staged changes") {
-		t.Fatalf("view = %q, want the staged entry still on screen", m.View())
-	}
-}
-
 // TestQuitOnBackGate pins down handleDetailViewKey's Back branch: with
-// quitOnBack set (a piped patch with no list behind it), Back quits the program
+// quitOnBack set (a piped patch, which has no list), Back quits the program
 // outright; otherwise it returns to the list, exactly as it does for a real
 // commit's detail view (see TestEnterRequestsDetailAndEscReturnsToSameListState
 // in app_detail_test.go).

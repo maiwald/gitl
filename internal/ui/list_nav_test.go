@@ -48,7 +48,7 @@ func TestListModelTopAndBottomFullyLoaded(t *testing.T) {
 // TestListModelNavigationOnEmptyHistoryStaysInRowSpace pins down the cursor
 // invariant topIndex() <= cursor <= lastIndex() on a list with nothing in it
 // — the state every run starts in, before commitsLoadedMsg lands, and the
-// permanent state of a headerless piped run. Without it, G lands the
+// permanent state of a piped run. Without it, G lands the
 // cursor on len(commits)-1 == -1, which addresses a synthetic leading row
 // that isn't there, and SelectedSummary then indexes leading[-1].
 func TestListModelNavigationOnEmptyHistoryStaysInRowSpace(t *testing.T) {

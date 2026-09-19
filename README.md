@@ -88,9 +88,8 @@ git diff HEAD~5 -- '*.go'        # any shape git accepts
 ```
 
 gitl parses none of that grammar itself, so every revision, range and
-pathspec git understands works, including ones it has never heard of. For a
-commit, `q`/`Esc` quits outright and `ctrl-o` steps back into the commit list
-at that commit's place in history.
+pathspec git understands works, including ones it has never heard of. Like
+any pager, it shows that one screen: `q`/`Esc` quits.
 
 Wire it to `pager.diff`/`pager.show` rather than `core.pager`: gitl renders a
 patch, and has nothing to add to `git status` or `git branch -v`.
@@ -150,9 +149,6 @@ Run `gitl --help` (or `-h`) at any time for the full flag reference.
 - Only the first 200 untracked files each get their own diffed entry;
   beyond that, remaining untracked files still show up (correctly counted
   and marked as added) but without their own content diffed.
-- `git show <rev>` for a commit that isn't reachable from HEAD (e.g. one
-  that only exists on another branch) still opens its detail view, but the
-  list behind it can't position a cursor on it, so it's left at the top.
 - The commit list itself is never path-filtered, and there's no way to
   change what's on screen from inside the running UI — a different diff
   means a different git command.

@@ -1,125 +1,53 @@
 package ui
 
 import (
-	"os"
-	"os/exec"
-	"slices"
-	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/maiwald/gitl/internal/git"
 )
 
-// TestRepoOpenedPipedPathDispatchesConcurrentFetches pins down that a piped
-// `git show <rev>` startup dispatches its batch of commands (header fetch,
-// list load, worktree entries, position resolution) without erroring — the
-// piped path doesn't gate on hasCommits the way the plain path does (see
-// TestRepoOpenedPlainPathErrorsOnNoCommits).
-func TestRepoOpenedPipedPathDispatchesConcurrentFetches(t *testing.T) {
-	m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc123"}}, jl: &jumplist{}}
-	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: true})
+// TestRepoOpenedPipedPathFetchesOnlyTheHeader pins down that a piped
+// `git show <rev>` startup fetches the commit's header and nothing else: it
+// doesn't gate on hasCommits the way the plain path does (see
+// TestRepoOpenedPlainPathErrorsOnNoCommits), and loads no list behind the
+// detail view.
+func TestRepoOpenedPipedPathFetchesOnlyTheHeader(t *testing.T) {
+	m := NewModel(StartTarget{Piped: &git.PipedPatch{Hash: "abc123"}})
+	newModel, cmd := m.Update(repoOpenedMsg{repo: &git.Repo{Path: "."}, hasCommits: false})
 	m = newModel.(Model)
 	if cmd == nil {
-		t.Fatal("expected a batched command for the piped-show path")
+		t.Fatal("expected a command fetching the piped commit's header")
 	}
 	if m.err != nil {
 		t.Fatalf("err = %v, want nil", m.err)
 	}
+	if _, isBatch := cmd().(tea.BatchMsg); isBatch {
+		t.Fatal("got a batch of commands, want only the header fetch")
+	}
 }
 
-// TestPipedJumpAppliesRegardlessOfArrivalOrder pins down that listPositionMsg
-// and commitsLoadedMsg are independent concurrent fetches that can land in
-// either order, and both orders end with the cursor on the resolved
-// position — see pendingListPos's doc comment.
-func TestPipedJumpAppliesRegardlessOfArrivalOrder(t *testing.T) {
-	t.Run("position before commits", func(t *testing.T) {
-		m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
+// TestPipedRunIsASingleScreen pins down that a piped patch — with a commit
+// header or without — behaves like a pager: ctrl-o has nowhere to go, and
+// Back quits rather than revealing a list.
+func TestPipedRunIsASingleScreen(t *testing.T) {
+	for _, hash := range []string{"", "abc123"} {
+		m := NewModel(StartTarget{Piped: &git.PipedPatch{Hash: hash}})
 		m.width, m.height = 80, 24
-		newModel, _ := m.Update(listPositionMsg{pos: 2, found: true})
+		newModel, _ := m.Update(commitDetailLoadedMsg{
+			detail: &git.CommitDetail{Kind: git.EntryPiped, Files: []git.File{{Path: "a.txt"}}},
+		})
 		m = newModel.(Model)
-		newModel, _ = m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
+
+		newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 		m = newModel.(Model)
-		if m.list.cursor != 2 {
-			t.Fatalf("cursor = %d, want 2", m.list.cursor)
+		if m.active != viewDetail {
+			t.Fatalf("hash %q: active view = %v after ctrl+o, want viewDetail", hash, m.active)
 		}
-	})
 
-	t.Run("commits before position", func(t *testing.T) {
-		m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
-		m.width, m.height = 80, 24
-		newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
-		m = newModel.(Model)
-		newModel, _ = m.Update(listPositionMsg{pos: 2, found: true})
-		m = newModel.(Model)
-		if m.list.cursor != 2 {
-			t.Fatalf("cursor = %d, want 2", m.list.cursor)
+		newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+		if !newModel.(Model).quitting || cmd == nil {
+			t.Fatalf("hash %q: q did not quit", hash)
 		}
-	})
-}
-
-// TestPipedJumpUnreachableLeavesCursorAtTopWithoutError pins down the documented
-// fallback: a commit that isn't reachable from HEAD
-// (listPositionMsg{found: false}) leaves the cursor wherever it already was,
-// with no error surfaced — the detail view still opens from the piped patch.
-func TestPipedJumpUnreachableLeavesCursorAtTopWithoutError(t *testing.T) {
-	m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: "abc"}}, jl: &jumplist{}}
-	m.width, m.height = 80, 24
-	newModel, _ := m.Update(commitsLoadedMsg{commits: fixtureCommits(5), totalCount: 5})
-	m = newModel.(Model)
-	newModel, _ = m.Update(listPositionMsg{found: false})
-	m = newModel.(Model)
-
-	if m.err != nil {
-		t.Fatalf("err = %v, want nil", m.err)
-	}
-	if m.list.cursor != 0 {
-		t.Fatalf("cursor = %d, want 0 (unchanged)", m.list.cursor)
-	}
-}
-
-// TestResolveListPositionFindsCommitAndCachesOrder pins the position a piped
-// commit resolves to against git's own log order, and that the order it was
-// read from is kept, so the first search doesn't query it again.
-func TestResolveListPositionFindsCommitAndCachesOrder(t *testing.T) {
-	dir := t.TempDir()
-	runGit := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("git %v: %v", args, err)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	runGit("init", "-q", "-b", "main")
-	for _, subject := range []string{"one", "two", "three"} {
-		runGit("commit", "-q", "--allow-empty", "-m", subject)
-	}
-	middle := runGit("rev-parse", "HEAD~1")
-	runGit("checkout", "-q", "-b", "side", "HEAD~1")
-	runGit("commit", "-q", "--allow-empty", "-m", "side")
-	unreachable := runGit("rev-parse", "HEAD")
-	runGit("checkout", "-q", "main")
-
-	repo := &git.Repo{Path: dir}
-	msg := resolveListPositionCmd(repo, middle)().(listPositionMsg)
-	if !msg.found || msg.pos != 1 {
-		t.Fatalf("got pos=%d found=%v, want pos=1 found=true", msg.pos, msg.found)
-	}
-	if len(msg.order) != 3 {
-		t.Fatalf("order has %d hashes, want 3", len(msg.order))
-	}
-
-	m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: middle}}, jl: &jumplist{}}
-	newModel, _ := m.Update(msg)
-	if got := newModel.(Model).allHashes; !slices.Equal(got, msg.order) {
-		t.Fatalf("allHashes = %v, want the resolved order cached", got)
-	}
-
-	if msg := resolveListPositionCmd(repo, unreachable)().(listPositionMsg); msg.found {
-		t.Fatalf("an unreachable commit resolved to pos=%d, want found=false", msg.pos)
 	}
 }
