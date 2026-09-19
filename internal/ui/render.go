@@ -264,7 +264,7 @@ func displayWidth(s string) int {
 const lipglossTabWidth = 4
 
 // tabSpaces is the run of spaces a single tab expands to.
-const tabSpaces = "    "
+var tabSpaces = strings.Repeat(" ", lipglossTabWidth)
 
 // expandTabs replaces tabs with lipglossTabWidth spaces.
 //
