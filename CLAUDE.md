@@ -470,7 +470,7 @@ before every commit — don't commit red.
   it peels exactly one layer per press and only one of those two can ever be
   pending: search prompt → selection → search highlighting → the detail view
   → quit. A selection never outlives the view it was taken in
-  (`Model.leaveSelection`), and `q` peels exactly as `esc` does, the two
+  (`DetailModel.clearSelection`, called on every such transition), and `q` peels exactly as `esc` does, the two
   halves of the `Back` binding staying interchangeable. `Enter`/`y` copies it
   (`copyCmd`, `clipboard.go`) by **every route at once**: an OSC 52 sequence
   written straight to `Model.out`, *and* every local clipboard command this

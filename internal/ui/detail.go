@@ -300,7 +300,9 @@ func (m *DetailModel) startSelection() {
 }
 
 // clearSelection drops the selection, repainting the lines that lose their
-// highlight. A no-op when there is none, so callers can clear unconditionally.
+// highlight. A no-op when there is none, so callers can clear unconditionally
+// — which every transition out of the state a selection was made in does: a
+// selection never outlives the view it was taken in.
 func (m *DetailModel) clearSelection() {
 	if !m.selecting {
 		return

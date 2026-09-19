@@ -703,7 +703,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.canSearch() && key.Matches(msg, DefaultKeyMap.Search) {
 		// A search and a selection are mutually exclusive states — see
 		// toggleSelection, which retires a search the other way round.
-		m.leaveSelection()
+		m.detail.clearSelection()
 		m.searchInput = textinput.New()
 		m.searchInput.Prompt = "/"
 		m.searchInput.Width = m.width - 2
@@ -786,7 +786,7 @@ func (m Model) gotoJumpPos(pos jumpPos) (Model, tea.Cmd) {
 	// A jump lands the cursor somewhere the selection was never anchored
 	// from, and can leave the detail view entirely, so it ends any selection
 	// rather than dragging one along behind it.
-	m.leaveSelection()
+	m.detail.clearSelection()
 	if pos.view == viewList {
 		m.active = viewList
 		m.list.JumpTo(pos.listCursor)
@@ -834,19 +834,12 @@ func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		}
-		m.leaveSelection()
+		m.detail.clearSelection()
 		m.active = viewList
 		return m.ensureListSearch(jumpNone)
 	}
 	m.detail.Update(msg)
 	return m, nil
-}
-
-// leaveSelection drops any selection in the detail view, for the transitions
-// that take the user out of the state it was made in. A selection never
-// outlives the view it was taken in. Safe to call when there is none.
-func (m *Model) leaveSelection() {
-	m.detail.clearSelection()
 }
 
 // toggleSelection starts a linewise selection at the cursor, or ends the one
@@ -989,7 +982,7 @@ func (m Model) dismissSearch() (Model, tea.Cmd) {
 func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
 	// Stepping to a match makes the search the visible state, so it ends a
 	// selection rather than dragging one to wherever the match is.
-	m.leaveSelection()
+	m.detail.clearSelection()
 
 	// Only reviving a dismissed search needs setSearchDisplay's own
 	// render/reflow: NextMatch/PrevMatch below re-render anyway, so calling
