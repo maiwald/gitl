@@ -4,6 +4,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -689,19 +691,63 @@ func highlightSpans(text, term string, base, match lipgloss.Style) string {
 }
 
 // findOccurrences returns the byte [start, end) offset of every
-// case-insensitive occurrence of term within text.
+// case-insensitive occurrence of term within text, none for an empty term.
+//
+// Offsets index text itself, never a lowercased copy: lowercasing can change a
+// rune's byte length (İ is two bytes, i one), and an offset into the copy then
+// lands on the wrong bytes of the original. ASCII can't do that, so the common
+// case still searches a lowercased copy with strings.Index.
 func findOccurrences(text, term string) [][2]int {
-	lowerText, lowerTerm := strings.ToLower(text), strings.ToLower(term)
+	if term == "" {
+		return nil
+	}
 	var occs [][2]int
-	pos := 0
-	for {
-		idx := strings.Index(lowerText[pos:], lowerTerm)
-		if idx < 0 {
-			break
+	if isASCII(text) && isASCII(term) {
+		lowerText, lowerTerm := strings.ToLower(text), strings.ToLower(term)
+		for pos := 0; ; {
+			idx := strings.Index(lowerText[pos:], lowerTerm)
+			if idx < 0 {
+				return occs
+			}
+			idx += pos
+			occs = append(occs, [2]int{idx, idx + len(term)})
+			pos = idx + len(term)
 		}
-		idx += pos
-		occs = append(occs, [2]int{idx, idx + len(term)})
-		pos = idx + len(term)
+	}
+	for pos := 0; pos < len(text); {
+		if end, ok := foldedPrefixEnd(text, pos, term); ok {
+			occs = append(occs, [2]int{pos, end})
+			pos = end
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(text[pos:])
+		pos += size
 	}
 	return occs
+}
+
+// foldedPrefixEnd reports whether text, from pos, starts with term under the
+// per-rune lowercasing strings.ToLower applies, and where in text that prefix
+// ends.
+func foldedPrefixEnd(text string, pos int, term string) (int, bool) {
+	for _, want := range term {
+		if pos >= len(text) {
+			return 0, false
+		}
+		r, size := utf8.DecodeRuneInString(text[pos:])
+		if r != want && unicode.ToLower(r) != unicode.ToLower(want) {
+			return 0, false
+		}
+		pos += size
+	}
+	return pos, true
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }

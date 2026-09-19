@@ -339,3 +339,30 @@ func unfusedStyledRows(text string, base lineStyle, width int) []string {
 	}
 	return rows
 }
+
+// TestFindOccurrencesReportsOffsetsIntoTheOriginalText pins that a match's
+// offsets slice the text it was found in, including when lowercasing changes
+// a rune's byte length (İ is two bytes, its lowercase i one) — where offsets
+// into a lowercased copy would land on the wrong bytes.
+func TestFindOccurrencesReportsOffsetsIntoTheOriginalText(t *testing.T) {
+	cases := []struct {
+		text, term string
+		want       []string
+	}{
+		{"Foo bar FOO", "foo", []string{"Foo", "FOO"}},
+		{"İstanbul foo", "foo", []string{"foo"}},
+		{"İstanbul", "istanbul", []string{"İstanbul"}},
+		{"ÄÖÜ äöü", "äö", []string{"ÄÖ", "äö"}},
+		{"aaa", "aa", []string{"aa"}},
+		{"abc", "", nil},
+	}
+	for _, tc := range cases {
+		var got []string
+		for _, occ := range findOccurrences(tc.text, tc.term) {
+			got = append(got, tc.text[occ[0]:occ[1]])
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("findOccurrences(%q, %q) sliced %q, want %q", tc.text, tc.term, got, tc.want)
+		}
+	}
+}
