@@ -229,12 +229,13 @@ func statText(text string, matches []lineMatch, cursor bool) string {
 // per-state versions. sep styles the literal space joining the two halves,
 // needed for the same ANSI-reset reason as rowFieldStyle's separators.
 func formatCountsStyled(additions, deletions int, addStyle, delStyle, sep lipgloss.Style) string {
+	add, del := formatCountParts(additions, deletions)
 	var parts []string
-	if additions > 0 {
-		parts = append(parts, addStyle.Render(fmt.Sprintf("+%d", additions)))
+	if add != "" {
+		parts = append(parts, addStyle.Render(add))
 	}
-	if deletions > 0 {
-		parts = append(parts, delStyle.Render(fmt.Sprintf("-%d", deletions)))
+	if del != "" {
+		parts = append(parts, delStyle.Render(del))
 	}
 	if len(parts) == 0 {
 		return "0"
