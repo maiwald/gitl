@@ -64,29 +64,19 @@ func statLinesFor(files []git.File, width int, matches []StatMatch, activeMatch 
 	summaryLabel := fmt.Sprintf("%d %s changed", len(files), pluralize(len(files), "file", "files"))
 	nameWidth = max(nameWidth, len(summaryLabel))
 
-	matchLines = make([]int, len(matches))
-	mi := 0
+	mc := newMatchCursor[int](matches, activeMatch, dismissed)
 
 	lines = make([]lineRenderer, 0, len(files)+3)
 	lines = append(lines, clippedLine(fileHeaderStyle, statsSectionTitle, width))
 	for i, f := range files {
-		var rowMatches []lineMatch
-		for mi < len(matches) && matches[mi].FileIndex == i {
-			if !dismissed {
-				rowMatches = append(rowMatches, lineMatch{
-					start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
-				})
-			}
-			matchLines[mi] = len(lines)
-			mi++
-		}
+		rowMatches := mc.take(len(lines), i)
 		lines = append(lines, statRow(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], rowMatches, width))
 	}
 	lines = append(lines, blankRow(width))
 	// The totals row's label names no file, so it never carries a match — see
 	// FindStatMatches.
 	lines = append(lines, statRow(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, nil, width))
-	return lines, matchLines
+	return lines, mc.lines
 }
 
 // StatMatch identifies one case-insensitive occurrence of a search term within
@@ -98,6 +88,9 @@ type StatMatch struct {
 	FileIndex        int
 	StartCol, EndCol int
 }
+
+func (m StatMatch) at() int                { return m.FileIndex }
+func (m StatMatch) cols() (start, end int) { return m.StartCol, m.EndCol }
 
 // FindStatMatches returns every occurrence of term across the stats block's
 // per-file rows, in the file order statLinesFor emits them — an invariant the

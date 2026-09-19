@@ -569,6 +569,47 @@ type lineMatch struct {
 	active     bool
 }
 
+// blockMatch is a search match as a block's Find* function reports it: the
+// line it sits on, as a key into the block's own traversal (a line index, a
+// file index, a diff position), and its byte columns within that line.
+type blockMatch[K comparable] interface {
+	at() K
+	cols() (start, end int)
+}
+
+// matchCursor walks a block's matches alongside the lines the block emits.
+// Both follow the same traversal order, so the matches on each line are the
+// run starting at the cursor whose key is that line's.
+type matchCursor[K comparable, M blockMatch[K]] struct {
+	matches   []M
+	next      int
+	active    int
+	dismissed bool
+	// lines is parallel to matches: the logical line each one landed on. It
+	// is filled in even while dismissed, so a dismissed match still lands
+	// correctly once n/N revives it.
+	lines []int
+}
+
+func newMatchCursor[K comparable, M blockMatch[K]](matches []M, active int, dismissed bool) *matchCursor[K, M] {
+	return &matchCursor[K, M]{matches: matches, active: active, dismissed: dismissed, lines: make([]int, len(matches))}
+}
+
+// take consumes the matches keyed at, which sit on logical line line, and
+// returns them styled for that line. It returns none while dismissed.
+func (c *matchCursor[K, M]) take(line int, at K) []lineMatch {
+	var out []lineMatch
+	for c.next < len(c.matches) && c.matches[c.next].at() == at {
+		if !c.dismissed {
+			start, end := c.matches[c.next].cols()
+			out = append(out, lineMatch{start: start, end: end, active: c.next == c.active})
+		}
+		c.lines[c.next] = line
+		c.next++
+	}
+	return out
+}
+
 // renderLineWithBaseSpans composites per-column base coloring (spans) with
 // search-match spans (matches) into one already-styled string: it walks the
 // boundary points of both span lists and renders each resulting piece with

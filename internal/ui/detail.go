@@ -499,19 +499,9 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 // dismissed suppresses the styling. spans are never suppressed, being no part
 // of search.
 func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool) (rendered []lineRenderer, matchLines []int) {
-	matchLines = make([]int, len(matches))
-	mi := 0
+	mc := newMatchCursor[int](matches, activeIdx, dismissed)
 	for li, line := range lines {
-		var lineMatches []lineMatch
-		for mi < len(matches) && matches[mi].LineIndex == li {
-			if !dismissed {
-				lineMatches = append(lineMatches, lineMatch{
-					start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeIdx,
-				})
-			}
-			matchLines[mi] = li
-			mi++
-		}
+		lineMatches := mc.take(li, li)
 		lineSpans := spans[li]
 		rendered = append(rendered, lineRenderer{
 			text:  line,
@@ -521,7 +511,7 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 			},
 		})
 	}
-	return rendered, matchLines
+	return rendered, mc.lines
 }
 
 // MessageMatch identifies one case-insensitive occurrence of a search term
@@ -531,6 +521,9 @@ type MessageMatch struct {
 	LineIndex        int
 	StartCol, EndCol int
 }
+
+func (m MessageMatch) at() int                { return m.LineIndex }
+func (m MessageMatch) cols() (start, end int) { return m.StartCol, m.EndCol }
 
 // FindMessageMatches returns every occurrence of term in the header lines
 // eligible for search: the author line and every line from bodyStart onward,

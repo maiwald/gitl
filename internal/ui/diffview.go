@@ -37,22 +37,12 @@ type FileRange struct {
 func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool) ([]lineRenderer, []FileRange, []int) {
 	lines := make([]lineRenderer, 0, diffLineCount(files))
 	ranges := make([]FileRange, 0, len(files))
-	matchLines := make([]int, len(matches))
-	mi := 0
+	mc := newMatchCursor[diffPos](matches, activeMatch, dismissed)
 
 	for fi, f := range files {
 		start := len(lines)
 
-		var headerMatches []lineMatch
-		for mi < len(matches) && matches[mi].Kind == DiffMatchFileName && matches[mi].FileIndex == fi {
-			if !dismissed {
-				headerMatches = append(headerMatches, lineMatch{
-					start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
-				})
-			}
-			matchLines[mi] = len(lines)
-			mi++
-		}
+		headerMatches := mc.take(len(lines), diffPos{kind: DiffMatchFileName, file: fi})
 		lines = append(lines, lineRenderer{
 			text: fileHeaderText(f),
 			render: func(cursor bool) []string {
@@ -66,16 +56,7 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 			lines = append(lines, clippedLine(hunkHeaderStyle, h.Header, width))
 			hunkSpans := intralineSpans(h)
 			for li, l := range h.Lines {
-				var lineMatches []lineMatch
-				for mi < len(matches) && matches[mi].Kind == DiffMatchLine && matches[mi].FileIndex == fi && matches[mi].HunkIndex == hi && matches[mi].LineIndex == li {
-					if !dismissed {
-						lineMatches = append(lineMatches, lineMatch{
-							start: matches[mi].StartCol, end: matches[mi].EndCol, active: mi == activeMatch,
-						})
-					}
-					matchLines[mi] = len(lines)
-					mi++
-				}
+				lineMatches := mc.take(len(lines), diffPos{kind: DiffMatchLine, file: fi, hunk: hi, line: li})
 				spans := withTrailingWhitespace(l, hunkSpans[li])
 				text := diffLineText(l)
 				lines = append(lines, lineRenderer{
@@ -92,7 +73,7 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 		}
 		ranges = append(ranges, FileRange{FileIndex: fi, StartLine: start, EndLine: len(lines)})
 	}
-	return lines, ranges, matchLines
+	return lines, ranges, mc.lines
 }
 
 // diffLineCount is how many logical lines RenderDiff will emit for files, so
@@ -135,6 +116,18 @@ type DiffMatch struct {
 	FileIndex, HunkIndex, LineIndex int
 	StartCol, EndCol                int
 }
+
+// diffPos is where a DiffMatch sits in RenderDiff's traversal: a file's header
+// row, or one line of one of its hunks.
+type diffPos struct {
+	kind             DiffMatchKind
+	file, hunk, line int
+}
+
+func (m DiffMatch) at() diffPos {
+	return diffPos{kind: m.Kind, file: m.FileIndex, hunk: m.HunkIndex, line: m.LineIndex}
+}
+func (m DiffMatch) cols() (start, end int) { return m.StartCol, m.EndCol }
 
 // FindDiffMatches returns every occurrence of term across files' displayed
 // names and diff lines, in the same file/hunk/line traversal order RenderDiff
