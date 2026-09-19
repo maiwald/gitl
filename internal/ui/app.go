@@ -400,8 +400,7 @@ func fetchEntryDetailCmd(repo *git.Repo, kind git.EntryKind) tea.Cmd {
 	return runCmd(nonFatal, func(ctx context.Context) ([]git.File, error) {
 		return repo.FetchWorktreeEntry(ctx, kind)
 	}, func(files []git.File) tea.Msg {
-		entry := git.WorktreeEntry{Kind: kind, Files: files}
-		return commitDetailLoadedMsg{detail: git.EntryDetail(entry)}
+		return commitDetailLoadedMsg{detail: &git.CommitDetail{Kind: kind, Files: files}}
 	})
 }
 

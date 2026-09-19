@@ -30,13 +30,6 @@ const (
 	EntryPiped
 )
 
-// WorktreeEntry is one synthetic list entry (working tree or staged changes)
-// together with the diff behind it.
-type WorktreeEntry struct {
-	Kind  EntryKind
-	Files []File
-}
-
 // EntrySummary is the file and line counts behind one synthetic entry —
 // everything its list row shows, without the diff those counts came from.
 type EntrySummary struct {
@@ -61,11 +54,11 @@ func (r *Repo) FetchWorktreeEntry(ctx context.Context, kind EntryKind) ([]File, 
 }
 
 // FetchWorktreeSummaries returns a counts-only summary of every synthetic
-// entry that currently has something to show, in the same order and with the
-// same empty entries omitted as FetchWorktreeEntries — but without building
-// either diff. A list row shows nothing but these counts, so the hunks behind
-// them are left to the fetch that opens the entry, and this costs only what
-// git spends deciding which files differ.
+// entry that currently has something to show (working tree, then staged),
+// omitting empty ones — without building either diff. A list row shows
+// nothing but these counts, so the hunks behind them are left to the fetch
+// that opens the entry, and this costs only what git spends deciding which
+// files differ.
 func (r *Repo) FetchWorktreeSummaries(ctx context.Context) ([]EntrySummary, error) {
 	var worktree, staged EntrySummary
 	err := concurrent.RunConcurrently(
@@ -84,13 +77,6 @@ func (r *Repo) FetchWorktreeSummaries(ctx context.Context) ([]EntrySummary, erro
 		summaries = append(summaries, staged)
 	}
 	return summaries, nil
-}
-
-// EntryDetail wraps a synthetic entry's files as a CommitDetail so the detail
-// view renders it with the same machinery a real commit uses. The commit
-// metadata fields are left zero.
-func EntryDetail(e WorktreeEntry) *CommitDetail {
-	return &CommitDetail{Kind: e.Kind, Files: e.Files}
 }
 
 // stagedDiff diffs the index against HEAD. On an unborn HEAD git diffs

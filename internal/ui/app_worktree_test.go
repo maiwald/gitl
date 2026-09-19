@@ -36,10 +36,10 @@ func TestEnterOnSyntheticRowFetchesItsDiff(t *testing.T) {
 	}
 
 	newModel, _ = m.Update(commitDetailLoadedMsg{
-		detail: git.EntryDetail(git.WorktreeEntry{
+		detail: &git.CommitDetail{
 			Kind:  git.EntryWorktree,
 			Files: []git.File{{Path: "a.txt", Additions: 2}},
-		}),
+		},
 	})
 	m = newModel.(Model)
 	if m.active != viewDetail {
@@ -81,7 +81,7 @@ func TestHeaderlessPipedStartupHasNoListToJumpBackTo(t *testing.T) {
 	m := NewModel(StartTarget{Piped: &git.PipedPatch{}})
 	m.width, m.height = 80, 24
 	newModel, _ := m.Update(commitDetailLoadedMsg{
-		detail: git.EntryDetail(git.WorktreeEntry{Kind: git.EntryStaged, Files: []git.File{{Path: "a.txt"}}}),
+		detail: &git.CommitDetail{Kind: git.EntryStaged, Files: []git.File{{Path: "a.txt"}}},
 	})
 	m = newModel.(Model)
 

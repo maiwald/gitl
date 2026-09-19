@@ -146,20 +146,14 @@ func TestFetchWorktreeEntryWorktree(t *testing.T) {
 	}
 }
 
-func TestEntryDetail(t *testing.T) {
-	entry := WorktreeEntry{Kind: EntryStaged, Files: []File{{Path: "a.txt"}}}
-	detail := EntryDetail(entry)
-	if detail.Kind != EntryStaged {
-		t.Errorf("Kind = %v, want EntryStaged", detail.Kind)
+func TestIsPseudo(t *testing.T) {
+	for _, k := range []EntryKind{EntryStaged, EntryWorktree, EntryPiped} {
+		if !(CommitDetail{Kind: k}).IsPseudo() {
+			t.Errorf("IsPseudo() = false for kind %v, want true", k)
+		}
 	}
-	if !detail.IsPseudo() {
-		t.Error("IsPseudo() = false, want true")
-	}
-	if len(detail.Files) != 1 || detail.Files[0].Path != "a.txt" {
-		t.Errorf("Files = %+v", detail.Files)
-	}
-	if detail.Hash != "" {
-		t.Errorf("Hash = %q, want empty (no commit metadata)", detail.Hash)
+	if (CommitDetail{}).IsPseudo() {
+		t.Error("IsPseudo() = true for a real commit, want false")
 	}
 }
 

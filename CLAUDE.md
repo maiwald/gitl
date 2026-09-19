@@ -46,11 +46,11 @@ internal/git/              data access layer, no TUI dependencies
   search.go                SearchCommitHashes (author+message, OR), AllCommitHashes,
                            HashesMatching (in-memory hash-substring filter, list search only)
   rev.go                   CommitPosition (placing a piped commit in the list)
-  worktree.go              EntryKind/WorktreeEntry, EntrySummary/FetchWorktreeSummaries
+  worktree.go              EntryKind, EntrySummary/FetchWorktreeSummaries
                            (numstat counts for the list's leading rows),
                            FetchWorktreeEntry (the diff behind one, on open: staged +
                            working-tree diffs, untracked files as synthesized
-                           added-file diffs), HasStagedChanges/HasWorktreeChanges, EntryDetail
+                           added-file diffs)
 internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
                            commands, canonical search state + prompt overlay +

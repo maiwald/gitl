@@ -19,9 +19,9 @@ const emptyTreeHash = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // commit's diff. Files is left empty for merge commits: with more than one
 // parent there's no single canonical diff, and picking one is deferred.
 //
-// Kind is EntryCommit for every CommitDetail FetchCommitDetail builds;
-// EntryDetail (worktree.go) builds the other two kinds directly, with Commit
-// and Body left zero.
+// Kind is EntryCommit for every CommitDetail FetchCommitDetail builds. The
+// other kinds are built directly from their files, with Commit and Body left
+// zero.
 type CommitDetail struct {
 	Kind EntryKind
 	Commit
