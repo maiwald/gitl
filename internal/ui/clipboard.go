@@ -101,10 +101,8 @@ func clipboardTools() [][]string {
 }
 
 // runClipboardTools runs every clipboard tool this machine has, ignoring the
-// ones it doesn't and the ones that fail. Not first-success-wins: which tool
-// owns the clipboard the user will paste from isn't knowable from in here —
-// on a remote machine it's tmux and not pbcopy, and nothing distinguishes that
-// from the local case reliably — so they all get the text.
+// ones it doesn't and the ones that fail — all of them, not the first that
+// succeeds (see copyCmd).
 func runClipboardTools(text string) {
 	for _, tool := range clipboardTools() {
 		path, err := exec.LookPath(tool[0])

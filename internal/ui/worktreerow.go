@@ -28,11 +28,7 @@ func renderWorktreeRow(s git.EntrySummary, width int, selected, dimmed bool) str
 	countStyle := rowFieldStyle(normalRowStyle, dimmed, selected)
 	gap := rowGap(selected)
 
-	// rowFieldStyle keeps diffAddStyle/diffDeleteStyle's own foreground
-	// when selected, merging in just the cursor background, and swaps them
-	// for dimStyle only when dimmed. A `dimmed || selected` swap here would
-	// flatten the +/- coloring the moment the row is selected, even with no
-	// search active.
+	// A selected row keeps its +/- colors; only dimming replaces them.
 	addStyle := rowFieldStyle(diffAddStyle, dimmed, selected)
 	delStyle := rowFieldStyle(diffDeleteStyle, dimmed, selected)
 	counts := formatCountsStyled(s.Additions, s.Deletions, addStyle, delStyle, countStyle)

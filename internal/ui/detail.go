@@ -151,7 +151,7 @@ func NewDetailModel(detail *git.CommitDetail, jl *jumplist) DetailModel {
 	}
 }
 
-// SetSize records the available rendering area and reflows both panes.
+// SetSize records the available rendering area and reflows.
 func (m *DetailModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
@@ -269,7 +269,7 @@ func (m DetailModel) rowOf(logical int) int {
 // setContent hands the cached rows to the viewport, which borrows the slice
 // rather than copying it. So a line patched in place (patchLogical) is already
 // visible without this call; what needs it is a reflow, which builds a fresh
-// slice, and the padding append below it, which may move the backing array.
+// slice and may then append bottom padding to it, moving the backing array.
 // It's also where a scroll offset left past the end of shrunken content gets
 // pinned back to the bottom.
 func (m *DetailModel) setContent() {
@@ -382,9 +382,9 @@ func (m *DetailModel) patchLogical(i int, highlighted bool) {
 
 // mergeNotice stands in for the diff of a merge commit, which gitl doesn't
 // build: with more than one parent there's no single canonical diff, and
-// picking one is deferred. It's the one thing an empty diff still says — an
-// empty diff that isn't a merge simply shows nothing, since gitl no longer
-// knows what was asked for (git parsed that) and couldn't explain it anyway.
+// picking one is deferred. It's the one thing an empty diff says — any other
+// empty diff shows nothing, since gitl never sees the pathspec (git parsed
+// it) and so can't explain why it came out empty.
 const mergeNotice = "Merge commit: diff not shown (viewing merge diffs isn't supported yet)."
 
 // renderDiffBlock describes this commit's diff at width, honoring the current
