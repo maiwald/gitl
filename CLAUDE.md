@@ -45,7 +45,6 @@ internal/git/              data access layer, no TUI dependencies
   diff.go                  File/Hunk/DiffLine, ParseUnifiedDiff (go-gitdiff wrapper)
   search.go                SearchCommitHashes (author+message, OR), AllCommitHashes,
                            HashesMatching (in-memory hash-substring filter, list search only)
-  rev.go                   CommitPosition (placing a piped commit in the list)
   worktree.go              EntryKind, EntrySummary/FetchWorktreeSummaries
                            (numstat counts for the list's leading rows),
                            FetchWorktreeEntry (the diff behind one, on open: staged +
@@ -580,9 +579,9 @@ before every commit — don't commit red.
   running them for every search made inside a commit. The hash order they
   need is fetched once per run and cached (`Model.allHashes`).
 - A piped `git show <rev>` for a commit not reachable from HEAD still opens
-  its detail view — git already produced the diff — but `CommitPosition` has
-  no list position to offer, so the list behind it is left at the top rather
-  than erroring.
+  its detail view — git already produced the diff — but its hash isn't in the
+  list's history (`resolveListPositionCmd`), so the list behind it is left at
+  the top rather than erroring.
 - gitl is wired as `pager.diff`/`pager.show`, not `core.pager`. As
   `core.pager` it would receive `git status`, `git branch -v` and `git help`,
   none of which carry a patch, so every one of them would end up in the

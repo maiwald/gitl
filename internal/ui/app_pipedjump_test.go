@@ -1,6 +1,10 @@
 package ui
 
 import (
+	"os"
+	"os/exec"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/maiwald/gitl/internal/git"
@@ -70,5 +74,52 @@ func TestPipedJumpUnreachableLeavesCursorAtTopWithoutError(t *testing.T) {
 	}
 	if m.list.cursor != 0 {
 		t.Fatalf("cursor = %d, want 0 (unchanged)", m.list.cursor)
+	}
+}
+
+// TestResolveListPositionFindsCommitAndCachesOrder pins the position a piped
+// commit resolves to against git's own log order, and that the order it was
+// read from is kept, so the first search doesn't query it again.
+func TestResolveListPositionFindsCommitAndCachesOrder(t *testing.T) {
+	dir := t.TempDir()
+	runGit := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	runGit("init", "-q", "-b", "main")
+	for _, subject := range []string{"one", "two", "three"} {
+		runGit("commit", "-q", "--allow-empty", "-m", subject)
+	}
+	middle := runGit("rev-parse", "HEAD~1")
+	runGit("checkout", "-q", "-b", "side", "HEAD~1")
+	runGit("commit", "-q", "--allow-empty", "-m", "side")
+	unreachable := runGit("rev-parse", "HEAD")
+	runGit("checkout", "-q", "main")
+
+	repo := &git.Repo{Path: dir}
+	msg := resolveListPositionCmd(repo, middle)().(listPositionMsg)
+	if !msg.found || msg.pos != 1 {
+		t.Fatalf("got pos=%d found=%v, want pos=1 found=true", msg.pos, msg.found)
+	}
+	if len(msg.order) != 3 {
+		t.Fatalf("order has %d hashes, want 3", len(msg.order))
+	}
+
+	m := Model{start: StartTarget{Piped: &git.PipedPatch{Hash: middle}}, jl: &jumplist{}}
+	newModel, _ := m.Update(msg)
+	if got := newModel.(Model).allHashes; !slices.Equal(got, msg.order) {
+		t.Fatalf("allHashes = %v, want the resolved order cached", got)
+	}
+
+	if msg := resolveListPositionCmd(repo, unreachable)().(listPositionMsg); msg.found {
+		t.Fatalf("an unreachable commit resolved to pos=%d, want found=false", msg.pos)
 	}
 }

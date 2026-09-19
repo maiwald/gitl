@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -89,9 +90,10 @@ type Model struct {
 	// bar's "searching…" report.
 	searchingTerm string
 	// allHashes is the full reachable commit-hash history in log order,
-	// fetched once on the first search and reused for every later one —
-	// gitl has no refresh mechanism, so it can't go stale during a run.
-	// Nil means "not fetched yet".
+	// fetched once — by the first search, or by placing a piped commit in
+	// the list — and reused for every later search. gitl has no refresh
+	// mechanism, so it can't go stale during a run. Nil means "not fetched
+	// yet".
 	allHashes []string
 
 	// searchTerm and searchDismissed are the single, canonical search state
@@ -247,9 +249,12 @@ type worktreeSummariesLoadedMsg struct {
 // patch's preamble resolved to, for positioning the list's cursor behind the
 // detail view. found is false when that commit isn't reachable from HEAD —
 // there's then no sensible list position and the cursor is left where it is.
+// order is the hash order the position was read from, cached for later
+// searches (see allHashes); nil when it couldn't be fetched.
 type listPositionMsg struct {
 	pos   int
 	found bool
+	order []string
 }
 
 // errSeverity says how much of the UI a failed fetch invalidates.
@@ -334,14 +339,19 @@ func loadWorktreeSummariesCmd(repo *git.Repo) tea.Cmd {
 // ends up behind it.
 //
 // The hash arrives already resolved — git resolved whatever the user typed
-// before printing the header gitl read it from.
+// before printing the header gitl read it from. It is looked up in the full
+// hash order rather than counted with `git rev-list --count hash..HEAD`,
+// which measures reachability distance rather than git log's traversal order:
+// the two diverge once merges are involved, and would silently place the
+// cursor on the wrong commit.
 func resolveListPositionCmd(repo *git.Repo, hash string) tea.Cmd {
 	return func() tea.Msg {
-		pos, ok, err := repo.CommitPosition(context.Background(), hash)
-		if err != nil || !ok {
+		order, err := repo.AllCommitHashes(context.Background())
+		if err != nil {
 			return listPositionMsg{found: false}
 		}
-		return listPositionMsg{pos: pos, found: true}
+		pos := slices.Index(order, hash)
+		return listPositionMsg{pos: pos, found: pos >= 0, order: order}
 	}
 }
 
@@ -527,6 +537,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetLeadingSummaries(m.summaries)
 		return m, nil
 	case listPositionMsg:
+		if msg.order != nil {
+			m.allHashes = msg.order
+		}
 		if !msg.found {
 			// Not reachable from HEAD, or not resolvable at all: leave the
 			// cursor at the top rather than error. The detail view opens from
