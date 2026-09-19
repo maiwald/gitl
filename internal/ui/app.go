@@ -718,7 +718,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.advanceMatch(-1)
 		}
 		if !m.searchDismissed && key.Matches(msg, DefaultKeyMap.Back) {
-			return m.dismissSearch()
+			m.dismissSearch()
+			return m, nil
 		}
 	}
 
@@ -852,7 +853,7 @@ func (m Model) toggleSelection() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.hasActiveSearch() && !m.searchDismissed {
-		m, _ = m.dismissSearch()
+		m.dismissSearch()
 	}
 	m.detail.startSelection()
 	return m, nil
@@ -970,9 +971,8 @@ func (m Model) hasActiveSearch() bool {
 // dismissSearch hides the active search's highlighting without discarding its
 // term/matches (vim :noh-style): the first Esc/q after a search goes active is
 // absorbed here instead of falling through to Back. n/N revives it.
-func (m Model) dismissSearch() (Model, tea.Cmd) {
+func (m *Model) dismissSearch() {
 	m.setSearchDisplay(m.searchTerm, true)
-	return m, nil
 }
 
 // advanceMatch cycles the active view's search to the next (delta>0) or
