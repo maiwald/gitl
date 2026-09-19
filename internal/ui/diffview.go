@@ -76,7 +76,7 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 					matchLines[mi] = len(lines)
 					mi++
 				}
-				spans := hunkSpans[li]
+				spans := withTrailingWhitespace(l, hunkSpans[li])
 				text := diffLineText(l)
 				lines = append(lines, lineRenderer{
 					text: text,
@@ -293,6 +293,25 @@ func intralineSpans(h git.Hunk) map[int][]baseSpan {
 	}
 
 	return spans
+}
+
+// withTrailingWhitespace puts a span marking l's trailing whitespace in front
+// of spans, when l is an added or removed line that has any — git's
+// blank-at-eol, flagged on both sides so that removing it is as visible as
+// introducing it. Context lines aren't flagged: whitespace the change didn't
+// touch is noise. Leading the slice is what makes it win over an intraline
+// emphasis covering the same bytes (styleAt takes the first span that does),
+// which for a line differing only in trailing whitespace is exactly that run.
+func withTrailingWhitespace(l git.DiffLine, spans []baseSpan) []baseSpan {
+	if l.Op == git.OpContext {
+		return spans
+	}
+	end := len(strings.TrimRight(l.Text, " \t"))
+	if end == len(l.Text) {
+		return spans
+	}
+	ws := baseSpan{start: end, end: len(l.Text), style: &diffWhitespaceStyle}
+	return append([]baseSpan{ws}, spans...)
 }
 
 // intralineDiff finds the byte-offset [start,end) "changed middle" of oldText

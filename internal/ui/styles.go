@@ -76,6 +76,13 @@ var (
 				Foreground(lipgloss.Color("167")).
 				Background(lipgloss.Color("52"))
 
+	// diffWhitespaceStyle marks trailing whitespace an added or removed
+	// line carries (see withTrailingWhitespace) — git's own
+	// color.diff.whitespace default, a red background, since whitespace has
+	// no foreground to color.
+	diffWhitespaceStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("1"))
+
 	diffContextStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("250"))
 

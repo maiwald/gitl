@@ -502,6 +502,36 @@ func TestRenderDiffAppliesIntralineEmphasisStyles(t *testing.T) {
 	}
 }
 
+func TestRenderDiffMarksTrailingWhitespaceOnChangedLines(t *testing.T) {
+	files := []git.File{{
+		Hunks: []git.Hunk{{
+			Header: "@@ -1,3 +1,3 @@",
+			Lines: []git.DiffLine{
+				{Op: git.OpContext, Text: "kept  "},
+				{Op: git.OpDelete, Text: "foo \t "},
+				{Op: git.OpAdd, Text: "foo"},
+				{Op: git.OpAdd, Text: "bar  "},
+			},
+		}},
+	}}
+	lines, _, _ := renderDiffRows(files, 80, nil, -1, false, -1)
+	context, deleted, added, introduced := lines[2], lines[3], lines[4], lines[5]
+
+	// The removed run wins over the intraline emphasis covering the same
+	// bytes, its tab expanded to the stop past the marker column.
+	if want := diffWhitespaceStyle.Render(strings.Repeat(" ", 6)); !strings.Contains(deleted, want) {
+		t.Errorf("delete line = %q, want its trailing whitespace marked as %q", deleted, want)
+	}
+	if want := diffWhitespaceStyle.Render("  "); !strings.Contains(introduced, want) {
+		t.Errorf("add line = %q, want its trailing whitespace marked as %q", introduced, want)
+	}
+	for _, l := range []string{context, added} {
+		if strings.Contains(l, diffWhitespaceStyle.Render(" ")) {
+			t.Errorf("line %q is marked, want only changed lines' trailing whitespace marked", l)
+		}
+	}
+}
+
 // TestRenderDiffLineCursorRowCountMatchesPlain pins down that a line's
 // wrapped height doesn't depend on whether the cursor is on it. RenderDiff
 // renders each line plain to learn how many rows it occupies and only then
