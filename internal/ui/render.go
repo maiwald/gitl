@@ -65,12 +65,16 @@ func clippedLine(style lipgloss.Style, text string, width int) lineRenderer {
 }
 
 // blankRow is the lineRenderer for a blank separator row between two content
-// blocks (see blankLine).
+// blocks: plain empty, or a full-width row filled with the cursor background
+// when the cursor is on it.
 func blankRow(width int) lineRenderer {
 	return lineRenderer{
 		blank: true,
 		render: func(cursor bool) []string {
-			return []string{blankLine(width, cursor)}
+			if !cursor {
+				return []string{""}
+			}
+			return []string{padRow("", width, true)}
 		},
 	}
 }
@@ -489,17 +493,6 @@ func truncate(s string, n int) string {
 		return string(r[:n])
 	}
 	return string(r[:n-1]) + "…"
-}
-
-// blankLine renders one of the blank separator rows reflow splices between the
-// header/stats/diff blocks: plain empty, or a full-width row filled with the
-// cursor background when it's the line the cursor is on. The separators live
-// outside every block, so they carry their own cursor check.
-func blankLine(width int, isCursor bool) string {
-	if !isCursor {
-		return ""
-	}
-	return padRow("", width, true)
 }
 
 // sgr is the ANSI prefix and suffix lipgloss puts around text rendered in one
