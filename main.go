@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -88,15 +87,12 @@ func runAsPager() error {
 	// Read the input once and keep it: whether gitl shows this at all is
 	// decided only after parsing it, and the pager it may go to instead needs
 	// the original bytes — git colors its output when a pager is in use, and
-	// ReadPipedPatch strips that.
+	// ParsePipedPatch strips that.
 	raw, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
 	}
-	patch, err := git.ReadPipedPatch(bytes.NewReader(raw))
-	if err != nil {
-		return err
-	}
+	patch := git.ParsePipedPatch(raw)
 	if len(patch.Files) == 0 {
 		if patch.Preamble == "" {
 			// git runs its pager even for a command that produced nothing, so

@@ -1,7 +1,6 @@
 package git
 
 import (
-	"io"
 	"regexp"
 	"strings"
 
@@ -26,18 +25,14 @@ type PipedPatch struct {
 	Hash string
 }
 
-// ReadPipedPatch reads a patch and splits it into the diff, the text in front
-// of it, and the commit that text names, if any.
+// ParsePipedPatch splits a patch into the diff, the text in front of it, and
+// the commit that text names, if any.
 //
 // ANSI is stripped first: git colors its output when a pager is in use, and
 // gitl re-colors from the parsed structure anyway. That also strips a literal
 // escape sequence out of a diffed file's own content, which is a fair trade —
 // git would have colored that line too, leaving it unparseable either way.
-func ReadPipedPatch(r io.Reader) (*PipedPatch, error) {
-	raw, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
+func ParsePipedPatch(raw []byte) *PipedPatch {
 	text := ansi.Strip(string(raw))
 
 	files, preamble, err := ParsePatch(strings.NewReader(text))
@@ -56,7 +51,7 @@ func ReadPipedPatch(r io.Reader) (*PipedPatch, error) {
 	if m := commitHeaderPattern.FindStringSubmatch(preamble); m != nil {
 		p.Hash = m[1]
 	}
-	return p, nil
+	return p
 }
 
 // Detail wraps the patch as a CommitDetail with no commit behind it, for the

@@ -38,7 +38,7 @@ internal/git/              data access layer, no TUI dependencies
   log.go                   Commit type, FetchLogBatch, CommitCount (paged log)
   show.go                  CommitDetail (+ EntryKind), FetchCommitDetail (metadata +
                            diff), FetchCommitMeta (the metadata half alone)
-  pipe.go                  PipedPatch, ReadPipedPatch: a patch read from stdin
+  pipe.go                  PipedPatch, ParsePipedPatch: a patch read from stdin
                            when git runs gitl as its pager
   pager.go                 FallbackPager: the pager git would have run for the
                            command it is currently paging through gitl
@@ -590,7 +590,7 @@ before every commit — don't commit red.
 - `--word-diff`/`--color-words` go to the fallback pager, not the parser:
   they replace the per-line `+`/`-` markers a unified diff is read by with
   inline `{+…+}`/`[-…-]` runs, which go-gitdiff rejects outright.
-  `ReadPipedPatch` keeps the text as the preamble rather than returning the
+  `ParsePipedPatch` keeps the text as the preamble rather than returning the
   error, since gitl is the pager and a pager that fails is a `git show` that
   fails — and a patch with no files is exactly what `runAsPager` hands on.
   Any future shape the parser can't take lands there too.
