@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -45,7 +46,7 @@ func TestPadRowPlainFillMatchesLipgloss(t *testing.T) {
 
 // TestWrapRangesFittingLineMatchesLipgloss is the same guard for wrapRanges'
 // own fast path: a line that fits must produce exactly the single range
-// lipgloss's wrapper would have yielded for it.
+// lipgloss's wrapper would have yielded for it, trailing spaces included.
 func TestWrapRangesFittingLineMatchesLipgloss(t *testing.T) {
 	for _, line := range fastPathLines {
 		for _, width := range []int{12, 40, 200} {
@@ -56,7 +57,7 @@ func TestWrapRangesFittingLineMatchesLipgloss(t *testing.T) {
 			if len(rows) != 1 {
 				t.Fatalf("lipgloss wrapped %q at width %d into %d rows, expected a fitting line to stay on one", line, width, len(rows))
 			}
-			want := [][2]int{{0, len(strings.TrimRight(rows[0], " "))}}
+			want := [][2]int{{0, len(strings.TrimRight(rows[0], " ")) + len(line) - len(strings.TrimRight(line, " "))}}
 			got := wrapRanges(line, width)
 			if len(got) != 1 || got[0] != want[0] {
 				t.Errorf("wrapRanges(%q, %d) = %v, want %v (what the wrapper produces)", line, width, got, want)
@@ -291,6 +292,27 @@ func TestWrapStyledRowsFusedRowMatchesUnfused(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestWrapRangesKeepsTrailingSpaces(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		width int
+		want  [][2]int
+	}{
+		{"fits", "ab   ", 10, [][2]int{{0, 5}}},
+		{"only spaces", "    ", 10, [][2]int{{0, 4}}},
+		{"fill the last row", "abcd efg   ", 5, [][2]int{{0, 4}, {5, 10}, {10, 11}}},
+		{"spill onto rows of their own", "abcde" + strings.Repeat(" ", 7), 5, [][2]int{{0, 5}, {5, 10}, {10, 12}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := wrapRanges(tt.text, tt.width); !slices.Equal(got, tt.want) {
+				t.Errorf("wrapRanges(%q, %d) = %v, want %v", tt.text, tt.width, got, tt.want)
+			}
+		})
 	}
 }
 

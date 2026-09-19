@@ -302,7 +302,11 @@ func expandTabsMapped(text string) (string, offsetMap) {
 // match positions index into, so that difference desyncs the whole view.
 //
 // Ranges exclude the spaces the wrapper consumed at a break (and the
-// padding it adds to short rows) — every caller re-pads to width itself.
+// padding it adds to short rows) — every caller re-pads to width itself. The
+// line's own trailing spaces are the exception: the wrapper drops those too,
+// but they are content — a diff removing or adding trailing whitespace would
+// otherwise show nothing where the change is — so they're kept, spilling onto
+// rows of their own when the last row can't hold them.
 func wrapRanges(text string, width int) [][2]int {
 	if width <= 0 || text == "" {
 		return [][2]int{{0, len(text)}}
@@ -310,10 +314,9 @@ func wrapRanges(text string, width int) [][2]int {
 	// A line that already fits comes back from the wrapper as itself, padded
 	// out to width — so measure first and skip the render, the expensive
 	// half of laying a line out, which a reflow pays once per line of the
-	// entire commit. Trimming the trailing spaces is what the general path
-	// below would do to that single row anyway.
+	// entire commit.
 	if !strings.Contains(text, "\n") && displayWidth(text) <= width {
-		return [][2]int{{0, len(strings.TrimRight(text, " "))}}
+		return [][2]int{{0, len(text)}}
 	}
 	rows := strings.Split(lipgloss.NewStyle().Width(width).Render(text), "\n")
 	ranges := make([][2]int, 0, len(rows))
@@ -328,6 +331,23 @@ func wrapRanges(text string, width int) [][2]int {
 		end := min(pos+len(row), len(text))
 		ranges = append(ranges, [2]int{pos, end})
 		pos = end
+	}
+	return appendTrailingSpaces(ranges, text, width)
+}
+
+// appendTrailingSpaces extends ranges over whatever of text's tail the wrapper
+// dropped — only ever trailing spaces, tabs having been expanded before any
+// line is wrapped — filling the last row up to width and continuing onto rows
+// of their own.
+func appendTrailingSpaces(ranges [][2]int, text string, width int) [][2]int {
+	last := &ranges[len(ranges)-1]
+	if last[1] >= len(text) {
+		return ranges
+	}
+	room := width - displayWidth(text[last[0]:last[1]])
+	last[1] += min(max(room, 0), len(text)-last[1])
+	for pos := last[1]; pos < len(text); pos += width {
+		ranges = append(ranges, [2]int{pos, min(pos+width, len(text))})
 	}
 	return ranges
 }
