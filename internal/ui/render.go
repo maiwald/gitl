@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -635,20 +636,16 @@ func renderLineWithBaseSpans(text string, spans []baseSpan, matches []lineMatch,
 		return base.sgr(cursor).render(expandTabs(text))
 	}
 
-	bounds := map[int]bool{0: true, len(text): true}
+	points := make([]int, 0, 2+2*(len(spans)+len(matches)))
+	points = append(points, 0, len(text))
 	for _, s := range spans {
-		bounds[s.start] = true
-		bounds[s.end] = true
+		points = append(points, s.start, s.end)
 	}
 	for _, m := range matches {
-		bounds[m.start] = true
-		bounds[m.end] = true
+		points = append(points, m.start, m.end)
 	}
-	points := make([]int, 0, len(bounds))
-	for p := range bounds {
-		points = append(points, p)
-	}
-	sort.Ints(points)
+	slices.Sort(points)
+	points = slices.Compact(points)
 
 	// ok is false where nothing covers pos and the line's own base style
 	// applies — which is most of a line, an intraline emphasis or a search hit
