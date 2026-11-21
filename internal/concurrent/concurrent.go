@@ -27,3 +27,23 @@ func RunConcurrently(fns ...func() error) error {
 	}
 	return nil
 }
+
+// ForEach calls fn(i) for every i in [0, n), with at most limit calls in
+// flight at once, and returns when all have finished. Each call is expected to
+// write only to its own slot of whatever result it fills, which is what makes
+// no further synchronization necessary. For the same independent-work shape as
+// RunConcurrently, when there are too many items to start them all at once.
+func ForEach(n, limit int, fn func(i int)) {
+	sem := make(chan struct{}, max(limit, 1))
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(i)
+		}()
+	}
+	wg.Wait()
+}

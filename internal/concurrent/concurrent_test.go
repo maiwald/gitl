@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRunConcurrentlySucceedsWhenAllSucceed(t *testing.T) {
@@ -46,4 +47,36 @@ func TestRunConcurrentlyPropagatesASingleError(t *testing.T) {
 	if err != want {
 		t.Fatalf("RunConcurrently = %v, want %v", err, want)
 	}
+}
+
+func TestForEachVisitsEveryIndexOnce(t *testing.T) {
+	seen := make([]int32, 100)
+	ForEach(len(seen), 7, func(i int) { atomic.AddInt32(&seen[i], 1) })
+	for i, n := range seen {
+		if n != 1 {
+			t.Fatalf("index %d visited %d times, want 1", i, n)
+		}
+	}
+}
+
+func TestForEachHonorsTheLimit(t *testing.T) {
+	var inFlight, peak int32
+	ForEach(50, 4, func(int) {
+		n := atomic.AddInt32(&inFlight, 1)
+		for {
+			p := atomic.LoadInt32(&peak)
+			if n <= p || atomic.CompareAndSwapInt32(&peak, p, n) {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+		atomic.AddInt32(&inFlight, -1)
+	})
+	if peak > 4 {
+		t.Errorf("peak concurrency = %d, want at most 4", peak)
+	}
+}
+
+func TestForEachWithNothingToDoReturns(t *testing.T) {
+	ForEach(0, 4, func(int) { t.Error("fn called with n = 0") })
 }

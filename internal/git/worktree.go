@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/maiwald/gitl/internal/concurrent"
 )
@@ -98,6 +97,11 @@ const maxUntrackedDiffs = 200
 // and could thrash a constrained system.
 const untrackedDiffConcurrency = 16
 
+// untrackedCountConcurrency bounds the file reads untrackedSummary runs at
+// once. Reads, not subprocesses, so it can sit above untrackedDiffConcurrency;
+// it exists to keep a huge tree from holding thousands of descriptors open.
+const untrackedCountConcurrency = 32
+
 // untrackedFiles returns one synthesized File per untracked path, rendered as
 // an added-file diff against /dev/null — the same approach lazygit and tig use
 // to show untracked files alongside a real diff.
@@ -108,22 +112,12 @@ func (r *Repo) untrackedFiles(ctx context.Context) ([]File, error) {
 	}
 
 	files := make([]File, len(paths))
-	sem := make(chan struct{}, untrackedDiffConcurrency)
-	var wg sync.WaitGroup
-	for i, path := range paths {
-		if i >= maxUntrackedDiffs {
-			files[i] = File{Path: path, Status: StatusAdded}
-			continue
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(i int, path string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			files[i] = r.untrackedDiff(ctx, path)
-		}(i, path)
+	for i := maxUntrackedDiffs; i < len(paths); i++ {
+		files[i] = File{Path: paths[i], Status: StatusAdded}
 	}
-	wg.Wait()
+	concurrent.ForEach(min(len(paths), maxUntrackedDiffs), untrackedDiffConcurrency, func(i int) {
+		files[i] = r.untrackedDiff(ctx, paths[i])
+	})
 	return files, nil
 }
 
@@ -240,9 +234,15 @@ func (r *Repo) untrackedSummary(ctx context.Context) (EntrySummary, error) {
 		return EntrySummary{}, err
 	}
 
+	// Reading a large untracked tree is the slow part of startup, and every
+	// file is independent, so it is counted in parallel.
+	counts := make([]int, len(paths))
+	concurrent.ForEach(len(paths), untrackedCountConcurrency, func(i int) {
+		counts[i] = countAddedLines(filepath.Join(r.Path, paths[i]))
+	})
 	summary := EntrySummary{Kind: EntryWorktree, Files: len(paths)}
-	for _, path := range paths {
-		summary.Additions += countAddedLines(filepath.Join(r.Path, path))
+	for _, n := range counts {
+		summary.Additions += n
 	}
 	return summary, nil
 }
