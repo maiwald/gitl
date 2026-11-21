@@ -231,18 +231,26 @@ before every commit — don't commit red.
   have been laid out, not threaded into the blocks that produce them, which
   is what lets a cursor move repaint just the two lines that changed.
 - A `reflow()` is the detail view's only way to change *what its lines say*,
-  so every writer of that (`SetSearchDisplay`, `SetSize`, `setMatchPos`)
-  ends in one. Which line the cursor is on is the sole exception: it goes
+  so every writer of that (`SetSearchDisplay`, `SetSize`) ends in one — and
+  `SetSearchDisplay` skips it when handed the state the view already shows
+  (`installSearch` is its reflow-free half, for `newDetailModel`, which sizes
+  the view right after). Two things change how a line *looks* without
+  changing what it says, and neither reflows. Which line the cursor is on goes
   through `repaintHighlight`, which re-renders only the line being left and
-  the line being taken up and splices them into the cached rows. That invariant
-  is what lets `jumpToMatch` read `messageMatchLines`/`diffMatchLines` out of
-  the *previous* reflow instead of forcing a fresh one first: those depend
-  only on the match set and the wrap width, both of which already ended in a
-  reflow when they changed. The restyle a match step needs is `landOnLine`'s
-  own repaint, which has to run regardless to move the cursor highlight onto
-  the line it lands on — so a reflow before it is pure duplicated work, and
-  on a large commit that's a whole re-render of every diff line per `n`/`N`
-  press.
+  the line being taken up and splices them into the cached rows. Which match
+  is the active one goes through `setMatchPos`/`restyleMatch`, the same
+  bargain: the closures a block builds hold their `[]lineMatch`, `matchCursor.take`
+  hands back a pointer to each entry (`matchLoc.styled`, collected per block
+  in `matchSlots`), and a step flips `active` on the match it leaves and the
+  one it lands on and patches those two lines. Only a dismissed search, which
+  styles no match at all, falls back to a reflow. That is what lets
+  `jumpToMatch` read `messageMatchLines`/`diffMatchLines` out of the
+  *previous* reflow: they depend only on the match set and the wrap width, both
+  of which already ended in a reflow when they changed. It matters on a large
+  commit, where a reflow per `n`/`N` press is a re-render of every diff line
+  (~3 ms and 5 MB on 8000 lines, against ~14 µs for the restyle);
+  `TestDetailMatchStepPatchMatchesFullReflow` and
+  `TestDetailMatchStepCostIsIndependentOfCommitSize` pin it.
 - A block of detail-view content (`renderHeaderLines`, `statLinesFor`,
   `RenderDiff`) returns `[]lineRenderer` (`render.go`) — one entry per
   *logical* line, pairing a closure that renders it plain or with the cursor

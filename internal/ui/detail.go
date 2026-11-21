@@ -66,6 +66,12 @@ type DetailModel struct {
 	statMatchCols    []int
 	diffMatchCols    []int
 
+	// matchSlots is, per block (indexed by matchBlock) and parallel to its
+	// matches, what restyleMatch needs to move the active highlight from one
+	// match to another without a reflow: the match's styling entry, and the
+	// logical line to re-render after flipping it.
+	matchSlots [3][]matchSlot
+
 	// cursorLine is a tig-style line cursor: an index into the same
 	// flattened content line space vp's scroll offset lives in (see
 	// contentLen). Distinct from vp.YOffset — movement keys move the
@@ -212,6 +218,11 @@ func (m *DetailModel) reflow() {
 	m.messageMatchLines, m.messageMatchCols = m.rebaseMatches(messageMatchLines, 0)
 	m.statMatchLines, m.statMatchCols = m.rebaseMatches(statMatchLines, statsStart)
 	m.diffMatchLines, m.diffMatchCols = m.rebaseMatches(diffMatchLines, diffStart)
+	m.matchSlots = [3][]matchSlot{
+		matchBlockMessage: matchSlotsFor(messageMatchLines, 0),
+		matchBlockStats:   matchSlotsFor(statMatchLines, statsStart),
+		matchBlockDiff:    matchSlotsFor(diffMatchLines, diffStart),
+	}
 
 	m.vp.Height = m.height
 	if len(m.fileRanges) > 0 {
@@ -251,6 +262,22 @@ func (m *DetailModel) reflow() {
 	}
 
 	m.setContent()
+}
+
+// matchSlot is one match's handle for restyleMatch: its styling entry, and the
+// logical line (counted from the start of all content, block offset applied)
+// that renders it.
+type matchSlot struct {
+	styled  *lineMatch
+	logical int
+}
+
+func matchSlotsFor(locs []matchLoc, blockStart int) []matchSlot {
+	slots := make([]matchSlot, len(locs))
+	for i, loc := range locs {
+		slots[i] = matchSlot{styled: loc.styled, logical: blockStart + loc.line}
+	}
+	return slots
 }
 
 // rebaseMatches turns a block's match locations, counted in logical lines
@@ -867,14 +894,44 @@ func (m *DetailModel) jumpToFirstMatch() {
 	m.jumpToMatch()
 }
 
-// setMatchPos makes match pos the active one and reflows. Which match is
-// active is baked into the content, and both the match being left and the one
-// being taken up can be anywhere in the commit, so unlike a cursor move this
-// needs the whole reflow — which is also what makes the match lines
-// jumpToMatch reads current.
+// setMatchPos makes match pos the active one. Both the match being left and
+// the one being taken up can be anywhere in the commit, but only those two
+// lines change how they look — wrapping is decided on plain text, so neither
+// the rows nor the match lines jumpToMatch reads move — so each is restyled
+// where it stands rather than reflowing the whole commit. A dismissed search
+// has no styled matches to flip, which falls back to the reflow.
 func (m *DetailModel) setMatchPos(pos int) {
+	old := m.matchPos
 	m.matchPos = pos
-	m.reflow()
+	if !m.restyleMatch(old, false) || !m.restyleMatch(pos, true) {
+		m.reflow()
+	}
+}
+
+// restyleMatch flips match pos's active flag and re-renders the one line it
+// sits on, reporting false when it can't — the caller then reflows, which
+// builds every line from matchPos afresh. A pos of -1 is nothing to restyle.
+func (m *DetailModel) restyleMatch(pos int, active bool) bool {
+	if pos < 0 {
+		return true
+	}
+	if len(m.lineStart) == 0 || len(m.content) < m.contentLen {
+		return false
+	}
+	block, idx := m.matchSegmentFor(pos)
+	if idx >= len(m.matchSlots[block]) {
+		return false
+	}
+	slot := m.matchSlots[block][idx]
+	if slot.styled == nil {
+		return false
+	}
+	slot.styled.active = active
+	from, to := m.highlight()
+	first, last := logicalRangeAt(m.lineStart, m.contentLen, from, to)
+	m.patchLogical(slot.logical, slot.logical >= first && slot.logical <= last)
+	m.setContent()
+	return true
 }
 
 func (m DetailModel) totalMatches() int {
@@ -897,10 +954,15 @@ const (
 // for matchPos >= 0; callers must guard the "no active match" case themselves
 // before indexing with idx.
 func (m DetailModel) matchSegment() (block matchBlock, idx int) {
-	if m.matchPos < len(m.messageMatches) {
-		return matchBlockMessage, m.matchPos
+	return m.matchSegmentFor(m.matchPos)
+}
+
+// matchSegmentFor is matchSegment for any position, not just the active one.
+func (m DetailModel) matchSegmentFor(pos int) (block matchBlock, idx int) {
+	if pos < len(m.messageMatches) {
+		return matchBlockMessage, pos
 	}
-	idx = m.matchPos - len(m.messageMatches)
+	idx = pos - len(m.messageMatches)
 	if idx < len(m.statMatches) {
 		return matchBlockStats, idx
 	}
@@ -939,9 +1001,9 @@ func (m *DetailModel) stepMatch(delta int) {
 }
 
 // jumpToMatch scrolls the diff panel to the current match, whichever block it
-// lives in. It renders nothing itself: setMatchPos's reflow already styled the
-// newly active match and produced the match lines read here, so the landing is
-// an ordinary cursor move.
+// lives in. It restyles nothing itself: setMatchPos already styled the newly
+// active match, and the match lines read here are the last reflow's, which are
+// still current, so the landing is an ordinary cursor move.
 //
 // Every step pushes a jump, not just the initial search — see
 // applyCurrentMatch in list.go.

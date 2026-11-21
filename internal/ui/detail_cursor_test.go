@@ -607,3 +607,67 @@ func TestJumpToHeaderOnlyLastFileKeepsCursorOnContent(t *testing.T) {
 		t.Errorf("cursorLine = %d after ] onto the last file, want it within [0, %d)", m.cursorLine, m.contentLen)
 	}
 }
+
+// TestDetailMatchStepPatchMatchesFullReflow is repaintHighlight's bargain for
+// n/N: stepping the active match restyles just the line it leaves and the one
+// it lands on, and after any number of steps — through all three blocks and
+// round the wrap — the rows must be what a full reflow at that match produces.
+func TestDetailMatchStepPatchMatchesFullReflow(t *testing.T) {
+	const term = "alpha"
+	m := NewDetailModel(fixtureDetailForBlockSearch(), &jumplist{})
+	m.SetSize(60, 8)
+	runDetailSearch(&m, term)
+
+	check := func(after string) {
+		t.Helper()
+		ref := NewDetailModel(fixtureDetailForBlockSearch(), &jumplist{})
+		ref.SetSize(60, 8)
+		ref.SetSearchDisplay(term, false)
+		ref.matchPos, ref.cursorLine = m.matchPos, m.cursorLine
+		ref.reflow()
+		if len(m.content) != len(ref.content) {
+			t.Fatalf("after %s: %d rows, a full reflow produces %d", after, len(m.content), len(ref.content))
+		}
+		for i := range m.content {
+			if m.content[i] != ref.content[i] {
+				t.Fatalf("after %s (match %d, cursor %d): row %d differs\n patched: %q\n reflown: %q",
+					after, m.matchPos, m.cursorLine, i, m.content[i], ref.content[i])
+			}
+		}
+	}
+	for i := 0; i < 6; i++ {
+		m.NextMatch()
+		check(fmt.Sprintf("n #%d", i+1))
+	}
+	for i := 0; i < 6; i++ {
+		m.PrevMatch()
+		check(fmt.Sprintf("N #%d", i+1))
+	}
+}
+
+// TestDetailMatchStepCostIsIndependentOfCommitSize is the tripwire for the
+// same thing from the other side: an n/N press must not allocate in proportion
+// to the commit it is in. It was a whole reflow — every line of the diff
+// re-rendered per press — before the active match became a patch.
+func TestDetailMatchStepCostIsIndependentOfCommitSize(t *testing.T) {
+	perStep := func(files int) uint64 {
+		m := NewDetailModel(fixtureBigDetail(files, 200), &jumplist{})
+		m.SetSize(100, 40)
+		runDetailSearch(&m, "arg17,")
+		return bytesPerRun(60, func() { m.NextMatch() })
+	}
+	small, big := perStep(2), perStep(40)
+	if big > 2*small {
+		t.Fatalf("an n press allocates %d bytes on a 40-file commit against %d on a 2-file one; something on the keypress path scales with the whole commit", big, small)
+	}
+}
+
+func BenchmarkDetailMatchStep(b *testing.B) {
+	m := NewDetailModel(fixtureBigDetail(40, 200), &jumplist{})
+	m.SetSize(100, 40)
+	runDetailSearch(&m, "arg17,")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.NextMatch()
+	}
+}

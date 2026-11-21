@@ -607,6 +607,11 @@ type matchCursor[K comparable, M blockMatch[K]] struct {
 // (see DetailModel.matchRow) instead of only the row the line begins at.
 type matchLoc struct {
 	line, col int
+	// styled is the match's entry in the lineMatch slice its line renders
+	// from, so flipping its active flag restyles it without rebuilding the
+	// line (see DetailModel.restyleMatch). Nil while dismissed, when no line
+	// carries the match at all.
+	styled *lineMatch
 }
 
 func newMatchCursor[K comparable, M blockMatch[K]](matches []M, active int, dismissed bool) *matchCursor[K, M] {
@@ -619,6 +624,7 @@ func newMatchCursor[K comparable, M blockMatch[K]](matches []M, active int, dism
 // own columns count from — a diff line's marker, a file header's glyph.
 func (c *matchCursor[K, M]) take(line int, at K, shift int) []lineMatch {
 	var out []lineMatch
+	first := c.next
 	for c.next < len(c.matches) && c.matches[c.next].at() == at {
 		start, end := c.matches[c.next].cols()
 		if !c.dismissed {
@@ -626,6 +632,10 @@ func (c *matchCursor[K, M]) take(line int, at K, shift int) []lineMatch {
 		}
 		c.locs[c.next] = matchLoc{line: line, col: start + shift}
 		c.next++
+	}
+	// Only now that out has stopped growing are pointers into it stable.
+	for i := range out {
+		c.locs[first+i].styled = &out[i]
 	}
 	return out
 }
