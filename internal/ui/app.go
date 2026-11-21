@@ -1003,6 +1003,10 @@ func (m Model) renderStatusBar() string {
 // joinStatus right-aligns right within width, truncating left to make room
 // for it. right is dropped if it can't fit even on its own. left can carry
 // ANSI (the search prompt's cursor), so it's measured and cut escape-aware.
+//
+// The open prompt pads itself with spaces out to the bar's width, so cutting
+// left often only removes padding; the ellipsis is kept for when it removes
+// text, where it would otherwise read as a query that's been cut short.
 func joinStatus(left, right string, width int) string {
 	rw := displayWidth(right)
 	if right == "" || rw > width {
@@ -1010,7 +1014,11 @@ func joinStatus(left, right string, width int) string {
 	}
 	room := width - rw
 	if displayWidth(left) > room-1 {
-		left = ansi.Truncate(left, max(room-1, 0), "…")
+		tail := "…"
+		if displayWidth(strings.TrimRight(ansi.Strip(left), " ")) <= room-1 {
+			tail = ""
+		}
+		left = ansi.Truncate(left, max(room-1, 0), tail)
 	}
 	return left + strings.Repeat(" ", room-displayWidth(left)) + right
 }

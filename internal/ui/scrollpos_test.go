@@ -105,6 +105,7 @@ func TestJoinStatus(t *testing.T) {
 		{"/a-long-term", "Top", 10, "/a-lo… Top"},
 		{"/foo", "L1/2  Top", 5, "/foo"},
 		{"/foo", "", 12, "/foo"},
+		{"/foo        ", "Top", 12, "/foo     Top"},
 	}
 	for _, tt := range tests {
 		if got := joinStatus(tt.left, tt.right, tt.width); got != tt.want {
