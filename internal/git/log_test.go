@@ -84,6 +84,25 @@ func TestHasCommitsAfterFirstCommit(t *testing.T) {
 	}
 }
 
+func TestOpenRepoWithHead(t *testing.T) {
+	ctx := context.Background()
+
+	if _, _, err := OpenRepoWithHead(ctx, t.TempDir()); err == nil {
+		t.Error("expected an error for a non-repo directory")
+	}
+
+	empty := t.TempDir()
+	runGitCmd(t, empty, nil, "init", "-b", "main")
+	if _, has, err := OpenRepoWithHead(ctx, empty); err != nil || has {
+		t.Errorf("empty repo: has = %v, err = %v, want false, nil", has, err)
+	}
+
+	repo, _ := initFixtureRepo(t, 1)
+	if _, has, err := OpenRepoWithHead(ctx, repo.Path); err != nil || !has {
+		t.Errorf("repo with a commit: has = %v, err = %v, want true, nil", has, err)
+	}
+}
+
 func TestFetchLogBatch(t *testing.T) {
 	repo, wantHashesNewestFirst := initFixtureRepo(t, 5)
 	ctx := context.Background()

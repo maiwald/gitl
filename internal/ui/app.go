@@ -270,11 +270,7 @@ func runCmd[T any](severity errSeverity, fetch func(context.Context) (T, error),
 
 func openRepoCmd() tea.Cmd {
 	return runCmd(fatal, func(ctx context.Context) (repoOpenedMsg, error) {
-		repo, err := git.OpenRepo(ctx, ".")
-		if err != nil {
-			return repoOpenedMsg{}, err
-		}
-		hasCommits, err := repo.HasCommits(ctx)
+		repo, hasCommits, err := git.OpenRepoWithHead(ctx, ".")
 		if err != nil {
 			return repoOpenedMsg{}, err
 		}

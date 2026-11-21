@@ -54,8 +54,7 @@ func main() {
 
 	if opts.count > 0 {
 		if err := printCommits(opts.count); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			exitWithError(err)
 		}
 		return
 	}
@@ -168,21 +167,13 @@ func versionString() string {
 }
 
 // cwd is the current working directory, the only path gitl's CLI ever hands
-// internal/git — which stays path-agnostic itself.
+// internal/git — which stays path-agnostic itself. The UI's own repo open
+// uses the same one.
 const cwd = "."
-
-// openCWDRepo opens the repository rooted at the current working directory.
-func openCWDRepo(ctx context.Context) (*git.Repo, error) {
-	return git.OpenRepo(ctx, cwd)
-}
 
 func printCommits(n int) error {
 	ctx := context.Background()
-	repo, err := openCWDRepo(ctx)
-	if err != nil {
-		return err
-	}
-	hasCommits, err := repo.HasCommits(ctx)
+	repo, hasCommits, err := git.OpenRepoWithHead(ctx, cwd)
 	if err != nil {
 		return err
 	}

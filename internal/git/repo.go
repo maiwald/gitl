@@ -23,6 +23,22 @@ func OpenRepo(ctx context.Context, path string) (*Repo, error) {
 	return &Repo{Path: path}, nil
 }
 
+// OpenRepoWithHead opens the repository at path and reports whether it has a
+// commit yet — the two questions every startup asks before choosing what to
+// show, in the order that makes "not a git repository" win over any
+// HasCommits failure.
+func OpenRepoWithHead(ctx context.Context, path string) (repo *Repo, hasCommits bool, err error) {
+	repo, err = OpenRepo(ctx, path)
+	if err != nil {
+		return nil, false, err
+	}
+	hasCommits, err = repo.HasCommits(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	return repo, hasCommits, nil
+}
+
 // HasCommits reports whether HEAD resolves to a commit. It returns false,
 // not an error, for a freshly initialized repository with no commits yet.
 func (r *Repo) HasCommits(ctx context.Context) (bool, error) {
