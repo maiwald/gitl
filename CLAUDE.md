@@ -515,6 +515,11 @@ before every commit — don't commit red.
   no search at all. Which is also why `/` is gated on `canSearch` rather
   than on a repo: a headerless piped patch (`git diff`, `git diff --staged`)
   never opens one, and its detail view is searchable without it.
+  The prompt's ↑/↓ history (`Model.searchHistory`, `recallHistory`) is in
+  memory for the run only and shared by both views, like the term itself.
+  The arrows are matched by key *type*, not `DefaultKeyMap.Up/Down`, since
+  those also bind `k`/`j`, which a query has to be able to contain — the
+  same reason the prompt checks Esc directly rather than through `Back`.
 - What a deferred list search does when it lands is decided when it's
   *started* (`Model.jumpOnResolve`), never read off the active view when it
   resolves: a search started merely to light up the list's rows must not

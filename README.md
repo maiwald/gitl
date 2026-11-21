@@ -33,7 +33,8 @@ A terminal UI for browsing git history, with vim-style navigation.
   highlighting without forgetting the term; `n`/`N` brings it back.
   Commits that don't match are dimmed in the list, so a match whose only
   hit is in the message body (nothing visible to highlight in the row)
-  still stands out by contrast with the surrounding non-matches.
+  still stands out by contrast with the surrounding non-matches. In the
+  prompt, `↑`/`↓` recall the terms you've searched for in this run.
 - **Jumplist** — `ctrl-o`/`ctrl-i` step back and forward through the
   positions you jumped from, across both views: opening a commit, `g`/`G`,
   `[`/`]`, and every search jump are recorded, so `ctrl-o` from inside a
@@ -123,6 +124,7 @@ Run `gitl --help` (or `-h`) at any time for the full flag reference.
 | `{` / `}`               | Jump to previous/next blank line (detail view) |
 | `/`                     | Search (list: author + message + hash; detail: message + diff) |
 | `n` / `N`               | Next / previous search match (wraps)    |
+| `↑` / `↓`               | Previous / next search term (in the search prompt; this run only) |
 | `ctrl-o` / `ctrl-i`     | Jump back / forward through the positions you left |
 | `V`                     | Start/end a linewise selection (detail view); any movement key extends it |
 | `Enter` / `y`           | Copy the selection to the clipboard (while selecting) |

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -69,6 +70,14 @@ type Model struct {
 
 	searchPromptOpen bool
 	searchInput      textinput.Model
+	// searchHistory is every term submitted this run, oldest first and
+	// without duplicates (resubmitting moves a term to the end), for the
+	// prompt's ↑/↓. historyPos indexes it while the prompt is open, with
+	// len(searchHistory) meaning the query being typed, which historyDraft
+	// keeps while ↑ has replaced it with an older term.
+	searchHistory []string
+	historyPos    int
+	historyDraft  string
 	// searchingTerm is the term whose list queries are currently in flight,
 	// empty when none are: it identifies which results are still wanted (a
 	// superseded or cleared search's are discarded) and drives the status
@@ -623,6 +632,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.Prompt = "/"
 		m.searchInput.Width = m.width - 2
 		m.searchPromptOpen = true
+		m.historyPos, m.historyDraft = len(m.searchHistory), ""
 		return m, m.searchInput.Focus()
 	}
 	if m.hasActiveSearch() {
@@ -803,12 +813,20 @@ func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleSearchPromptKey routes a key press while the search prompt is open.
 // Esc cancels — checked directly, not via DefaultKeyMap.Back, which is also
 // bound to "q" and a query must be able to contain a literal q — and so does
-// Backspace on an already-empty query. Everything else is forwarded to the
-// text input so the query can contain any character.
+// Backspace on an already-empty query. The ↑/↓ arrows step through the search
+// history, matched by key type for the same reason: DefaultKeyMap.Up/Down also
+// bind k/j, which a query must be able to contain. Everything else is
+// forwarded to the text input so the query can contain any character.
 func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyEsc:
 		return m.cancelSearchPrompt()
+	case msg.Type == tea.KeyUp:
+		m.recallHistory(-1)
+		return m, nil
+	case msg.Type == tea.KeyDown:
+		m.recallHistory(1)
+		return m, nil
 	case msg.Type == tea.KeyBackspace && m.searchInput.Value() == "":
 		return m.cancelSearchPrompt()
 	case key.Matches(msg, DefaultKeyMap.Enter):
@@ -817,6 +835,40 @@ func (m Model) handleSearchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)
 	return m, cmd
+}
+
+// searchHistoryCap bounds searchHistory, dropping the oldest terms past it.
+const searchHistoryCap = 100
+
+// recallHistory moves delta entries through the search history (negative is
+// older) and puts that entry in the prompt. Moving past the newest entry
+// brings back the query that was being typed, saved on the way out of it.
+func (m *Model) recallHistory(delta int) {
+	pos := clamp(m.historyPos+delta, 0, len(m.searchHistory))
+	if pos == m.historyPos {
+		return
+	}
+	if m.historyPos == len(m.searchHistory) {
+		m.historyDraft = m.searchInput.Value()
+	}
+	m.historyPos = pos
+	if pos == len(m.searchHistory) {
+		m.searchInput.SetValue(m.historyDraft)
+	} else {
+		m.searchInput.SetValue(m.searchHistory[pos])
+	}
+	m.searchInput.CursorEnd()
+}
+
+// recordSearch adds term to the history as its newest entry. An earlier copy
+// is removed first, so ↑ never steps through the same term twice.
+func (m *Model) recordSearch(term string) {
+	h := slices.DeleteFunc(slices.Clone(m.searchHistory), func(s string) bool { return s == term })
+	h = append(h, term)
+	if len(h) > searchHistoryCap {
+		h = h[len(h)-searchHistoryCap:]
+	}
+	m.searchHistory = h
 }
 
 // cancelSearchPrompt closes the search prompt without submitting.
@@ -842,6 +894,7 @@ func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 		m.setSearchDisplay("", false)
 		return m, nil
 	}
+	m.recordSearch(term)
 
 	m.setSearchDisplay(term, false)
 	if m.active == viewDetail {
