@@ -433,7 +433,7 @@ func buildSections(fileRanges []FileRange, statsStart, diffStart int) []detailSe
 //
 // authorLine and bodyStart mark the two regions eligible for search: the
 // author line and the message body, excluding the hash/parent/date metadata
-// lines. List search matches the hash too (git.HashesMatching), but that's
+// lines. List search matches the hash too (git.HashMatcher), but that's
 // for finding a commit in the list, not for searching within a commit you're
 // already viewing. spans (keyed by line index) marks the hash/name/date
 // substrings that get base coloring regardless of search state.

@@ -159,37 +159,23 @@ func TestAllCommitHashesMatchesLogOrder(t *testing.T) {
 	}
 }
 
-func TestHashesMatchingSubstring(t *testing.T) {
-	hashes := []string{"abc123", "def456", "abcdef"}
-	got := HashesMatching(hashes, "abc")
-	want := map[string]bool{"abc123": true, "abcdef": true}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for h := range want {
-		if !got[h] {
-			t.Errorf("got %v, want it to contain %q", got, h)
+func TestHashMatcherSubstring(t *testing.T) {
+	matches := HashMatcher("abc")
+	for hash, want := range map[string]bool{"abc123": true, "def456": false, "abcdef": true, "xxabcxx": true} {
+		if got := matches(hash); got != want {
+			t.Errorf("HashMatcher(%q)(%q) = %v, want %v", "abc", hash, got, want)
 		}
 	}
 }
 
-func TestHashesMatchingCaseInsensitive(t *testing.T) {
-	got := HashesMatching([]string{"abcdef"}, "ABC")
-	if !got["abcdef"] {
-		t.Errorf("got %v, want case-insensitive match on \"abcdef\"", got)
+func TestHashMatcherCaseInsensitive(t *testing.T) {
+	if !HashMatcher("ABC")("abcdef") {
+		t.Error("want a case-insensitive match on \"abcdef\"")
 	}
 }
 
-func TestHashesMatchingEmptyTermReturnsEmptySet(t *testing.T) {
-	got := HashesMatching([]string{"abc123"}, "")
-	if got == nil || len(got) != 0 {
-		t.Errorf("got %v, want empty non-nil set", got)
-	}
-}
-
-func TestHashesMatchingNoMatches(t *testing.T) {
-	got := HashesMatching([]string{"abc123", "def456"}, "zzz")
-	if len(got) != 0 {
-		t.Errorf("got %v, want no matches", got)
+func TestHashMatcherEmptyTermMatchesNothing(t *testing.T) {
+	if HashMatcher("")("abc123") {
+		t.Error("an empty term matched a hash")
 	}
 }

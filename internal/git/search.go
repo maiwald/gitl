@@ -59,22 +59,18 @@ func (r *Repo) AllCommitHashes(ctx context.Context) ([]string, error) {
 	return splitLines(out), nil
 }
 
-// HashesMatching filters hashes to those containing term as a case-insensitive
-// substring — the same match semantics SearchCommitHashes applies to
-// author/message. It's an in-memory filter rather than a third case in
-// SearchCommitHashes because callers already hold the full hash order (see
-// allHashes in app.go), so searching by hash costs no git process at all.
-// Returns an empty, non-nil set when term is empty.
-func HashesMatching(hashes []string, term string) map[string]bool {
-	matches := map[string]bool{}
+// HashMatcher returns a predicate reporting whether a hash contains term as a
+// case-insensitive substring — the same match semantics SearchCommitHashes
+// applies to author/message. It's an in-memory test rather than a third case
+// in SearchCommitHashes because callers already hold the full hash order (see
+// allHashes in app.go), so searching by hash costs no git process at all. A
+// predicate rather than a set of the matching hashes, since a short term
+// matches most of them and the set would be the size of the whole history.
+// The predicate matches nothing when term is empty.
+func HashMatcher(term string) func(hash string) bool {
 	if term == "" {
-		return matches
+		return func(string) bool { return false }
 	}
 	term = strings.ToLower(term)
-	for _, h := range hashes {
-		if strings.Contains(h, term) {
-			matches[h] = true
-		}
-	}
-	return matches
+	return func(hash string) bool { return strings.Contains(hash, term) }
 }

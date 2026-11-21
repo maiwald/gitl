@@ -77,7 +77,7 @@ func TestRenderCommitRowHighlightsSubjectMatch(t *testing.T) {
 
 // TestRenderCommitRowHighlightsShaMatch pins down that the visible sha
 // prefix is search-highlighted like author/subject: list search also
-// matches the commit hash (git.HashesMatching), unlike the detail view's
+// matches the commit hash (git.HashMatcher), unlike the detail view's
 // in-commit search (see headerLinesFor's doc comment in detail.go).
 func TestRenderCommitRowHighlightsShaMatch(t *testing.T) {
 	c := fixtureCommitForRow()

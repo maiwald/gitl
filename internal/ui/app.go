@@ -410,13 +410,13 @@ func searchCmd(repo *git.Repo, term string, order []string) tea.Cmd {
 }
 
 // matchPositions maps a search's matched hashes to their positions in order,
-// ascending, unioning in the hash-prefix matches (HashesMatching, an
-// in-memory filter over that same order).
+// ascending, unioning in the commits whose hash contains the term
+// (HashMatcher, an in-memory test over that same order).
 func matchPositions(order []string, matched map[string]bool, term string) []int {
-	byHash := git.HashesMatching(order, term)
-	positions := make([]int, 0, len(matched)+len(byHash))
+	hashContains := git.HashMatcher(term)
+	positions := make([]int, 0, len(matched))
 	for i, h := range order {
-		if matched[h] || byHash[h] {
+		if matched[h] || hashContains(h) {
 			positions = append(positions, i)
 		}
 	}
