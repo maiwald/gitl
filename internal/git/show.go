@@ -84,7 +84,7 @@ func (r *Repo) FetchCommitDetail(ctx context.Context, hash string) (*CommitDetai
 // header, and reads only the commit hash out of that pipe rather than trying
 // to parse git's human-formatted one (see pipe.go).
 func (r *Repo) FetchCommitMeta(ctx context.Context, hash string) (*CommitDetail, error) {
-	out, err := runGit(ctx, r.Path, "log", "-1", "--date=iso-strict", "--pretty=format:"+commitDetailFormat, hash)
+	out, err := runGit(ctx, r.Path, "log", noShowSignature, "-1", "--date=iso-strict", "--pretty=format:"+commitDetailFormat, hash)
 	if err != nil {
 		return nil, err
 	}

@@ -43,6 +43,7 @@ func (c Commit) IsMerge() bool {
 func (r *Repo) FetchLogBatch(ctx context.Context, skip, limit int) ([]Commit, error) {
 	args := []string{
 		"log",
+		noShowSignature,
 		fmt.Sprintf("--skip=%d", skip),
 		fmt.Sprintf("--max-count=%d", limit),
 		"--date=iso-strict",

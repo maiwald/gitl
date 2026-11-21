@@ -18,8 +18,13 @@ import (
 // can turn off with diff.renames=false — runGit inherits their config, so
 // without it a moved file would show as a delete plus an add for them and as
 // a rename for everyone else.
+//
+// The same goes for the rest: diff.external would replace the unified diff
+// this package parses with whatever the program prints, and diff.noprefix
+// (or mnemonicPrefix) changes the a/ b/ prefixes go-gitdiff strips from a
+// path, so a path would come out missing its first directory.
 func diffArgs(extra ...string) []string {
-	return append([]string{"diff", "--no-color", "-U3", "-M"}, extra...)
+	return append([]string{"diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-U3", "-M"}, extra...)
 }
 
 // diffFiles runs `git diff --no-color -U3 <args...>` and parses the result.

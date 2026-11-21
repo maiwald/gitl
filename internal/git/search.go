@@ -41,7 +41,7 @@ func (r *Repo) SearchCommitHashes(ctx context.Context, term string) (map[string]
 // logHashes runs `git log <matchArg> -F -i --format=%H`, returning the
 // hashes of every matching commit.
 func (r *Repo) logHashes(ctx context.Context, matchArg string) ([]string, error) {
-	out, err := runGit(ctx, r.Path, "log", matchArg, "-F", "-i", "--format=%H")
+	out, err := runGit(ctx, r.Path, "log", noShowSignature, matchArg, "-F", "-i", "--format=%H")
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func (r *Repo) logHashes(ctx context.Context, matchArg string) ([]string, error)
 // order FetchLogBatch uses, without formatting author/date/ref-decoration for
 // each one. It maps a matched commit's hash to its position in history.
 func (r *Repo) AllCommitHashes(ctx context.Context) ([]string, error) {
-	out, err := runGit(ctx, r.Path, "log", "--format=%H")
+	out, err := runGit(ctx, r.Path, "log", noShowSignature, "--format=%H")
 	if err != nil {
 		return nil, err
 	}

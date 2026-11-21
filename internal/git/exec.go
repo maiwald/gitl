@@ -5,9 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
+
+// noShowSignature keeps log.showSignature=true from putting gpg's output in
+// front of every commit, which would land in the middle of the \x1f-delimited
+// records these commands' output is parsed as.
+const noShowSignature = "--no-show-signature"
 
 // runGit runs git with the given arguments in dir and returns stdout, even
 // on failure (needed by runGitNoIndexDiff, where a nonzero
@@ -16,6 +22,10 @@ import (
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// Several of these run at once at startup, and some (git diff) would
+	// otherwise refresh the index to speed up later runs, taking its lock —
+	// which can fail a commit the user is making in another terminal.
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

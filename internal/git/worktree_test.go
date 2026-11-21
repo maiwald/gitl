@@ -561,3 +561,34 @@ func TestWorktreeSummaryCountsEveryUntrackedFile(t *testing.T) {
 		t.Errorf("Additions = %d, want %d — every untracked file counts, cap or no cap", summary.Additions, total)
 	}
 }
+
+// TestDiffIgnoresPrefixAndExternalDiffConfig pins that the user's diff config
+// can't reshape what the parser reads: diff.noprefix drops the a/ b/ that
+// go-gitdiff strips (which would eat a path's first directory), and
+// diff.external replaces the unified diff with a program's output.
+func TestDiffIgnoresPrefixAndExternalDiffConfig(t *testing.T) {
+	repo := initFixtureRepoWithFile(t)
+	dir := repo.Path
+	runGitCmd(t, dir, nil, "config", "diff.noprefix", "true")
+	runGitCmd(t, dir, nil, "config", "diff.external", "true")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "nested.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	runGitCmd(t, dir, fixtureCommitEnv, "add", "sub/nested.txt")
+	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "add nested")
+
+	detail, err := repo.FetchCommitDetail(context.Background(), headHash(t, dir))
+	if err != nil {
+		t.Fatalf("FetchCommitDetail: %v", err)
+	}
+	if len(detail.Files) != 1 || detail.Files[0].Path != "sub/nested.txt" {
+		t.Fatalf("files = %+v, want one file sub/nested.txt", detail.Files)
+	}
+	if detail.Files[0].Additions != 1 {
+		t.Errorf("Additions = %d, want 1", detail.Files[0].Additions)
+	}
+}
