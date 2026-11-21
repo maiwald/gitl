@@ -116,8 +116,14 @@ func convertFile(gf *gitdiff.File) File {
 		f.Path = gf.OldName
 	}
 
+	if n := len(gf.TextFragments); n > 0 {
+		f.Hunks = make([]Hunk, 0, n)
+	}
 	for _, frag := range gf.TextFragments {
-		hunk := Hunk{Header: strings.TrimSuffix(frag.Header(), "\n")}
+		hunk := Hunk{
+			Header: strings.TrimSuffix(frag.Header(), "\n"),
+			Lines:  make([]DiffLine, 0, len(frag.Lines)),
+		}
 		for _, line := range frag.Lines {
 			op := OpContext
 			switch line.Op {

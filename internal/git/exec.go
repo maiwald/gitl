@@ -86,7 +86,9 @@ func splitRecords(out []byte, sep string) []string {
 		return nil
 	}
 	parts := strings.Split(text, sep)
-	result := make([]string, 0, len(parts))
+	// Filtered in place: parts is this function's own, and for the usual
+	// output (no empty entries) nothing moves at all.
+	result := parts[:0]
 	for _, p := range parts {
 		if p != "" {
 			result = append(result, p)
