@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/maiwald/gitl/internal/git"
 )
 
@@ -1047,7 +1046,11 @@ func (m DetailModel) View() string {
 	if len(m.fileRanges) == 0 {
 		return m.vp.View()
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.renderStickyHeader(), m.vp.View())
+	// Not lipgloss.JoinVertical, which measures every line to pad them to the
+	// widest: both blocks are already full width, or blank where it wouldn't
+	// matter (see rowViewport.View), so it would only be parsing the whole
+	// window's escape sequences on every frame to arrive at the same picture.
+	return m.renderStickyHeader() + "\n" + m.vp.View()
 }
 
 // renderStickyHeader renders the sticky row's title: "Commit" for the

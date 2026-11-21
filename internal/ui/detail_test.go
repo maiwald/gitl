@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/maiwald/gitl/internal/git"
 )
@@ -1243,5 +1244,30 @@ func TestListSetSearchDisplayRendersOnlyOnChange(t *testing.T) {
 	m.SetSearchDisplay("a", true)
 	if before == &m.renderedRows[0] {
 		t.Error("dismissing the search did not re-render the list")
+	}
+}
+
+// TestViewMatchesJoinVertical pins that stacking the sticky header on the
+// viewport with a plain newline paints what lipgloss.JoinVertical would — the
+// two differ only in the trailing spaces JoinVertical pads a blank row with.
+func TestViewMatchesJoinVertical(t *testing.T) {
+	for _, offset := range []int{0, 3, 40} {
+		m := NewDetailModel(fixtureDetailWithFiles(3, 30), &jumplist{})
+		m.SetSize(60, 12)
+		m.vp.SetYOffset(offset)
+
+		want := strings.Split(lipgloss.JoinVertical(lipgloss.Left, m.renderStickyHeader(), m.vp.View()), "\n")
+		got := strings.Split(m.View(), "\n")
+		if len(got) != len(want) {
+			t.Fatalf("offset %d: %d lines, want %d", offset, len(got), len(want))
+		}
+		for i := range got {
+			if strings.TrimRight(got[i], " ") != strings.TrimRight(want[i], " ") {
+				t.Errorf("offset %d line %d = %q, want %q", offset, i, got[i], want[i])
+			}
+			if w := lipgloss.Width(got[i]); w > 60 {
+				t.Errorf("offset %d line %d is %d cells wide, want at most 60", offset, i, w)
+			}
+		}
 	}
 }
