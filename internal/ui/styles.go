@@ -118,15 +118,6 @@ var (
 				Bold(true)
 )
 
-// matchStyle picks searchActiveMatchStyle for the n/N-selected match, else
-// searchMatchStyle.
-func matchStyle(active bool) lipgloss.Style {
-	if active {
-		return searchActiveMatchStyle
-	}
-	return searchMatchStyle
-}
-
 // lineStyle is a style a whole line can be rendered in, bundled with the ANSI
 // sequences lipgloss produces for it (see sgr) — plain, and with the cursor
 // row's background merged in. renderLineWithBaseSpans renders a line carrying
@@ -187,12 +178,18 @@ var (
 	searchActiveMatchSpan = newLineStyle(searchActiveMatchStyle)
 )
 
-// matchSpan is matchStyle as a lineStyle. A match is always rendered in its
-// own style's plain sequence, cursor row or not: its background is already the
-// line's strongest signal.
-func matchSpan(active bool) sgr {
+// matchLine picks the n/N-selected match's style, else the ordinary match's.
+func matchLine(active bool) lineStyle {
 	if active {
-		return searchActiveMatchSpan.sgr(false)
+		return searchActiveMatchSpan
 	}
-	return searchMatchSpan.sgr(false)
+	return searchMatchSpan
 }
+
+// matchStyle is matchLine's lipgloss style, for text rendered through Render.
+func matchStyle(active bool) lipgloss.Style { return matchLine(active).style }
+
+// matchSpan is matchLine's sequence. A match is always rendered in its own
+// style's plain sequence, cursor row or not: its background is already the
+// line's strongest signal.
+func matchSpan(active bool) sgr { return matchLine(active).sgr(false) }

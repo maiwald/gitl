@@ -96,12 +96,11 @@ func renderCommitRow(c git.Commit, width int, selected, dimmed bool, searchTerm 
 	subject = highlightSpans(subject, searchTerm, subjectBase, ms)
 	refs := formatRefs(c.Refs, selected, dimmed)
 
-	var row string
+	row := sha + gap(" ") + when + gap(" ") + author + gap("  ")
 	if refs != "" {
-		row = sha + gap(" ") + when + gap(" ") + author + gap("  ") + refs + gap(" ") + subject
-	} else {
-		row = sha + gap(" ") + when + gap(" ") + author + gap("  ") + subject
+		row += refs + gap(" ")
 	}
+	row += subject
 
 	return padRow(row, width, selected)
 }
