@@ -587,13 +587,15 @@ func (m Model) applyListMatches(matches []int) (Model, tea.Cmd) {
 	jump := m.jumpOnResolve
 	m.jumpOnResolve = jumpNone
 
-	var needsLoad bool
-	var target int
 	if jump == jumpNextMatch {
-		needsLoad, target = m.list.jumpToFirstMatch()
-	} else {
-		needsLoad, target = m.list.jumpToLastMatch()
+		return m.loadIfNeeded(m.list.jumpToFirstMatch())
 	}
+	return m.loadIfNeeded(m.list.jumpToLastMatch())
+}
+
+// loadIfNeeded finishes a list jump that reported whether its target still
+// has to be fetched (see ListModel's jump methods).
+func (m Model) loadIfNeeded(needsLoad bool, target int) (Model, tea.Cmd) {
 	if needsLoad {
 		return m, m.loadUpToCmd(target)
 	}
@@ -611,10 +613,16 @@ func (m Model) loadUpToCmd(target int) tea.Cmd {
 	return nil
 }
 
+// quit ends the program; the next View renders nothing so the last frame
+// doesn't linger in the scrollback.
+func (m Model) quit() (tea.Model, tea.Cmd) {
+	m.quitting = true
+	return m, tea.Quit
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, DefaultKeyMap.Quit) {
-		m.quitting = true
-		return m, tea.Quit
+		return m.quit()
 	}
 
 	if m.searchPromptOpen {
@@ -747,8 +755,7 @@ func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if key.Matches(msg, DefaultKeyMap.Back) {
 		if !m.start.opensList() {
-			m.quitting = true
-			return m, tea.Quit
+			return m.quit()
 		}
 		m.detail.clearSelection()
 		m.active = viewList
@@ -780,8 +787,7 @@ func (m Model) toggleSelection() (tea.Model, tea.Cmd) {
 // cursor/scroll handling.
 func (m Model) handleListViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, DefaultKeyMap.Back) {
-		m.quitting = true
-		return m, tea.Quit
+		return m.quit()
 	}
 	if key.Matches(msg, DefaultKeyMap.Enter) {
 		// A synthetic row carries only the counts it displays, so opening
@@ -869,9 +875,13 @@ func (m *Model) recordSearch(term string) {
 
 // cancelSearchPrompt closes the search prompt without submitting.
 func (m Model) cancelSearchPrompt() (tea.Model, tea.Cmd) {
+	m.closeSearchPrompt()
+	return m, nil
+}
+
+func (m *Model) closeSearchPrompt() {
 	m.searchPromptOpen = false
 	m.searchInput.Blur()
-	return m, nil
 }
 
 // submitSearch closes the prompt on Enter and searches for the submitted
@@ -883,8 +893,7 @@ func (m Model) cancelSearchPrompt() (tea.Model, tea.Cmd) {
 // term clears the search entirely, unlike dismissSearch, which only hides it.
 func (m Model) submitSearch() (tea.Model, tea.Cmd) {
 	term := m.searchInput.Value()
-	m.searchPromptOpen = false
-	m.searchInput.Blur()
+	m.closeSearchPrompt()
 
 	if term == "" {
 		m.setSearchDisplay("", false)
@@ -962,20 +971,17 @@ func (m Model) advanceMatch(delta int) (Model, tea.Cmd) {
 	// needed (see ensureListSearch); until they land there is nothing to
 	// step through, so the step itself becomes the jump they resolve into.
 	if m.listMatches == nil {
-		return m.ensureListSearch(delta)
+		jump := jumpPrevMatch
+		if delta > 0 {
+			jump = jumpNextMatch
+		}
+		return m.ensureListSearch(jump)
 	}
 
-	var needsLoad bool
-	var target int
 	if delta > 0 {
-		needsLoad, target = m.list.NextMatch()
-	} else {
-		needsLoad, target = m.list.PrevMatch()
+		return m.loadIfNeeded(m.list.NextMatch())
 	}
-	if needsLoad {
-		return m, m.loadUpToCmd(target)
-	}
-	return m, nil
+	return m.loadIfNeeded(m.list.PrevMatch())
 }
 
 func (m Model) View() string {
