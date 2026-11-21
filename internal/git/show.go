@@ -15,6 +15,23 @@ const commitDetailFormat = logFormat + fieldSep + "%B"
 // diff base for root commits (which have no parent to diff against).
 const emptyTreeHash = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
+// EntryKind distinguishes a real commit from the synthetic entries gitl can
+// show without one behind them: the two working-tree entries above real
+// history, and a diff piped in from git while gitl is acting as its pager.
+// The zero value is EntryCommit, so an unadorned CommitDetail still means "a
+// real commit".
+type EntryKind int
+
+const (
+	EntryCommit EntryKind = iota
+	EntryStaged
+	EntryWorktree
+	// EntryPiped is a diff read from stdin whose header, if it had one,
+	// named no commit gitl could look up — so there is no metadata to show
+	// beyond whatever text preceded the diff (see CommitDetail.Preamble).
+	EntryPiped
+)
+
 // CommitDetail holds full commit metadata, the complete message body, and the
 // commit's diff. Files is left empty for merge commits: with more than one
 // parent there's no single canonical diff, and picking one is deferred.
