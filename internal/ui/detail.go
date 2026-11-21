@@ -127,14 +127,13 @@ const (
 	sectionKindFile
 )
 
-// detailSection marks one contiguous, offset-adjusted line range within the
+// detailSection marks where one offset-adjusted line range begins within the
 // flattened viewport content (see DetailModel.sections), used to resolve a
 // scroll position to a sticky-header title and to drive [ / ] navigation.
 type detailSection struct {
 	kind      sectionKind
 	fileIndex int // meaningful only when kind == sectionKindFile
 	startLine int
-	endLine   int // exclusive
 }
 
 // sectionAt returns the index into sections whose range contains lineIndex.
@@ -419,12 +418,12 @@ func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRang
 // diff to summarize — exactly when there's no stats section to emit.
 func buildSections(fileRanges []FileRange, statsStart, diffStart int) []detailSection {
 	sections := make([]detailSection, 0, len(fileRanges)+2)
-	sections = append(sections, detailSection{kind: sectionKindCommit, startLine: 0, endLine: statsStart})
+	sections = append(sections, detailSection{kind: sectionKindCommit, startLine: 0})
 	if statsStart < diffStart {
-		sections = append(sections, detailSection{kind: sectionKindStats, startLine: statsStart, endLine: diffStart})
+		sections = append(sections, detailSection{kind: sectionKindStats, startLine: statsStart})
 	}
 	for _, r := range fileRanges {
-		sections = append(sections, detailSection{kind: sectionKindFile, fileIndex: r.FileIndex, startLine: r.StartLine, endLine: r.EndLine})
+		sections = append(sections, detailSection{kind: sectionKindFile, fileIndex: r.FileIndex, startLine: r.StartLine})
 	}
 	return sections
 }
