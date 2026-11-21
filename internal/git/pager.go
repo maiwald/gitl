@@ -23,16 +23,23 @@ const defaultPager = "less"
 // the text yourself" — a missing pager must not turn into a git command that
 // shows nothing.
 func FallbackPager(ctx context.Context, dir string) string {
-	candidates := []string{os.Getenv("GIT_PAGER")}
-	// A repo with no core.pager set exits nonzero here, which is an answer,
-	// not a failure.
-	if v, err := runGitTrimmed(ctx, dir, "config", "--get", "core.pager"); err == nil {
-		candidates = append(candidates, v)
+	// Each candidate is looked up only once the ones before it have been
+	// passed over, so the git subprocess core.pager costs is skipped whenever
+	// GIT_PAGER already names a usable pager.
+	candidates := []func() string{
+		func() string { return os.Getenv("GIT_PAGER") },
+		func() string {
+			// A repo with no core.pager set exits nonzero here, which is an
+			// answer, not a failure.
+			v, _ := runGitTrimmed(ctx, dir, "config", "--get", "core.pager")
+			return v
+		},
+		func() string { return os.Getenv("PAGER") },
+		func() string { return defaultPager },
 	}
-	candidates = append(candidates, os.Getenv("PAGER"), defaultPager)
 
-	for _, c := range candidates {
-		if c = strings.TrimSpace(c); c != "" && !namesGitl(c) {
+	for _, candidate := range candidates {
+		if c := strings.TrimSpace(candidate()); c != "" && !namesGitl(c) {
 			return c
 		}
 	}
