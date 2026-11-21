@@ -53,8 +53,10 @@ internal/git/              data access layer, no TUI dependencies
 internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
                            commands, canonical search state + prompt overlay +
-                           status bar, StartTarget dispatch (the plain list, or
-                           a patch piped in from git)
+                           status bar (joinStatus right-aligns the detail view's
+                           scroll position after every other state),
+                           StartTarget dispatch (the plain list, or a patch
+                           piped in from git)
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions, plus lineStyle: a style
                            bundled with the ANSI sequence lipgloss emits for it
@@ -70,7 +72,8 @@ internal/ui/               Bubble Tea models, no direct git shelling out
   worktreerow.go           renderWorktreeRow: the two synthetic leading rows
   entry.go                 entryTitle/entryDescription: display strings shared by
                            worktreerow.go and detail.go's pseudo-entry branch
-  detail.go                commit detail: header + sticky file header, scroll sync, search
+  detail.go                commit detail: header + sticky file header, scroll sync, search,
+                           ScrollPosition (the status bar's file N/M, line, Top/%/Bot)
   diffview.go              RenderDiff (flatten+style diff), FindDiffMatches
                            (diff content search), intralineSpans/intralineDiff
                            (per-line word-diff highlighting within a hunk)

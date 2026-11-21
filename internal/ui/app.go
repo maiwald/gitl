@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/maiwald/gitl/internal/concurrent"
 	"github.com/maiwald/gitl/internal/git"
 )
@@ -958,6 +959,11 @@ func (m Model) contentHeight() int {
 // The selection outranks the search cases, which can't fire under it anyway —
 // starting a selection retires a visible search — but the order says which
 // state the bar is reporting rather than leaving it to that coincidence.
+//
+// In the detail view the scroll position is right-aligned next to whichever of
+// those is showing. It's added after the switch rather than as one of its
+// cases so that no state can hide it, the search prompt included: n/N and
+// typing a query are when you most want to see where you are.
 func (m Model) renderStatusBar() string {
 	style := statusBarStyle
 	var content string
@@ -987,7 +993,26 @@ func (m Model) renderStatusBar() string {
 		style = statusBarErrStyle
 		content = statusBarErrorText(m.lastError, m.width)
 	}
+	if m.active == viewDetail {
+		// statusBarStyle's Padding(0, 1) takes two columns.
+		content = joinStatus(content, m.detail.ScrollPosition(), m.width-2)
+	}
 	return style.Width(m.width).Render(content)
+}
+
+// joinStatus right-aligns right within width, truncating left to make room
+// for it. right is dropped if it can't fit even on its own. left can carry
+// ANSI (the search prompt's cursor), so it's measured and cut escape-aware.
+func joinStatus(left, right string, width int) string {
+	rw := displayWidth(right)
+	if right == "" || rw > width {
+		return left
+	}
+	room := width - rw
+	if displayWidth(left) > room-1 {
+		left = ansi.Truncate(left, max(room-1, 0), "…")
+	}
+	return left + strings.Repeat(" ", room-displayWidth(left)) + right
 }
 
 // statusBarErrorText renders err's message for the one-row status bar:

@@ -995,6 +995,37 @@ func (m DetailModel) MatchPosition() (pos, total int) {
 	return matchPosition(m.matchPos, m.totalMatches())
 }
 
+// ScrollPosition is the status bar's position indicator: the diff file in
+// view (omitted above the first one), the cursor's logical line out of the
+// total, and how far down the viewport is, the way vim words it.
+//
+// Lines are counted logically, not as rows, so the numbers don't change when
+// a resize rewraps them. The percentage measures against contentLen rather
+// than the padded content, which would otherwise never let it reach Bot.
+func (m DetailModel) ScrollPosition() string {
+	if m.detail == nil || len(m.lines) == 0 {
+		return ""
+	}
+	var parts []string
+	if idx := m.currentSection(); idx >= 0 && m.sections[idx].kind == sectionKindFile {
+		parts = append(parts, fmt.Sprintf("file %d/%d", m.sections[idx].fileIndex+1, len(m.detail.Files)))
+	}
+	parts = append(parts, fmt.Sprintf("L%d/%d", logicalAt(m.lineStart, m.cursorLine)+1, len(m.lines)))
+
+	var pct string
+	switch bottom := m.contentLen - m.vp.Height; {
+	case bottom <= 0:
+		pct = "All"
+	case m.vp.YOffset <= 0:
+		pct = "Top"
+	case m.vp.YOffset >= bottom:
+		pct = "Bot"
+	default:
+		pct = fmt.Sprintf("%d%%", m.vp.YOffset*100/bottom)
+	}
+	return strings.Join(append(parts, pct), "  ")
+}
+
 func (m DetailModel) View() string {
 	if m.detail == nil {
 		return ""

@@ -13,7 +13,9 @@ A terminal UI for browsing git history, with vim-style navigation.
   everything `git status` would flag as new, not just tracked changes.
 - **Commit detail** — full metadata and commit message, plus a highlighted,
   scrollable diff with a sticky header showing which file is currently in
-  view.
+  view. The status bar shows where you are, right-aligned the way vim does
+  it: the file in view (`file 3/12`), the cursor's line (`L812/2040`), and
+  `Top`/`42%`/`Bot`/`All`. It stays visible while you search.
 - **Rename detection** — a moved file shows as a rename (`old -> new`) with
   just the edits made along the way, instead of a full delete+add. Copy
   detection is deliberately not enabled: a newly added file that happens to
