@@ -58,6 +58,14 @@ type DetailModel struct {
 	messageMatchLines []int // parallel to messageMatches: wrapped-line index within the header block
 	statMatchLines    []int // parallel to statMatches: wrapped-line index within the flattened content (offset applied)
 	diffMatchLines    []int // parallel to diffMatches: wrapped-line index within the flattened content (offset applied)
+	// The *MatchCols are parallel to the *MatchLines: the byte offset each
+	// match starts at in its line's text. Resolving that to the row it wraps
+	// onto is left to the jump (matchRow) — a minified line can hold hundreds
+	// of matches, and resolving every one of them would rewrap that line
+	// hundreds of times per reflow.
+	messageMatchCols []int
+	statMatchCols    []int
+	diffMatchCols    []int
 
 	// cursorLine is a tig-style line cursor: an index into the same
 	// flattened content line space vp's scroll offset lives in (see
@@ -203,18 +211,9 @@ func (m *DetailModel) reflow() {
 	}
 	m.sections = buildSections(m.fileRanges, m.rowOf(statsStart), m.rowOf(diffStart))
 
-	m.messageMatchLines = make([]int, len(messageMatchLines))
-	for i, ln := range messageMatchLines {
-		m.messageMatchLines[i] = m.rowOf(ln)
-	}
-	m.statMatchLines = make([]int, len(statMatchLines))
-	for i, ln := range statMatchLines {
-		m.statMatchLines[i] = m.rowOf(statsStart + ln)
-	}
-	m.diffMatchLines = make([]int, len(diffMatchLines))
-	for i, ln := range diffMatchLines {
-		m.diffMatchLines[i] = m.rowOf(diffStart + ln)
-	}
+	m.messageMatchLines, m.messageMatchCols = m.rebaseMatches(messageMatchLines, 0)
+	m.statMatchLines, m.statMatchCols = m.rebaseMatches(statMatchLines, statsStart)
+	m.diffMatchLines, m.diffMatchCols = m.rebaseMatches(diffMatchLines, diffStart)
 
 	m.vp.Height = m.height
 	if len(m.fileRanges) > 0 {
@@ -254,6 +253,19 @@ func (m *DetailModel) reflow() {
 	}
 
 	m.setContent()
+}
+
+// rebaseMatches turns a block's match locations, counted in logical lines
+// from blockStart, into the rows those lines begin at, keeping each match's
+// column alongside for matchRow to resolve only when a jump needs it.
+func (m DetailModel) rebaseMatches(locs []matchLoc, blockStart int) (rows, cols []int) {
+	rows = make([]int, len(locs))
+	cols = make([]int, len(locs))
+	for i, loc := range locs {
+		rows[i] = m.rowOf(blockStart + loc.line)
+		cols[i] = loc.col
+	}
+	return rows, cols
 }
 
 // rowOf is the row a logical line begins at, or contentLen for the
@@ -390,7 +402,7 @@ const mergeNotice = "Merge commit: diff not shown (viewing merge diffs isn't sup
 // renderDiffBlock describes this commit's diff at width, honoring the current
 // search state. Its returned coordinates count logical lines from the block's
 // own start — see reflow, which rebases them.
-func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRanges []FileRange, matchLines []int) {
+func (m *DetailModel) renderDiffBlock(width int) (lines []lineRenderer, fileRanges []FileRange, matchLines []matchLoc) {
 	if len(m.detail.Files) == 0 {
 		if m.detail.IsMerge() {
 			return []lineRenderer{clippedLine(binaryNoticeStyle, mergeNotice, width)}, nil, nil
@@ -500,10 +512,10 @@ func headerLinesFor(d *git.CommitDetail) (lines []string, authorLine, bodyStart 
 // parallel to matches: the logical line each match sits on, tracked even when
 // dismissed suppresses the styling. spans are never suppressed, being no part
 // of search.
-func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool) (rendered []lineRenderer, matchLines []int) {
+func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matches []MessageMatch, activeIdx int, dismissed bool) (rendered []lineRenderer, matchLines []matchLoc) {
 	mc := newMatchCursor[int](matches, activeIdx, dismissed)
 	for li, line := range lines {
-		lineMatches := mc.take(li, li)
+		lineMatches := mc.take(li, li, 0)
 		lineSpans := spans[li]
 		rendered = append(rendered, lineRenderer{
 			text:  line,
@@ -513,7 +525,7 @@ func renderHeaderLines(lines []string, spans map[int][]baseSpan, width int, matc
 			},
 		})
 	}
-	return rendered, mc.lines
+	return rendered, mc.locs
 }
 
 // MessageMatch identifies one case-insensitive occurrence of a search term
@@ -796,7 +808,7 @@ func (m *DetailModel) statsFileIndexAt(line int) (fileIndex int, ok bool) {
 // moves the cursor, and lands the target at the very top of the viewport —
 // as opposed to setCursor, which scrolls the minimum to keep it visible.
 func (m *DetailModel) landOnLine(line int) {
-	if line != m.cursorLine {
+	if m.blockStart(line) != m.cursorLine {
 		m.pushJump(m.cursorLine)
 	}
 	from, to := m.highlight()
@@ -935,19 +947,33 @@ func (m *DetailModel) jumpToMatch() {
 		return
 	}
 	block, idx := m.matchSegment()
-	var lines []int
+	var lines, cols []int
 	switch block {
 	case matchBlockMessage:
-		lines = m.messageMatchLines
+		lines, cols = m.messageMatchLines, m.messageMatchCols
 	case matchBlockStats:
-		lines = m.statMatchLines
+		lines, cols = m.statMatchLines, m.statMatchCols
 	default:
-		lines = m.diffMatchLines
+		lines, cols = m.diffMatchLines, m.diffMatchCols
 	}
 	if idx >= len(lines) {
 		return
 	}
-	m.landOnLine(lines[idx])
+	m.landOnLine(lines[idx] + m.matchRow(lines[idx], cols[idx]))
+}
+
+// matchRow is how many rows past start, the row a logical line begins at, a
+// match at byte offset col of that line is drawn on. Without it every match in
+// a line wrapped over thousands of rows (a minified JSON/OpenAPI file) would
+// land on the line's first row, and n/N would restyle the active match far
+// off-screen without ever scrolling to it. Clamped to the line's own rows: a
+// clipped line (a file or hunk header) is one row however long its text.
+func (m DetailModel) matchRow(start, col int) int {
+	i := logicalAt(m.lineStart, start)
+	if i < 0 || start >= m.contentLen {
+		return 0
+	}
+	return min(wrapRowOf(m.lines[i].text, col, m.width), m.blockEnd(start)-start-1)
 }
 
 // SetSearchDisplay installs the term to highlight and whether highlighting is

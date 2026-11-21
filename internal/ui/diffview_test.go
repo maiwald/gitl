@@ -60,7 +60,7 @@ func renderDiffRows(files []git.File, width int, matches []DiffMatch, activeMatc
 	}
 	matchRows = make([]int, len(matchLines))
 	for i, ln := range matchLines {
-		matchRows[i] = rowOf(ln)
+		matchRows[i] = rowOf(ln.line)
 	}
 	return rows, ranges, matchRows
 }

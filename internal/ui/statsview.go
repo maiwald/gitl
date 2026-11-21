@@ -35,7 +35,7 @@ const statsSectionTitle = "Files changed"
 // line each sits on, counted from this block's own start — and is filled in
 // regardless of dismissed, so a dismissed match still lands correctly once
 // n/N revives it.
-func statLinesFor(files []git.File, width int, matches []StatMatch, activeMatch int, dismissed bool) (lines []lineRenderer, matchLines []int) {
+func statLinesFor(files []git.File, width int, matches []StatMatch, activeMatch int, dismissed bool) (lines []lineRenderer, matchLines []matchLoc) {
 	if len(files) == 0 {
 		return nil, nil
 	}
@@ -69,14 +69,14 @@ func statLinesFor(files []git.File, width int, matches []StatMatch, activeMatch 
 	lines = make([]lineRenderer, 0, len(files)+3)
 	lines = append(lines, clippedLine(fileHeaderStyle, statsSectionTitle, width))
 	for i, f := range files {
-		rowMatches := mc.take(len(lines), i)
+		rowMatches := mc.take(len(lines), i, 0)
 		lines = append(lines, statRow(filePathLabel(f), f.Binary, nameWidth, addWidth, delWidth, addCounts[i], delCounts[i], rowMatches, width))
 	}
 	lines = append(lines, blankRow(width))
 	// The totals row's label names no file, so it never carries a match — see
 	// FindStatMatches.
 	lines = append(lines, statRow(summaryLabel, false, nameWidth, addWidth, delWidth, totalAddCount, totalDelCount, nil, width))
-	return lines, mc.lines
+	return lines, mc.locs
 }
 
 // StatMatch identifies one case-insensitive occurrence of a search term within

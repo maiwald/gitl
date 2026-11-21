@@ -341,6 +341,24 @@ func wrapRanges(text string, width int) [][2]int {
 	return appendTrailingSpaces(ranges, text, width)
 }
 
+// wrapRowOf is the index of the row wrapStyledRows puts byte offset of text on
+// when wrapping it to width — the same tab expansion and the same wrapRanges,
+// so it can't name a row other than the one drawn. An offset past the end
+// lands on the last row.
+func wrapRowOf(text string, offset, width int) int {
+	expanded, at := expandTabsMapped(text)
+	if at != nil {
+		offset = at(min(offset, len(text)))
+	}
+	ranges := wrapRanges(expanded, width)
+	for i, r := range ranges {
+		if offset < r[1] {
+			return i
+		}
+	}
+	return len(ranges) - 1
+}
+
 // appendTrailingSpaces extends ranges over whatever of text's tail the wrapper
 // dropped — only ever trailing spaces, tabs having been expanded before any
 // line is wrapped — filling the last row up to width and continuing onto rows
@@ -577,26 +595,36 @@ type matchCursor[K comparable, M blockMatch[K]] struct {
 	next      int
 	active    int
 	dismissed bool
-	// lines is parallel to matches: the logical line each one landed on. It
-	// is filled in even while dismissed, so a dismissed match still lands
-	// correctly once n/N revives it.
-	lines []int
+	// locs is parallel to matches: where each one landed. It is filled in
+	// even while dismissed, so a dismissed match still lands correctly once
+	// n/N revives it.
+	locs []matchLoc
+}
+
+// matchLoc is where a match landed in its block: the logical line, and the
+// byte offset its start sits at in that line's lineRenderer.text. The offset
+// is what lets a jump reach a match deep inside a line wrapped over many rows
+// (see DetailModel.matchRow) instead of only the row the line begins at.
+type matchLoc struct {
+	line, col int
 }
 
 func newMatchCursor[K comparable, M blockMatch[K]](matches []M, active int, dismissed bool) *matchCursor[K, M] {
-	return &matchCursor[K, M]{matches: matches, active: active, dismissed: dismissed, lines: make([]int, len(matches))}
+	return &matchCursor[K, M]{matches: matches, active: active, dismissed: dismissed, locs: make([]matchLoc, len(matches))}
 }
 
 // take consumes the matches keyed at, which sit on logical line line, and
-// returns them styled for that line. It returns none while dismissed.
-func (c *matchCursor[K, M]) take(line int, at K) []lineMatch {
+// returns them styled for that line. It returns none while dismissed. shift is
+// how far the line's text puts the matched string past the start the match's
+// own columns count from — a diff line's marker, a file header's glyph.
+func (c *matchCursor[K, M]) take(line int, at K, shift int) []lineMatch {
 	var out []lineMatch
 	for c.next < len(c.matches) && c.matches[c.next].at() == at {
+		start, end := c.matches[c.next].cols()
 		if !c.dismissed {
-			start, end := c.matches[c.next].cols()
 			out = append(out, lineMatch{start: start, end: end, active: c.next == c.active})
 		}
-		c.lines[c.next] = line
+		c.locs[c.next] = matchLoc{line: line, col: start + shift}
 		c.next++
 	}
 	return out

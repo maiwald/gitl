@@ -367,6 +367,13 @@ before every commit — don't commit red.
   (`scrollWithinBlock`), cursor staying put, and `ensureCursorVisible` counts
   any of its rows on screen as visible. Otherwise its off-screen middle would
   be skipped, and as the last line of a diff its rest would be unreachable.
+  A search jump is the other thing that scrolls to a row *inside* a block:
+  each match carries its byte offset in the line's `text` (`matchLoc`), and
+  `jumpToMatch` resolves just the active one to its wrapped row
+  (`matchRow`/`wrapRowOf`), so n/N reach a match deep in a minified line
+  instead of all landing on the row it begins at. That resolution happens
+  per jump, not per reflow — such a line can hold hundreds of matches, and
+  rewrapping it once for each on every reflow would be paid per keypress.
 - gitl parses no revision, range or pathspec of its own. Everything beyond
   the commit list arrives through git, which runs gitl as its pager
   (`pagerMode` in `args.go`, `runAsPager` in `main.go`) and has already

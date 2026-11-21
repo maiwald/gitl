@@ -1086,3 +1086,99 @@ func TestEveryRowIsExactlyOneFullWidthLine(t *testing.T) {
 		}
 	}
 }
+
+// fixtureDetailWithMinifiedMatches is a commit whose diff holds one short line
+// and then one line long enough to wrap over many screens — a minified
+// JSON/OpenAPI file — with a match near its start, middle and end. The long
+// line leads with tabs, so landing on its matches also depends on their
+// offsets following tab expansion.
+func fixtureDetailWithMinifiedMatches() *git.CommitDetail {
+	filler := strings.Repeat("word ", 120)
+	long := "\t\t" + filler + "needle1 " + filler + "needle2 " + filler + "needle3"
+	return &git.CommitDetail{
+		Commit: git.Commit{Hash: strings.Repeat("a", 40), Subject: "subject"},
+		Body:   "subject",
+		Files: []git.File{{
+			Path: "spec.json", Status: git.StatusModified, Additions: 2,
+			Hunks: []git.Hunk{{
+				Header: "@@ -0,0 +1,2 @@",
+				Lines: []git.DiffLine{
+					{Op: git.OpAdd, Text: "needle0"},
+					{Op: git.OpAdd, Text: long},
+				},
+			}},
+		}},
+	}
+}
+
+// TestDetailModelSearchJumpsWithinWrappedLine pins down that n/N reach a
+// match inside a line wrapped over many screens, rather than every match in
+// it landing on the row the line begins at — where the active match would be
+// restyled far off-screen and n would look like it did nothing.
+func TestDetailModelSearchJumpsWithinWrappedLine(t *testing.T) {
+	jl := &jumplist{}
+	m := NewDetailModel(fixtureDetailWithMinifiedMatches(), jl)
+	m.SetSize(40, 8)
+	if n := runDetailSearch(&m, "needle"); n != 4 {
+		t.Fatalf("totalMatches = %d, want 4", n)
+	}
+	longStart := m.diffMatchLines[1]
+	if rows := m.blockEnd(longStart) - longStart; rows < 4*m.vp.Height {
+		t.Fatalf("long line spans %d rows at height %d — the fixture no longer exercises a tall line", rows, m.vp.Height)
+	}
+
+	// The match's row lands at the top of the viewport, unless it is too near
+	// the end of the content for the viewport to scroll that far — the last
+	// line of a diff is exactly where a minified file tends to be.
+	activeAtTop := func(want string) {
+		t.Helper()
+		for r := m.vp.YOffset; r < min(m.vp.YOffset+m.vp.Height, m.contentLen); r++ {
+			if row := m.content[r]; strings.Contains(ansi.Strip(row), want) && strings.Contains(row, searchActiveMatchStyle.Render("needle")) {
+				if r != m.vp.YOffset && m.vp.YOffset+m.vp.Height < m.contentLen {
+					t.Fatalf("%s is on row %d, want it at the top of the viewport (%d)", want, r, m.vp.YOffset)
+				}
+				return
+			}
+		}
+		t.Fatalf("no row in the viewport [%d, %d) shows the active %s", m.vp.YOffset, m.vp.YOffset+m.vp.Height, want)
+	}
+
+	activeAtTop("needle0")
+	pushed := len(jl.back)
+	offsets := []int{}
+	for i, want := range []string{"needle1", "needle2", "needle3"} {
+		m.NextMatch()
+		activeAtTop(want)
+		if m.cursorLine != longStart {
+			t.Fatalf("cursorLine = %d on %s, want %d (the long line's start: the cursor highlights the whole line)", m.cursorLine, want, longStart)
+		}
+		if i > 0 && m.vp.YOffset <= offsets[i-1] {
+			t.Fatalf("YOffset = %d on %s, want past %d where the previous match was", m.vp.YOffset, want, offsets[i-1])
+		}
+		offsets = append(offsets, m.vp.YOffset)
+	}
+	if got := len(jl.back) - pushed; got != 1 {
+		t.Fatalf("pushed %d jumps walking the long line's matches, want 1 (onto the line, not one per match within it)", got)
+	}
+
+	m.NextMatch()
+	activeAtTop("needle0")
+	for _, want := range []string{"needle3", "needle2", "needle1"} {
+		m.PrevMatch()
+		activeAtTop(want)
+	}
+}
+
+// TestWrapRowOfMatchesRenderedRow checks wrapRowOf against what
+// wrapStyledRows actually draws: the row it names for an offset is the one
+// the text at that offset shows up on, tabs in front of it included.
+func TestWrapRowOfMatchesRenderedRow(t *testing.T) {
+	text := "\t+" + strings.Repeat("ab cd ", 10) + "tok1 " + strings.Repeat("\tx ", 8) + "tok2 " + strings.Repeat("ef ", 12) + "tok3"
+	rows := wrapStyledRows(text, nil, nil, plainLine, 16, false)
+	for _, tok := range []string{"tok1", "tok2", "tok3"} {
+		r := wrapRowOf(text, strings.Index(text, tok), 16)
+		if r >= len(rows) || !strings.Contains(ansi.Strip(rows[r]), tok) {
+			t.Errorf("wrapRowOf(%s) = %d, but that row reads %q", tok, r, ansi.Strip(rows[min(r, len(rows)-1)]))
+		}
+	}
+}

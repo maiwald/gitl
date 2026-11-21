@@ -34,7 +34,7 @@ type FileRange struct {
 // matchLines is parallel to matches — the logical line each match sits on —
 // and is computed from the full list regardless of dismissed, so a dismissed
 // match still lands correctly once n/N revives it.
-func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool) ([]lineRenderer, []FileRange, []int) {
+func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch int, dismissed bool) ([]lineRenderer, []FileRange, []matchLoc) {
 	lines := make([]lineRenderer, 0, diffLineCount(files))
 	ranges := make([]FileRange, 0, len(files))
 	mc := newMatchCursor[diffPos](matches, activeMatch, dismissed)
@@ -42,7 +42,7 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 	for fi, f := range files {
 		start := len(lines)
 
-		headerMatches := mc.take(len(lines), diffPos{kind: DiffMatchFileName, file: fi})
+		headerMatches := mc.take(len(lines), diffPos{kind: DiffMatchFileName, file: fi}, len(fileStatusGlyph(f.Status))+1)
 		lines = append(lines, lineRenderer{
 			text: fileHeaderText(f),
 			render: func(cursor bool) []string {
@@ -56,7 +56,8 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 			lines = append(lines, clippedLine(hunkHeaderStyle, h.Header, width))
 			hunkSpans := intralineSpans(h)
 			for li, l := range h.Lines {
-				lineMatches := mc.take(len(lines), diffPos{kind: DiffMatchLine, file: fi, hunk: hi, line: li})
+				_, prefix := diffLineStyle(l.Op)
+				lineMatches := mc.take(len(lines), diffPos{kind: DiffMatchLine, file: fi, hunk: hi, line: li}, len(prefix))
 				spans := withTrailingWhitespace(l, hunkSpans[li])
 				text := diffLineText(l)
 				lines = append(lines, lineRenderer{
@@ -73,7 +74,7 @@ func RenderDiff(files []git.File, width int, matches []DiffMatch, activeMatch in
 		}
 		ranges = append(ranges, FileRange{FileIndex: fi, StartLine: start, EndLine: len(lines)})
 	}
-	return lines, ranges, mc.lines
+	return lines, ranges, mc.locs
 }
 
 // diffLineCount is how many logical lines RenderDiff will emit for files, so
