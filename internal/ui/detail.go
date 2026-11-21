@@ -805,12 +805,17 @@ func (m *DetailModel) statsFileIndexAt(line int) (fileIndex int, ok bool) {
 // landOnLine scrolls directly to line, pushing a jump first if it actually
 // moves the cursor, and lands the target at the very top of the viewport —
 // as opposed to setCursor, which scrolls the minimum to keep it visible.
+//
+// The viewport goes to line itself, which can be the row past the content (a
+// last file with nothing under its header: reflow pads for exactly that), but
+// the cursor is kept on a line that exists.
 func (m *DetailModel) landOnLine(line int) {
-	if m.blockStart(line) != m.cursorLine {
+	target := m.blockStart(clamp(line, 0, m.contentLen-1))
+	if target != m.cursorLine {
 		m.pushJump(m.cursorLine)
 	}
 	from, to := m.highlight()
-	m.cursorLine = m.blockStart(line)
+	m.cursorLine = target
 	m.repaintHighlight(from, to)
 	m.vp.SetYOffset(line)
 }

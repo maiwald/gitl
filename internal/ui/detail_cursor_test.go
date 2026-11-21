@@ -580,3 +580,30 @@ func BenchmarkDetailReflow(b *testing.B) {
 		m.reflow()
 	}
 }
+
+// TestJumpToHeaderOnlyLastFileKeepsCursorOnContent pins that [ / ] onto a last
+// file with nothing under its header (a pure rename, a mode change) leaves the
+// cursor on a line that exists. The viewport is allowed to scroll to the row
+// past the content — reflow pads it for exactly that — but the cursor has no
+// line there to highlight.
+func TestJumpToHeaderOnlyLastFileKeepsCursorOnContent(t *testing.T) {
+	m := NewDetailModel(fixturePseudoDetail(git.EntryWorktree, []git.File{
+		{
+			Path:   "a.txt",
+			Status: git.StatusModified,
+			Hunks: []git.Hunk{{
+				Header: "@@ -1 +1 @@",
+				Lines:  []git.DiffLine{{Op: git.OpAdd, Text: "changed"}},
+			}},
+		},
+		{OldPath: "old.txt", Path: "new.txt", Status: git.StatusRenamed},
+	}), &jumplist{})
+	m.SetSize(80, 10)
+
+	for range 4 {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	}
+	if m.cursorLine < 0 || m.cursorLine >= m.contentLen {
+		t.Errorf("cursorLine = %d after ] onto the last file, want it within [0, %d)", m.cursorLine, m.contentLen)
+	}
+}
