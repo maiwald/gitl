@@ -671,3 +671,29 @@ func BenchmarkDetailMatchStep(b *testing.B) {
 		m.NextMatch()
 	}
 }
+
+// TestBottomShowsTheLastRowOfAFinalBlockTallerThanTheViewport pins that G ends
+// on the diff's last row even when the last logical line is one minified line
+// wrapped over far more rows than the viewport holds. Moving down into such a
+// block enters it at its first row (ensureCursorVisible), which is right for j
+// but not for G: the cursor stays on the line's first row, the viewport has to
+// carry on to its last.
+func TestBottomShowsTheLastRowOfAFinalBlockTallerThanTheViewport(t *testing.T) {
+	d := fixtureBigDetail(1, 3)
+	d.Files = append(d.Files, git.File{Path: "min.js", Status: git.StatusModified, Hunks: []git.Hunk{{
+		Header: "@@ -1 +1 @@",
+		Lines:  []git.DiffLine{{Op: git.OpAdd, Text: strings.Repeat("abcdefghij ", 600)}},
+	}}})
+	m := NewDetailModel(d, &jumplist{})
+	m.SetSize(60, 10)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+
+	last := m.contentLen - 1
+	if last < m.vp.YOffset || last >= m.vp.YOffset+m.vp.Height {
+		t.Errorf("last row %d is outside the viewport [%d, %d) after G", last, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
+	}
+	if want := m.blockStart(last); m.cursorLine != want {
+		t.Errorf("cursorLine = %d, want %d (the start of the last logical line)", m.cursorLine, want)
+	}
+}

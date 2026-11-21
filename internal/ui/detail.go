@@ -610,7 +610,7 @@ func (m *DetailModel) Update(msg tea.KeyMsg) {
 	case key.Matches(msg, DefaultKeyMap.Top):
 		m.jumpCursor(0)
 	case key.Matches(msg, DefaultKeyMap.Bottom):
-		m.jumpCursor(m.contentLen - 1)
+		m.jumpBottom()
 	case key.Matches(msg, DefaultKeyMap.PrevPara):
 		m.jumpParagraph(-1)
 	case key.Matches(msg, DefaultKeyMap.NextPara):
@@ -648,6 +648,18 @@ func (m *DetailModel) moveCursor(delta int) {
 		pos = max(pos, m.blockEnd(m.cursorLine))
 	}
 	m.setCursor(pos)
+}
+
+// jumpBottom is G: the cursor goes to the last logical line, and the viewport
+// to the diff's last row. For an ordinary last line setCursor already gets
+// both; a last line taller than the viewport (one minified line) it enters at
+// its first row, as j would, so the viewport has to carry on to the end —
+// the cursor staying where it is, like scrollWithinBlock leaves it.
+func (m *DetailModel) jumpBottom() {
+	m.jumpCursor(m.contentLen - 1)
+	if end := m.blockEnd(m.cursorLine); end-m.cursorLine > m.vp.Height {
+		m.vp.SetYOffset(end - m.vp.Height)
+	}
 }
 
 // scrollWithinBlock scrolls the viewport delta rows through the cursor's
