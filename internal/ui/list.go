@@ -409,12 +409,15 @@ func (m *ListModel) jumpOrDefer(target int) (needsLoad bool) {
 }
 
 // SetSearchDisplay updates the term to highlight and whether highlighting is
-// dismissed, then re-renders. Called by the root Model whenever the shared
-// search state changes. A changed term drops the previous term's matches, so
-// rows are never dimmed against a match set that no longer describes them;
-// the new term's matches arrive later, via SetMatches, since finding them
-// takes a git query.
+// dismissed, re-rendering if either changed. Called by the root Model
+// whenever the shared search state changes. A changed term drops the previous
+// term's matches, so rows are never dimmed against a match set that no longer
+// describes them; the new term's matches arrive later, via SetMatches, since
+// finding them takes a git query.
 func (m *ListModel) SetSearchDisplay(term string, dismissed bool) {
+	if term == m.displayTerm && dismissed == m.searchDismissed {
+		return
+	}
 	if term != m.displayTerm {
 		m.displayTerm = term
 		m.matches, m.matchPos = nil, -1

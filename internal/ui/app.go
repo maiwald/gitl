@@ -342,8 +342,8 @@ func (m Model) openDetail(detail *git.CommitDetail) Model {
 // from wherever it's shown.
 func (m Model) newDetailModel(detail *git.CommitDetail) DetailModel {
 	d := NewDetailModel(detail, m.jl)
+	d.installSearch(m.searchTerm, m.searchDismissed)
 	d.SetSize(m.width, m.contentHeight())
-	d.SetSearchDisplay(m.searchTerm, m.searchDismissed)
 	return d
 }
 

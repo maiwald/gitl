@@ -976,16 +976,31 @@ func (m DetailModel) matchRow(start, col int) int {
 }
 
 // SetSearchDisplay installs the term to highlight and whether highlighting is
-// dismissed, then reflows. A changed term recomputes this commit's matches
-// synchronously, so they never outlive the term they were found for. Clearing
-// the search is just the term going empty.
+// dismissed, and reflows if either changed. A changed term recomputes this
+// commit's matches synchronously, so they never outlive the term they were
+// found for. Clearing the search is just the term going empty.
 func (m *DetailModel) SetSearchDisplay(term string, dismissed bool) {
+	if m.installSearch(term, dismissed) {
+		m.reflow()
+	}
+}
+
+// installSearch is SetSearchDisplay without the reflow, for a caller that
+// reflows anyway (newDetailModel's SetSize) and would otherwise render the
+// whole commit twice. It reports whether anything changed. Matches depend on
+// the term and the commit, never on the width, so it can run before the
+// view is sized.
+func (m *DetailModel) installSearch(term string, dismissed bool) (changed bool) {
 	if term != m.displayTerm {
 		m.displayTerm = term
 		m.computeMatches(term)
+		changed = true
 	}
-	m.searchDismissed = dismissed
-	m.reflow()
+	if dismissed != m.searchDismissed {
+		m.searchDismissed = dismissed
+		changed = true
+	}
+	return changed
 }
 
 // MatchPosition reports the current match position (1-based) and total

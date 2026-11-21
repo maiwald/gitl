@@ -1182,3 +1182,66 @@ func TestWrapRowOfMatchesRenderedRow(t *testing.T) {
 		}
 	}
 }
+
+// TestSetSearchDisplayReflowsOnlyOnChange pins that handing a view the search
+// state it already shows costs nothing: the root Model pushes its canonical
+// state into a view on every search change, usually one the view already has.
+func TestSetSearchDisplayReflowsOnlyOnChange(t *testing.T) {
+	m := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
+	m.SetSize(60, 10)
+	m.SetSearchDisplay("needle", false)
+
+	// reflow builds a fresh rows slice, so a reflow shows as a new backing array.
+	same := func(f func()) bool {
+		before := &m.content[0]
+		f()
+		return before == &m.content[0]
+	}
+	if !same(func() { m.SetSearchDisplay("needle", false) }) {
+		t.Error("an unchanged search display reflowed")
+	}
+	if same(func() { m.SetSearchDisplay("needle", true) }) {
+		t.Error("dismissing the search did not reflow")
+	}
+	if same(func() { m.SetSearchDisplay("other", true) }) {
+		t.Error("changing the term did not reflow")
+	}
+}
+
+// TestInstallSearchBeforeSizingMatchesSetSearchDisplayAfter pins that opening a
+// view the cheap way (install, then one reflow from SetSize) lands on the same
+// rows as the two-reflow order it replaced.
+func TestInstallSearchBeforeSizingMatchesSetSearchDisplayAfter(t *testing.T) {
+	cheap := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
+	cheap.installSearch("needle", false)
+	cheap.SetSize(60, 10)
+
+	slow := NewDetailModel(fixtureDetailForSearch(), &jumplist{})
+	slow.SetSize(60, 10)
+	slow.SetSearchDisplay("needle", false)
+
+	if strings.Join(cheap.content, "\n") != strings.Join(slow.content, "\n") {
+		t.Error("rows differ between install-then-size and size-then-install")
+	}
+	if cheap.totalMatches() == 0 || cheap.totalMatches() != slow.totalMatches() {
+		t.Errorf("matches = %d vs %d, want equal and nonzero", cheap.totalMatches(), slow.totalMatches())
+	}
+}
+
+// TestListSetSearchDisplayRendersOnlyOnChange is the list's half of the same
+// guard.
+func TestListSetSearchDisplayRendersOnlyOnChange(t *testing.T) {
+	m := NewListModel(fixtureCommits(5), &jumplist{})
+	m.SetSize(80, 10)
+	m.SetSearchDisplay("a", false)
+
+	before := &m.renderedRows[0]
+	m.SetSearchDisplay("a", false)
+	if before != &m.renderedRows[0] {
+		t.Error("an unchanged search display re-rendered the list")
+	}
+	m.SetSearchDisplay("a", true)
+	if before == &m.renderedRows[0] {
+		t.Error("dismissing the search did not re-render the list")
+	}
+}
