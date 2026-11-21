@@ -211,9 +211,9 @@ func fileStatusGlyph(s git.FileStatus) string {
 }
 
 // renderDiffLine renders a single diff line, word-wrapping it to width when it
-// doesn't fit on one row. Each wrapped row is its own element, so it becomes
-// its own entry in the flattened diff content and FileRange line-index
-// bookkeeping stays correct.
+// doesn't fit on one row. Each wrapped row is its own element of the result,
+// which stays one logical line's worth: renderRows flattens it into the
+// content, and FileRange counts the logical line, not its rows.
 //
 // text is the line as diffLineText builds it, marker column included — handed
 // in rather than rebuilt, the caller having already built it to carry as the

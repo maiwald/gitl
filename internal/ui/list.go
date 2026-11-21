@@ -409,7 +409,7 @@ func (m *ListModel) renderMatchMoved(cursorFrom, prevActive int) {
 // JumpTo positions the cursor at absolute commit position target, or, if it
 // isn't loaded yet, marks it as pending (resolved by AppendCommits) and
 // reports needsLoad so the caller dispatches a fetch via RequestLoadUpTo.
-// Used for a CLI-requested jump and for jumplist traversal.
+// Used for jumplist traversal.
 func (m *ListModel) JumpTo(target int) (needsLoad bool) {
 	from := m.cursor
 	needsLoad = m.jumpOrDefer(target)

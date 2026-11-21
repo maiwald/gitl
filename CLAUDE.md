@@ -29,11 +29,13 @@ args.go                    command-line parsing: the two print-and-exit flags
 pager.go                   handOffToPager/pipeToPager: giving input gitl has
                            nothing to add to (no patch it could parse) to a
                            real pager, or printing it where none runs
-internal/concurrent/       RunConcurrently: generic "run these fns in parallel,
-                           return the first error in call order" helper, with no
-                           git- or TUI-specific logic, shared by both packages below
+internal/concurrent/       RunConcurrently ("run these fns in parallel, return the
+                           first error in call order") and ForEach (the same for n
+                           indexed items, at most limit in flight): generic helpers
+                           with no git- or TUI-specific logic, shared by both
+                           packages below
 internal/git/              data access layer, no TUI dependencies
-  repo.go                  Repo, OpenRepo, HasCommits
+  repo.go                  Repo, OpenRepo, HasCommits, OpenRepoWithHead (both at once)
   exec.go                  runGit: shells out, wraps stderr into errors
   log.go                   Commit type, FetchLogBatch, CommitCount (paged log)
   show.go                  CommitDetail (+ EntryKind), FetchCommitDetail (metadata +
@@ -43,20 +45,26 @@ internal/git/              data access layer, no TUI dependencies
   pager.go                 FallbackPager: the pager git would have run for the
                            command it is currently paging through gitl
   diff.go                  File/Hunk/DiffLine, ParseUnifiedDiff (go-gitdiff wrapper)
-  search.go                SearchCommitHashes (author+message, OR), AllCommitHashes,
-                           HashesMatching (in-memory hash-substring filter, list search only)
-  worktree.go              EntryKind, EntrySummary/FetchWorktreeSummaries
+  search.go                SearchCommitHashes (author name/email + message, OR),
+                           AllCommitHashes, HashMatcher (in-memory hash-substring
+                           predicate, list search only)
+  worktree.go              EntrySummary/FetchWorktreeSummaries
                            (numstat counts for the list's leading rows),
                            FetchWorktreeEntry (the diff behind one, on open: staged +
                            working-tree diffs, untracked files as synthesized
                            added-file diffs)
 internal/ui/               Bubble Tea models, no direct git shelling out
   app.go                   root Model: view routing (list <-> detail), async fetch
-                           commands, canonical search state + prompt overlay +
+                           commands and their result messages, the cross-view
+                           jumplist (jumplist/jumpPos, doJumpBack/doJumpForward),
+                           canonical search state + prompt overlay + ↑/↓ history,
+                           the detail view's linewise selection and its yank,
                            status bar (joinStatus right-aligns the detail view's
                            scroll position after every other state),
                            StartTarget dispatch (the plain list, or a patch
                            piped in from git)
+  clipboard.go             copyCmd: a yank by every route at once (OSC 52 plus each
+                           local clipboard tool), and copiedMsg
   keys.go                  shared vim KeyMap
   styles.go                lipgloss style definitions, plus lineStyle: a style
                            bundled with the ANSI sequence lipgloss emits for it
@@ -116,7 +124,8 @@ before every commit — don't commit red.
 ## Testing approach
 
 - **`internal/git`**: tests spin up real, scripted git repos under
-  `t.TempDir()` (see `initFixtureRepo` in `log_test.go`) and exercise the
+  `t.TempDir()` (see `initFixtureRepo` in `log_test.go`, and the shared
+  `initFixtureDir`/`mustOpen`/`newestFirst` in `testhelpers_test.go`) and exercise the
   actual `git` binary — no mocking of git itself. Diff parsing
   (`diff_test.go`) is tested against canned unified-diff text instead,
   since that doesn't need a real repo.
@@ -146,10 +155,11 @@ before every commit — don't commit red.
   unit separator (`\x1f`) as a delimiter precisely because none of the
   fields requested can contain it — don't switch to a delimiter that could
   collide with commit messages or paths.
-- Diff line wrapping: each wrapped visual row is its own entry in the rows
-  `RenderDiff`'s lineRenderers produce (not a single multi-line string), so
-  `FileRange` line-index bookkeeping stays correct regardless of terminal
-  width.
+- Diff line wrapping: each wrapped visual row is its own element of what a
+  `lineRenderer` renders (not a single multi-line string), and a line's
+  `lineRenderer` is one entry however many rows it wraps to, so `FileRange`'s
+  line-index bookkeeping, which counts those logical lines, stays correct
+  regardless of terminal width.
 - Search-match highlighting always styles plain-text spans *before* any
   `.Render()` call touches them, then concatenates the already-rendered
   pieces (see `highlightSpans` and `renderLineWithBaseSpans` in
@@ -164,7 +174,7 @@ before every commit — don't commit red.
 - List rows outside the active search's real match set (`ListModel.matches`,
   from the actual `git log --grep`/`--author` query — not from
   re-scanning a row's own visible text) are dimmed via `dimStyle`
-  (`commititem.go`), applied per-field rather than as one outer style
+  (`styles.go`), applied per-field rather than as one outer style
   wrapped around the whole row — see `rowFieldStyle`'s doc comment
   (`commititem.go`) for why: every field is independently `.Render()`'d,
   and an outer style would get cancelled by the first inner ANSI reset.
@@ -185,7 +195,8 @@ before every commit — don't commit red.
   `git.CommitDetail` with `Kind != EntryCommit` and the embedded `Commit`
   left zero-valued (`IsPseudo()`). `detail.go`'s diff/stats/sections/search
   machinery all operate on `[]git.File` and need no knowledge of this; only
-  `headerLinesFor`, `noDiffNotice`, and `renderStickyHeader` branch on it.
+  `headerLinesFor` and `renderStickyHeader` branch on it (a merge's
+  stand-in for its diff is the separate `mergeNotice` constant).
 - `ListModel` caches its rendered rows (`renderedRows`, `list.go`) and
   patches just the cursor's old/new row on a pure cursor move
   (`setCursor`/`renderCursorMoved`) instead of re-rendering everything.
@@ -298,9 +309,9 @@ before every commit — don't commit red.
   constant 77 allocations).
 - Row widths are measured through `displayWidth`, not `ansi.StringWidth`
   directly: printable ASCII, which is the great majority of a diff, is one
-  cell per byte and needs no escape parser. `padRow` doesn't even measure the
-  row it pads — `wrapStyledRows` hands it the width of the *plain* text the
-  row was styled from (`padMeasuredRow`), since styling only adds zero-width
+  cell per byte and needs no escape parser. The
+  row `wrapStyledRows` pads isn't measured at all — it hands `padMeasuredRow`
+  the width of the *plain* text the row was styled from, since styling only adds zero-width
   escapes, and the parser then never runs over a styled string at all.
   `TestDisplayWidthMatchesAnsiStringWidth` pins the fast path and
   `TestEveryRowIsExactlyOneFullWidthLine` pins the handed-in width.
@@ -466,7 +477,7 @@ before every commit — don't commit red.
   always reach the very top even before any real jump has happened — but
   only when the run actually has a list (`StartTarget.opensList`). A piped
   patch never loads one: it is a single screen, as a pager is — ctrl-o has
-  nowhere to go and q/esc quit (`quitOnBack`) — so the repo it opens (for a
+  nowhere to go and q/esc quit (`!opensList()`, see `handleDetailViewKey`) — so the repo it opens (for a
   named commit's header) serves that header alone.
   `ctrl+i` (not the literal string `"ctrl+i"`) is bound to bubbletea's
   `"tab"` key string — the two are the same byte (0x09) at the terminal
@@ -582,7 +593,7 @@ before every commit — don't commit red.
   doesn't show the full body or the full hash — it still counts correctly
   toward the match total, and is distinguishable from a true non-match by
   not being dimmed.
-- List search matches the commit hash (`git.HashesMatching`), but the
+- List search matches the commit hash (`git.HashMatcher`), but the
   detail view's in-commit search deliberately does not — see
   `headerLinesFor`'s doc comment in `detail.go`. Searching for a commit's
   own hash while already viewing that commit isn't useful; the hash field

@@ -8,8 +8,9 @@ import (
 )
 
 // SearchCommitHashes returns the set of commit hashes reachable from HEAD
-// whose author name or full commit message contains term, as a
-// case-insensitive literal substring match (not a regex). Author and message
+// whose author (name or email — git matches the whole "Name <email>" header)
+// or full commit message contains term, as a case-insensitive literal
+// substring match (not a regex). Author and message
 // are queried separately and unioned: git log's own --author plus --grep in
 // one invocation would AND them instead. Returns an empty, non-nil set without
 // invoking git when term is empty; otherwise the two queries, being

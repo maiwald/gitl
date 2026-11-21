@@ -211,10 +211,11 @@ func rowFillStyle(cursor bool) lipgloss.Style {
 // paragraph reflow, miscounting cell positions across those resets and risking
 // a hard-wrap mid-field. Hence the padding by hand.
 //
-// Measured with ansi.StringWidth rather than lipgloss.Width, which is that
-// same call taken over the string split on "\n": every row reaching here is
-// one display line, which is the invariant renderClipped's Inline(true)
-// exists to hold, so the split only ever produces the one piece.
+// Measured with displayWidth (ansi.StringWidth, bar a fast path for plain
+// ASCII) rather than lipgloss.Width, which is that same call taken over the
+// string split on "\n": every row reaching here is one display line, which is
+// the invariant renderClipped's Inline(true) exists to hold, so the split only
+// ever produces the one piece.
 func padRow(row string, width int, cursor bool) string {
 	return padMeasuredRow(row, displayWidth(row), width, cursor)
 }
@@ -646,7 +647,7 @@ func (c *matchCursor[K, M]) take(line int, at K, shift int) []lineMatch {
 // whichever match style covers it, else whichever baseSpan covers it, else
 // base. A match always wins over a base span on overlap. base is the fallback
 // for text outside every span and match: colorless for header/message lines,
-// or a diff line's op color when called from renderDiffLine with no spans.
+// or a diff line's op color when called from wrapStyledRows with no spans.
 //
 // cursor merges the cursor row's background into whatever style would
 // otherwise apply, except inside a match, whose own background is already the
