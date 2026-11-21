@@ -24,7 +24,7 @@ func diffArgs(extra ...string) []string {
 
 // diffFiles runs `git diff --no-color -U3 <args...>` and parses the result.
 // untrackedDiff (worktree.go) doesn't use it: `--no-index` reports a real
-// difference via exit code 1, which needs runGitDiffExit.
+// difference via exit code 1, which needs runGitNoIndexDiff.
 func (r *Repo) diffFiles(ctx context.Context, args ...string) ([]File, error) {
 	out, err := runGit(ctx, r.Path, diffArgs(args...)...)
 	if err != nil {

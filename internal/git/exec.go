@@ -10,7 +10,7 @@ import (
 )
 
 // runGit runs git with the given arguments in dir and returns stdout, even
-// on failure (needed by runGitDiffExit's --no-index case, where a nonzero
+// on failure (needed by runGitNoIndexDiff, where a nonzero
 // exit still carries the diff on stdout); the error includes stderr output
 // for diagnosability.
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
@@ -32,18 +32,15 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-// runGitDiffExit runs a git diff variant where 0 means no differences, 1
-// means differences were found (for --no-index, stdout still holds the
-// diff), and anything else is a real error — see isExitCode.
-func runGitDiffExit(ctx context.Context, dir string, args ...string) (out []byte, differs bool, err error) {
-	out, err = runGit(ctx, dir, args...)
-	if err == nil {
-		return out, false, nil
+// runGitNoIndexDiff runs a `git diff --no-index` variant, which exits 1 when
+// the files differ (stdout still holds the diff) and 0 only when they don't.
+// Any other failure is a real error — see isExitCode.
+func runGitNoIndexDiff(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	out, err := runGit(ctx, dir, args...)
+	if err != nil && !isExitCode(err, 1) {
+		return nil, err
 	}
-	if isExitCode(err, 1) {
-		return out, true, nil
-	}
-	return nil, false, err
+	return out, nil
 }
 
 // isExitCode reports whether err is (or wraps) a git process exiting with

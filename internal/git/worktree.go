@@ -160,7 +160,7 @@ func (r *Repo) untrackedPaths(ctx context.Context) ([]string, error) {
 // path, a symlink, a fifo, or an empty file with no textual delta) degrades to
 // a hunk-less added-file entry rather than failing the whole worktree fetch.
 func (r *Repo) untrackedDiff(ctx context.Context, path string) File {
-	out, _, err := runGitDiffExit(ctx, r.Path, diffArgs("--no-index", "--", "/dev/null", path)...)
+	out, err := runGitNoIndexDiff(ctx, r.Path, diffArgs("--no-index", "--", "/dev/null", path)...)
 	if err != nil {
 		return File{Path: path, Status: StatusAdded}
 	}

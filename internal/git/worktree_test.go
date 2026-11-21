@@ -407,7 +407,7 @@ func TestUntrackedSummaryLineCounts(t *testing.T) {
 // use runGitCmd: --no-index exits 1 precisely when it found a difference.
 func gitNoIndexAdditions(t *testing.T, dir, path string) int {
 	t.Helper()
-	out, _, err := runGitDiffExit(context.Background(), dir, "diff", "--numstat", "--no-index", "--", "/dev/null", path)
+	out, err := runGitNoIndexDiff(context.Background(), dir, "diff", "--numstat", "--no-index", "--", "/dev/null", path)
 	if err != nil {
 		t.Fatalf("git diff --numstat --no-index: %v", err)
 	}
