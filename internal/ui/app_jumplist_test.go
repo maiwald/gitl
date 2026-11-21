@@ -207,3 +207,36 @@ func TestFreshJumpAfterJumpBackClearsForwardStack(t *testing.T) {
 		t.Fatalf("jl.forward = %v after a fresh jump, want cleared", jl.forward)
 	}
 }
+
+// TestJumpForwardIntoReusedDetailPicksUpSearchChangedMeanwhile pins that the
+// detail view left behind while the list is in front is not kept in step with
+// the canonical search state, and that coming back to it through the jumplist
+// (which reuses it for the same commit rather than building a new one) brings
+// it up to date first.
+func TestJumpForwardIntoReusedDetailPicksUpSearchChangedMeanwhile(t *testing.T) {
+	jl := &jumplist{}
+	list := NewListModel(fixtureCommits(5), jl)
+	list.SetSize(80, 3)
+	m := Model{active: viewList, list: list, jl: jl}
+	m.width, m.height = 80, 24
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newModel, _ = newModel.(Model).Update(commitDetailLoadedMsg{detail: fixtureJumplistDetail("c")})
+	m = jumpBack(t, newModel.(Model))
+	if m.active != viewList {
+		t.Fatalf("active view = %v, want viewList after ctrl-o", m.active)
+	}
+
+	m.setSearchDisplay("message", false)
+	if m.detail.displayTerm != "" {
+		t.Fatalf("hidden detail view displayTerm = %q, want it left alone while the list is in front", m.detail.displayTerm)
+	}
+
+	m = jumpForward(t, m)
+	if m.active != viewDetail {
+		t.Fatalf("active view = %v, want viewDetail after ctrl-i", m.active)
+	}
+	if m.detail.displayTerm != "message" || m.detail.totalMatches() == 0 {
+		t.Errorf("detail displayTerm = %q with %d matches, want %q with matches", m.detail.displayTerm, m.detail.totalMatches(), "message")
+	}
+}

@@ -716,6 +716,8 @@ func (m Model) gotoJumpPos(pos jumpPos) (Model, tea.Cmd) {
 	}
 	if m.detail.detail != pos.commit {
 		m.detail = m.newDetailModel(pos.commit)
+	} else {
+		m.detail.SetSearchDisplay(m.searchTerm, m.searchDismissed)
 	}
 	m.detail.setCursor(pos.cursorLine)
 	m.active = viewDetail
@@ -922,7 +924,12 @@ func (m *Model) setSearchDisplay(term string, dismissed bool) {
 	m.searchTerm = term
 	m.searchDismissed = dismissed
 	m.list.SetSearchDisplay(term, dismissed)
-	m.detail.SetSearchDisplay(term, dismissed)
+	// The detail view out of sight is left as it was — it still holds the last
+	// commit opened — rather than searching and reflowing it for nobody. Every
+	// route back into it (openDetail, gotoJumpPos) installs the state first.
+	if m.active == viewDetail {
+		m.detail.SetSearchDisplay(term, dismissed)
+	}
 }
 
 // hasActiveSearch reports whether a search is active, gating n/N and the
