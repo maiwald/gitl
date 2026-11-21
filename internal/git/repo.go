@@ -3,6 +3,8 @@ package git
 import (
 	"context"
 	"fmt"
+
+	"github.com/maiwald/gitl/internal/concurrent"
 )
 
 // Repo represents a git working tree we can query.
@@ -25,14 +27,14 @@ func OpenRepo(ctx context.Context, path string) (*Repo, error) {
 
 // OpenRepoWithHead opens the repository at path and reports whether it has a
 // commit yet — the two questions every startup asks before choosing what to
-// show, in the order that makes "not a git repository" win over any
-// HasCommits failure.
+// show. They are independent subprocesses, so they run concurrently; the error
+// reported is OpenRepo's when both fail, since "not a git repository" is the
+// real answer for a directory HasCommits can only fail on.
 func OpenRepoWithHead(ctx context.Context, path string) (repo *Repo, hasCommits bool, err error) {
-	repo, err = OpenRepo(ctx, path)
-	if err != nil {
-		return nil, false, err
-	}
-	hasCommits, err = repo.HasCommits(ctx)
+	err = concurrent.RunConcurrently(
+		func() (err error) { repo, err = OpenRepo(ctx, path); return },
+		func() (err error) { hasCommits, err = (&Repo{Path: path}).HasCommits(ctx); return },
+	)
 	if err != nil {
 		return nil, false, err
 	}
