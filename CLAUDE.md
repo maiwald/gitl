@@ -192,7 +192,10 @@ before every commit — don't commit red.
   Any change to *what* a row shows, not just which row is the cursor (a
   new field on `Commit`, a new dim/highlight condition, appended commits,
   an updated `matches` set) must go through `render()`'s full rebuild —
-  otherwise the cache silently keeps showing stale content.
+  otherwise the cache silently keeps showing stale content. Stepping between
+  matches (n/N) is the other patched path (`renderMatchMoved`): which match is
+  active restyles one row, since dimming follows the match *set*, so it patches
+  the rows the active match and the cursor left and landed on.
 - Both views display their rows through `rowViewport` (`viewport.go`), not
   `bubbles/viewport`, and that is the whole point of the row caches above.
   bubbles' viewport takes its content as one string: every `SetContent`

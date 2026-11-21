@@ -63,10 +63,11 @@ type ListModel struct {
 
 	// renderedRows caches one rendered row per position in the flattened
 	// row space (leading rows first, then commits — see rowIndex). Every
-	// writer of leading/commits/matches/matchPos/displayTerm/
-	// searchDismissed/width must end in a full render(); pure cursor
-	// moves go through setCursor instead. Assigning cursor directly (only
-	// tests do) leaves two rows stale until the next full render.
+	// writer of leading/commits/matches/displayTerm/searchDismissed/width
+	// must end in a full render(); pure cursor moves go through setCursor
+	// instead, and a step between matches (matchPos) through
+	// renderMatchMoved. Assigning cursor directly (only tests do) leaves two
+	// rows stale until the next full render.
 	renderedRows []string
 }
 
@@ -319,6 +320,7 @@ func (m *ListModel) jumpToFirstMatch() (needsLoad bool, target int) {
 	if len(m.matches) == 0 {
 		return false, 0
 	}
+	prev := m.activeMatchPos()
 	m.matchPos = 0 // wrap to the first match if none qualify at/after the cursor
 	for i, idx := range m.matches {
 		if idx >= m.cursor {
@@ -326,7 +328,7 @@ func (m *ListModel) jumpToFirstMatch() (needsLoad bool, target int) {
 			break
 		}
 	}
-	return m.applyCurrentMatch()
+	return m.applyCurrentMatch(prev)
 }
 
 // jumpToLastMatch is jumpToFirstMatch's mirror: the last match at or before
@@ -337,6 +339,7 @@ func (m *ListModel) jumpToLastMatch() (needsLoad bool, target int) {
 	if len(m.matches) == 0 {
 		return false, 0
 	}
+	prev := m.activeMatchPos()
 	m.matchPos = len(m.matches) - 1
 	for i := len(m.matches) - 1; i >= 0; i-- {
 		if m.matches[i] <= m.cursor {
@@ -344,7 +347,7 @@ func (m *ListModel) jumpToLastMatch() (needsLoad bool, target int) {
 			break
 		}
 	}
-	return m.applyCurrentMatch()
+	return m.applyCurrentMatch(prev)
 }
 
 // NextMatch and PrevMatch cycle to the following/preceding search match,
@@ -357,28 +360,50 @@ func (m *ListModel) stepMatch(delta int) (needsLoad bool, target int) {
 	if len(m.matches) == 0 {
 		return false, 0
 	}
+	prev := m.activeMatchPos()
 	m.matchPos = stepMatchPos(m.matchPos, delta, len(m.matches))
-	return m.applyCurrentMatch()
+	return m.applyCurrentMatch(prev)
 }
 
 // applyCurrentMatch moves the cursor to the current match if it's already
 // loaded, or marks a jump as pending (resolved by AppendCommits) and reports
-// needsLoad so the caller dispatches a targeted fetch. Always ends in a full
-// render(), even when deferred: matchPos just changed, which can affect
-// dimming/highlighting across arbitrary rows, not just the cursor's.
+// needsLoad so the caller dispatches a targeted fetch. prev is the position of
+// the match that was active before matchPos changed (see activeMatchPos).
+// Either way it repaints just the rows whose look changed: the one the active
+// match left, the one it landed on, and the cursor's two. Which match is
+// active changes only that row's highlight — which rows are dimmed depends on
+// the match *set*, not on which of them is active.
 //
 // It backs both the initial search jump and every later NextMatch/PrevMatch
 // step, so every one of them pushes a jumplist entry — unlike vim, which
 // jumplists only the initial search, since a single step here can jump much
 // farther than vim's local from-cursor re-search.
-func (m *ListModel) applyCurrentMatch() (needsLoad bool, target int) {
+func (m *ListModel) applyCurrentMatch(prev int) (needsLoad bool, target int) {
 	target = m.matches[m.matchPos]
 	if target != m.cursor {
 		m.pushJump(m.cursor)
 	}
+	from := m.cursor
 	needsLoad = m.jumpOrDefer(target)
-	m.render()
+	m.renderMatchMoved(from, prev)
 	return needsLoad, target
+}
+
+// renderMatchMoved is renderCursorMoved for a step between matches: it
+// patches the rows the cursor left and arrived at, and the row the active
+// match left and the one it landed on. A target that isn't loaded yet has no
+// row to patch; AppendCommits renders it when it arrives.
+func (m *ListModel) renderMatchMoved(cursorFrom, prevActive int) {
+	if len(m.renderedRows) != m.rowCount() {
+		m.render()
+		return
+	}
+	ctx := m.rowContext()
+	m.patchRow(cursorFrom, ctx)
+	m.patchRow(m.cursor, ctx)
+	m.patchRow(prevActive, ctx)
+	m.patchRow(ctx.activeMatch, ctx)
+	m.setContent()
 }
 
 // JumpTo positions the cursor at absolute commit position target, or, if it
@@ -446,10 +471,19 @@ func (m ListModel) rowContext() rowContext {
 	activeMatch := -1
 	if m.searchDismissed {
 		term = ""
-	} else if m.matchPos >= 0 && m.matchPos < len(m.matches) {
-		activeMatch = m.matches[m.matchPos]
+	} else {
+		activeMatch = m.activeMatchPos()
 	}
 	return rowContext{term: term, activeMatch: activeMatch}
+}
+
+// activeMatchPos is the commit position of the n/N-selected match, or -1 when
+// there is none.
+func (m ListModel) activeMatchPos() int {
+	if m.matchPos >= 0 && m.matchPos < len(m.matches) {
+		return m.matches[m.matchPos]
+	}
+	return -1
 }
 
 // isMatch reports whether commit position pos is one of the list's actual

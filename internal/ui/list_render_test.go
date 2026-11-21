@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -98,5 +99,59 @@ func BenchmarkListCursorMove(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+}
+
+// TestListMatchStepPatchMatchesFullRender is renderCursorMoved's bargain for
+// n/N: which match is active changes how one row looks, so stepping patches
+// the row it leaves and the row it lands on, and the cache must stay what a
+// full render() produces after every step — wrapping round both ends.
+func TestListMatchStepPatchMatchesFullRender(t *testing.T) {
+	m := NewListModel(fixtureCommits(30), &jumplist{})
+	m.SetTotalCount(30)
+	m.SetSize(80, 6)
+	m.SetSearchDisplay("a", false)
+	runListSearch(&m, []int{2, 9, 15, 28})
+
+	check := func(after string) {
+		t.Helper()
+		patched := append([]string(nil), m.renderedRows...)
+		m.render()
+		for i := range patched {
+			if patched[i] != m.renderedRows[i] {
+				t.Fatalf("after %s (match %d, cursor %d): row %d differs\n patched: %q\n rebuilt: %q",
+					after, m.matchPos, m.cursor, i, patched[i], m.renderedRows[i])
+			}
+		}
+	}
+	check("the initial jump")
+	for i := range 6 {
+		m.NextMatch()
+		check(fmt.Sprintf("n #%d", i+1))
+	}
+	for i := range 6 {
+		m.PrevMatch()
+		check(fmt.Sprintf("N #%d", i+1))
+	}
+}
+
+// TestListMatchStepCostIsIndependentOfHistorySize pins the same thing from the
+// other side: an n/N press must not re-render every loaded row.
+func TestListMatchStepCostIsIndependentOfHistorySize(t *testing.T) {
+	perStep := func(commits int) uint64 {
+		m := NewListModel(fixtureCommits(commits), &jumplist{})
+		m.SetSize(80, 40)
+		m.SetTotalCount(commits)
+		m.SetSearchDisplay("a", false)
+		var matches []int
+		for i := 0; i < commits; i += 7 {
+			matches = append(matches, i)
+		}
+		runListSearch(&m, matches)
+		return bytesPerRun(60, func() { m.NextMatch() })
+	}
+	small, big := perStep(100), perStep(20000)
+	if big > 2*small {
+		t.Fatalf("an n press allocates %d bytes over 20000 commits against %d over 100; something on the keypress path scales with the loaded history", big, small)
 	}
 }
