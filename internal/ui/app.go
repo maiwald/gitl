@@ -52,9 +52,6 @@ type Model struct {
 	quitting      bool
 
 	start StartTarget
-	// quitOnBack makes Back/q from the detail view quit outright instead of
-	// returning to the list — set when there is no list (see opensList).
-	quitOnBack bool
 
 	repo   *git.Repo
 	active view
@@ -167,10 +164,9 @@ func NewModel(target StartTarget) Model {
 		jl.back = []jumpPos{{view: viewList, listCursor: 0}}
 	}
 	return Model{
-		start:      target,
-		quitOnBack: !target.opensList(),
-		jl:         jl,
-		out:        os.Stdout,
+		start: target,
+		jl:    jl,
+		out:   os.Stdout,
 		// Built empty rather than left a zero value until commitsLoadedMsg
 		// replaces it: keys reach it from the very first frame, and a zero
 		// ListModel has no jumplist to push onto.
@@ -723,8 +719,8 @@ func (m Model) gotoJumpPos(pos jumpPos) (Model, tea.Cmd) {
 }
 
 // handleDetailViewKey routes a key press while the detail view is active:
-// the selection keys first, then Back to return to the list (or quit, see
-// quitOnBack), everything else to the diff viewport.
+// the selection keys first, then Back to return to the list (or quit, when
+// the run has no list — see opensList), everything else to the diff viewport.
 //
 // Selection is handled here rather than in DetailModel.Update because both
 // halves of it reach past the detail view: V has to retire a visible search
@@ -750,7 +746,7 @@ func (m Model) handleDetailViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if key.Matches(msg, DefaultKeyMap.Back) {
-		if m.quitOnBack {
+		if !m.start.opensList() {
 			m.quitting = true
 			return m, tea.Quit
 		}

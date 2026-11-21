@@ -59,28 +59,14 @@ func TestEnterOnSyntheticRowFetchesItsDiff(t *testing.T) {
 	}
 }
 
-// TestNewModelSetsQuitOnBackFromPipedTarget pins down that quitOnBack is
-// wired purely from StartTarget at construction time — nothing else ever
-// writes it, so the interactively-opened staged/worktree row or commit
-// (Enter from the list) is unaffected by construction rather than by a
-// runtime check.
-func TestNewModelSetsQuitOnBackFromPipedTarget(t *testing.T) {
-	if !NewModel(StartTarget{Piped: &git.PipedPatch{}}).quitOnBack {
-		t.Error("quitOnBack = false for a piped target, want true")
-	}
-	if NewModel(StartTarget{}).quitOnBack {
-		t.Error("quitOnBack = true for StartTarget{}, want false")
-	}
-}
-
-// TestQuitOnBackGate pins down handleDetailViewKey's Back branch: with
-// quitOnBack set (a piped patch, which has no list), Back quits the program
+// TestQuitOnBackGate pins down handleDetailViewKey's Back branch: on a run
+// with no list (a piped patch), Back quits the program
 // outright; otherwise it returns to the list, exactly as it does for a real
 // commit's detail view (see TestEnterRequestsDetailAndEscReturnsToSameListState
 // in app_detail_test.go).
 func TestQuitOnBackGate(t *testing.T) {
-	t.Run("quits when quitOnBack is set", func(t *testing.T) {
-		m := Model{active: viewDetail, quitOnBack: true, jl: &jumplist{}}
+	t.Run("quits when the run has no list", func(t *testing.T) {
+		m := Model{active: viewDetail, start: StartTarget{Piped: &git.PipedPatch{}}, jl: &jumplist{}}
 		newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 		m = newModel.(Model)
 		if !m.quitting {
@@ -94,8 +80,8 @@ func TestQuitOnBackGate(t *testing.T) {
 		}
 	})
 
-	t.Run("returns to list when quitOnBack is unset", func(t *testing.T) {
-		m := Model{active: viewDetail, quitOnBack: false, jl: &jumplist{}}
+	t.Run("returns to list when the run has one", func(t *testing.T) {
+		m := Model{active: viewDetail, jl: &jumplist{}}
 		newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 		m = newModel.(Model)
 		if m.active != viewList {
