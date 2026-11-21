@@ -16,11 +16,8 @@ import (
 func initFixtureRepoWithFile(t *testing.T) *Repo {
 	t.Helper()
 	dir := t.TempDir()
-	ctx := context.Background()
 
-	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	initFixtureDir(t, dir)
 
 	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("line one\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -28,10 +25,7 @@ func initFixtureRepoWithFile(t *testing.T) *Repo {
 	runGitCmd(t, dir, fixtureCommitEnv, "add", "tracked.txt")
 	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "add tracked.txt")
 
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
+	repo := mustOpen(t, dir)
 	return repo
 }
 
@@ -497,10 +491,7 @@ func TestStagedSummaryOnUnbornHead(t *testing.T) {
 	}
 	runGitCmd(t, dir, fixtureCommitEnv, "add", "new.txt")
 
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
+	repo := mustOpen(t, dir)
 	summary, err := repo.stagedSummary(ctx)
 	if err != nil {
 		t.Fatalf("stagedSummary: %v", err)

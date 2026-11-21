@@ -41,19 +41,14 @@ func TestFetchCommitDetailMergeCommit(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	initFixtureDir(t, dir)
 	runGitCmd(t, dir, fixtureCommitEnv, "commit", "--allow-empty", "-m", "base")
 	runGitCmd(t, dir, fixtureCommitEnv, "checkout", "-b", "feature")
 	runGitCmd(t, dir, fixtureCommitEnv, "commit", "--allow-empty", "-m", "feature work")
 	runGitCmd(t, dir, fixtureCommitEnv, "checkout", "main")
 	runGitCmd(t, dir, fixtureCommitEnv, "merge", "--no-ff", "-m", "merge feature", "feature")
 
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
+	repo := mustOpen(t, dir)
 
 	mergeHash := headHash(t, dir)
 
@@ -76,19 +71,14 @@ func TestFetchCommitDetailRootCommitDiff(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	initFixtureDir(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello\nworld\n"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	runGitCmd(t, dir, fixtureCommitEnv, "add", "hello.txt")
 	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "root commit")
 
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
+	repo := mustOpen(t, dir)
 	rootHash := headHash(t, dir)
 
 	detail, err := repo.FetchCommitDetail(ctx, rootHash)
@@ -114,9 +104,7 @@ func TestFetchCommitDetailNormalCommitDiff(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	initFixtureDir(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello\n"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -129,10 +117,7 @@ func TestFetchCommitDetailNormalCommitDiff(t *testing.T) {
 	runGitCmd(t, dir, fixtureCommitEnv, "add", "hello.txt")
 	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "second")
 
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
+	repo := mustOpen(t, dir)
 	secondHash := headHash(t, dir)
 
 	detail, err := repo.FetchCommitDetail(ctx, secondHash)
@@ -159,9 +144,7 @@ func TestFetchCommitDetailShowsACopiedFileAsAdded(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	initFixtureDir(t, dir)
 	content := []byte("line one\nline two\nline three\nline four\n")
 	if err := os.WriteFile(filepath.Join(dir, "source.txt"), content, 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -175,10 +158,7 @@ func TestFetchCommitDetailShowsACopiedFileAsAdded(t *testing.T) {
 	runGitCmd(t, dir, fixtureCommitEnv, "add", "copy.txt")
 	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "copy source.txt to copy.txt")
 
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
+	repo := mustOpen(t, dir)
 	detail, err := repo.FetchCommitDetail(ctx, headHash(t, dir))
 	if err != nil {
 		t.Fatalf("FetchCommitDetail: %v", err)
@@ -202,9 +182,7 @@ func TestFetchCommitDetailDetectsRenameWithRenamesOff(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	runGitCmd(t, dir, fixtureCommitEnv, "init", "-b", "main")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.name", "Test Author")
-	runGitCmd(t, dir, fixtureCommitEnv, "config", "user.email", "test@example.com")
+	initFixtureDir(t, dir)
 	runGitCmd(t, dir, fixtureCommitEnv, "config", "diff.renames", "false")
 	if err := os.WriteFile(filepath.Join(dir, "source.txt"), []byte("one\ntwo\nthree\nfour\n"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -219,10 +197,7 @@ func TestFetchCommitDetailDetectsRenameWithRenamesOff(t *testing.T) {
 	runGitCmd(t, dir, fixtureCommitEnv, "add", "moved.txt")
 	runGitCmd(t, dir, fixtureCommitEnv, "commit", "-m", "move source.txt to moved.txt")
 
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
+	repo := mustOpen(t, dir)
 	detail, err := repo.FetchCommitDetail(ctx, headHash(t, dir))
 	if err != nil {
 		t.Fatalf("FetchCommitDetail: %v", err)

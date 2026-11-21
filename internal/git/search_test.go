@@ -20,11 +20,8 @@ type commitSpec struct {
 func initSearchFixtureRepo(t *testing.T, specs []commitSpec) (*Repo, []string) {
 	t.Helper()
 	dir := t.TempDir()
-	ctx := context.Background()
 
-	runGitCmd(t, dir, nil, "init", "-b", "main")
-	runGitCmd(t, dir, nil, "config", "user.name", "Test Author")
-	runGitCmd(t, dir, nil, "config", "user.email", "test@example.com")
+	initFixtureDir(t, dir)
 
 	var hashes []string
 	for _, spec := range specs {
@@ -44,15 +41,9 @@ func initSearchFixtureRepo(t *testing.T, specs []commitSpec) (*Repo, []string) {
 		hashes = append(hashes, headHash(t, dir))
 	}
 
-	reversed := make([]string, len(hashes))
-	for i, h := range hashes {
-		reversed[len(hashes)-1-i] = h
-	}
+	reversed := newestFirst(hashes)
 
-	repo, err := OpenRepo(ctx, dir)
-	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
-	}
+	repo := mustOpen(t, dir)
 	return repo, reversed
 }
 
